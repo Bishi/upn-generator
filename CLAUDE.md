@@ -39,6 +39,22 @@ npm run dev            # frontend only (no Tauri)
 
 UPN output must look as close to real Slovenian bank UPN forms as possible. Tenants receive these to pay bills — they must feel legitimate. Use official UPN template as background image with precisely positioned text overlay. Reference examples in `file-examples/` (1.PNG, 2.PNG, 3.PNG).
 
+## Versioning & Releases
+
+Use semantic versioning `MAJOR.MINOR.PATCH`:
+
+- **Patch** `0.1.0 → 0.1.1` — bug fixes, small tweaks, copy changes
+- **Minor** `0.1.x → 0.2.0` — new feature or considerable improvement
+- **Major** `0.x.0 → 1.0.0` — breaking change or full milestone release
+
+To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
+
+```bash
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+This triggers the GitHub Actions workflow which builds the `.msi` and publishes it as a GitHub Release.
+
 ## Building Data
 
 - 5 apartments, 12 occupants, 4 utility providers (5 bills/month)
