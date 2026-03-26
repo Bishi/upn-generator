@@ -68,10 +68,58 @@ fn first_capture(pattern: &str, text: &str) -> Option<String> {
 fn interpolate_template(template: &str, invoice_number: &str, month: i32, year: i32) -> String {
     template
         .replace("{invoice_number}", invoice_number)
+        .replace("{invoice}", invoice_number) // alias
         .replace("{month}", &format!("{:02}", month))
         .replace("{year}", &year.to_string())
         .replace("{MM}", &format!("{:02}", month))
         .replace("{YYYY}", &year.to_string())
+}
+
+/// Remove spaces from IBAN and uppercase for comparison
+fn normalize_iban(iban: &str) -> String {
+    iban.chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// Find first IBAN (SI56...) in text, return raw form
+fn find_iban(text: &str) -> Option<String> {
+    let re = Regex::new(r"SI56[\s\d]{14,26}").ok()?;
+    re.find(text).map(|m| m.as_str().trim().to_string())
+}
+
+/// Find payment reference (SI + 2 digits, but NOT SI56 which is IBAN)
+fn find_payment_reference(text: &str) -> String {
+    let re = Regex::new(r"SI(?:0[0-9]|1[0-2])\s*[\d\s]{4,}").unwrap();
+    re.find(text)
+        .map(|m| {
+            // Collapse multiple spaces to single space
+            let s = m.as_str().trim().to_string();
+            let ws = Regex::new(r"\s+").unwrap();
+            ws.replace_all(&s, " ").trim().to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// Search text for a due date near payment labels
+fn find_due_date(text: &str) -> String {
+    let patterns = [
+        r"(?i)rok\s+placila:\s*\n?\s*(\d{2}\.\s*\d{2}\.\s*\d{4})",
+        r"(?i)zapadlost:\s*(\d{2}\.\d{2}\.\d{4})",
+        r"(?i)zapade:\s*\n?\s*(\d{2}\.\d{2}\.\d{4})",
+        r"(?i)datum:\s*(\d{2}\.\d{2}\.\d{4})",
+    ];
+    for p in &patterns {
+        if let Ok(re) = Regex::new(p) {
+            if let Some(caps) = re.captures(text) {
+                if let Some(m) = caps.get(1) {
+                    return m.as_str().replace(' ', "").trim().to_string();
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
@@ -483,7 +531,167 @@ pub fn import_bill(
     })
 }
 
-/// Import a PDF that may contain multiple bills. Splits by provider match patterns.
+// ─── Smart multi-bill parser ───────────────────────────────────────────────
+
+struct ExtractedBill {
+    iban_norm: String,
+    iban_raw: String,
+    amount_cents: i64,
+    reference: String,
+    due_date: String,
+    purpose_code: String,
+    purpose_text: String,
+    invoice_number: String,
+}
+
+/// Parse all UPN payment stubs (***amount sections) from PDF text.
+/// Each stub has: ***amount [PURPOSECODE text], then IBAN, then reference.
+/// Bills with QR codes print this stub as human-readable text alongside the QR.
+fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
+    let stub_re = match Regex::new(r"\*{2,}(\d+[.,]\d{2})") {
+        Ok(r) => r,
+        Err(_) => return vec![],
+    };
+    let purpose_code_re = Regex::new(r"\b(ENRG|SCVE|WTER|OTHR|RENT|SALA)\b").unwrap();
+    let mut results: Vec<ExtractedBill> = Vec::new();
+    let mut seen_ibans: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for m in stub_re.find_iter(text) {
+        let amount_str = m.as_str().trim_matches('*');
+        let amount_cents = parse_amount_to_cents(amount_str);
+
+        // Window after stub: up to 600 chars for IBAN/reference/purpose
+        let after_start = m.start();
+        let after_end = (after_start + 600).min(text.len());
+        let after = &text[after_start..after_end];
+
+        // IBAN must appear after the stub marker
+        let iban_raw = match find_iban(after) {
+            Some(i) => i,
+            None => continue,
+        };
+        let iban_norm = normalize_iban(&iban_raw);
+        if !seen_ibans.insert(iban_norm.clone()) {
+            continue; // duplicate stub for same provider
+        }
+
+        // Payment reference (SI00/SI12/etc., not SI56)
+        let reference = find_payment_reference(after);
+
+        // Purpose code from stub line or next line
+        let stub_line_end = after.find('\n').unwrap_or(after.len());
+        let search_area = &after[..stub_line_end.min(after.len())];
+        // Also check 2 lines after if not found on stub line
+        let search_area2 = &after[..after.find('\n').and_then(|i| after[i+1..].find('\n').map(|j| i+1+j)).unwrap_or(after.len()).min(after.len())];
+
+        let (purpose_code, purpose_text) = if let Some(caps) = purpose_code_re.captures(search_area) {
+            let code = caps.get(1).unwrap().as_str().to_string();
+            let rest = search_area[caps.get(1).unwrap().end()..].trim().to_string();
+            (code, rest)
+        } else if let Some(caps) = purpose_code_re.captures(search_area2) {
+            let code = caps.get(1).unwrap().as_str().to_string();
+            let rest = search_area2[caps.get(1).unwrap().end()..].trim().to_string();
+            (code, rest)
+        } else {
+            ("OTHR".to_string(), String::new())
+        };
+
+        // Due date: look in a window before the stub too (label often precedes ***)
+        let before_start = m.start().saturating_sub(500);
+        let context = &text[before_start..after_end];
+        let due_date = find_due_date(context);
+
+        results.push(ExtractedBill {
+            iban_norm,
+            iban_raw,
+            amount_cents,
+            reference,
+            due_date,
+            purpose_code,
+            purpose_text,
+            invoice_number: String::new(),
+        });
+    }
+    results
+}
+
+/// Parse Elektro energija-style bills (no QR code, narrative format).
+fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
+    // Amount appears on its own line after "ZA PLACILO Z DDV:"
+    let amount_re = Regex::new(r"ZA PLACILO Z DDV:\s*\n\s*(\d+[.,]\d{2})").ok()?;
+    let amount_cents = parse_amount_to_cents(amount_re.captures(text)?.get(1)?.as_str());
+
+    // IBAN from "IBAN: SI56 ..."
+    let iban_re = Regex::new(r"IBAN:\s+(SI56[\s\d]+)").ok()?;
+    let iban_raw = iban_re.captures(text)?.get(1)?.as_str().trim().to_string();
+    let iban_norm = normalize_iban(&iban_raw);
+
+    // Reference from "Referenca: SI12 ..."
+    let ref_re = Regex::new(r"Referenca:\s+(SI\d{2}\s*\d+)").ok()?;
+    let reference = ref_re.captures(text)?.get(1)?.as_str().trim().to_string();
+
+    // Due date
+    let due_date = find_due_date(text);
+
+    // Invoice number from "Racun stevilka: IR..."
+    let inv_re = Regex::new(r"Racun stevilka:\s*(\S+)").ok()?;
+    let invoice_number = inv_re.captures(text)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+
+    Some(ExtractedBill {
+        iban_norm,
+        iban_raw,
+        amount_cents,
+        reference,
+        due_date,
+        purpose_code: "ENRG".to_string(),
+        purpose_text: String::new(), // will use template
+        invoice_number,
+    })
+}
+
+/// Parse ZLM-style bills (different layout, no *** stub, uses "Za placilo EUR:").
+fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
+    // Amount from "Za placilo EUR: 139,28"
+    let amount_re = Regex::new(r"Za placilo EUR:\s*(\d+[.,]\d{2})").ok()?;
+    let amount_cents = parse_amount_to_cents(amount_re.captures(text)?.get(1)?.as_str());
+
+    // IBAN from "TRR:SI56..." (no spaces in this field)
+    let iban_re = Regex::new(r"TRR:(SI56\d+)").ok()?;
+    let iban_raw = iban_re.captures(text)?.get(1)?.as_str().to_string();
+    let iban_norm = normalize_iban(&iban_raw);
+
+    // Reference from "Stevilka: SI00 ..."
+    let ref_re = Regex::new(r"Stevilka:\s+(SI\d{2}\s*\d+)").ok()?;
+    let reference = ref_re.captures(text)?.get(1)?.as_str().trim().to_string();
+
+    // Due date — "Datum:" in ZLM format is the due date
+    let due_date = find_due_date(text);
+
+    // Invoice from "RACUN 2026-85"
+    let inv_re = Regex::new(r"RACUN\s+(\d{4}-\d+)").ok()?;
+    let invoice_number = inv_re.captures(text)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+
+    Some(ExtractedBill {
+        iban_norm,
+        iban_raw,
+        amount_cents,
+        reference,
+        due_date,
+        purpose_code: "OTHR".to_string(),
+        purpose_text: String::new(), // will use template
+        invoice_number,
+    })
+}
+
+/// Import a PDF that may contain multiple bills.
+/// Uses smart parsing: finds UPN payment stubs (***amount), falls back to
+/// Elektro narrative format and ZLM format. Matches providers by IBAN.
 #[tauri::command]
 pub fn import_bills(
     db: State<DbState>,
@@ -517,31 +725,46 @@ pub fn import_bills(
         get_providers_inner(&conn)
     };
 
-    // Find all provider match positions in the text
-    let mut matches: Vec<(usize, usize)> = Vec::new(); // (position, provider_index)
-    for (idx, provider) in providers.iter().enumerate() {
-        if provider.match_pattern.is_empty() {
-            continue;
-        }
-        if let Ok(re) = Regex::new(&provider.match_pattern) {
-            for m in re.find_iter(&raw_text) {
-                matches.push((m.start(), idx));
-            }
+    // Build IBAN → provider map (normalized, no spaces)
+    let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
+        .iter()
+        .filter(|p| !p.creditor_iban.is_empty())
+        .map(|p| (normalize_iban(&p.creditor_iban), p))
+        .collect();
+
+    // --- Collect extracted bills ---
+    let mut extracted: Vec<ExtractedBill> = Vec::new();
+    let mut seen_ibans: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Phase 1: UPN payment stubs (***amount) — covers VOKA ×2 and Energetika
+    for bill in parse_upn_stubs(&raw_text) {
+        if seen_ibans.insert(bill.iban_norm.clone()) {
+            extracted.push(bill);
         }
     }
-    matches.sort_by_key(|(pos, _)| *pos);
 
-    // Deduplicate: if two providers match at overlapping positions, keep the first
-    matches.dedup_by(|a, b| a.0 == b.0);
+    // Phase 2: Elektro narrative format (ZA PLACILO Z DDV:)
+    if let Some(bill) = parse_elektro_style(&raw_text) {
+        if seen_ibans.insert(bill.iban_norm.clone()) {
+            extracted.push(bill);
+        }
+    }
 
-    // If no matches, create one unmatched bill with the full text
-    if matches.is_empty() {
+    // Phase 3: ZLM format (Za placilo EUR: + TRR:)
+    if let Some(bill) = parse_zlm_style(&raw_text) {
+        if seen_ibans.insert(bill.iban_norm.clone()) {
+            extracted.push(bill);
+        }
+    }
+
+    // Fallback: nothing found — create one blank bill
+    if extracted.is_empty() {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO bills
-             (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
-              creditor_address, creditor_city, creditor_postal_code, reference, due_date,
-              purpose_code, purpose_text, invoice_number, status, source_filename)
+            "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
+             creditor_name, creditor_iban, creditor_address, creditor_city,
+             creditor_postal_code, reference, due_date, purpose_code, purpose_text,
+             invoice_number, status, source_filename)
              VALUES (?1,NULL,?2,0,'','','','','','','','OTHR','','','draft',?3)",
             params![billing_period_id, raw_text, filename],
         )
@@ -569,50 +792,57 @@ pub fn import_bills(
         }]);
     }
 
-    // Split text into segments by match positions and parse each
-    let mut results: Vec<Bill> = Vec::new();
+    // --- Match to providers and insert ---
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut results: Vec<Bill> = Vec::new();
 
-    for (i, &(start_pos, provider_idx)) in matches.iter().enumerate() {
-        let end_pos = if i + 1 < matches.len() {
-            matches[i + 1].0
-        } else {
-            raw_text.len()
+    for eb in extracted {
+        let provider = provider_by_iban.get(&eb.iban_norm).copied();
+
+        // Determine creditor info from provider (if matched) or from extracted IBAN
+        let (provider_id, creditor_name, creditor_iban, creditor_address,
+             creditor_city, creditor_postal_code, purpose_code) = match provider {
+            Some(p) => (
+                p.id,
+                p.creditor_name.clone(),
+                p.creditor_iban.clone(),
+                p.creditor_address.clone(),
+                p.creditor_city.clone(),
+                p.creditor_postal_code.clone(),
+                if eb.purpose_code != "OTHR" { eb.purpose_code.clone() } else { p.purpose_code.clone() },
+            ),
+            None => (
+                None,
+                String::new(),
+                eb.iban_raw.clone(),
+                String::new(),
+                String::new(),
+                String::new(),
+                eb.purpose_code.clone(),
+            ),
         };
-        let segment = &raw_text[start_pos..end_pos];
-        let provider = &providers[provider_idx];
 
-        let amount_str = first_capture(&provider.amount_pattern, segment).unwrap_or_default();
-        let amount_cents = parse_amount_to_cents(&amount_str);
-        let reference = first_capture(&provider.reference_pattern, segment).unwrap_or_default();
-        let due_date = first_capture(&provider.due_date_pattern, segment).unwrap_or_default();
-        let invoice_number =
-            first_capture(&provider.invoice_number_pattern, segment).unwrap_or_default();
-        let purpose_text =
-            interpolate_template(&provider.purpose_text_template, &invoice_number, month, year);
+        // Purpose text: use extracted text if non-empty, else use provider template
+        let purpose_text = if !eb.purpose_text.is_empty() {
+            eb.purpose_text.clone()
+        } else if let Some(p) = provider {
+            interpolate_template(&p.purpose_text_template, &eb.invoice_number, month, year)
+        } else {
+            String::new()
+        };
 
         conn.execute(
-            "INSERT INTO bills
-             (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
-              creditor_address, creditor_city, creditor_postal_code, reference, due_date,
-              purpose_code, purpose_text, invoice_number, status, source_filename)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'draft',?15)",
+            "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
+             creditor_name, creditor_iban, creditor_address, creditor_city,
+             creditor_postal_code, reference, due_date, purpose_code, purpose_text,
+             invoice_number, status, source_filename)
+             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'draft',?14)",
             params![
-                billing_period_id,
-                provider.id,
-                segment,
-                amount_cents,
-                provider.creditor_name,
-                provider.creditor_iban,
-                provider.creditor_address,
-                provider.creditor_city,
-                provider.creditor_postal_code,
-                reference,
-                due_date,
-                provider.purpose_code,
-                purpose_text,
-                invoice_number,
-                filename,
+                billing_period_id, provider_id, eb.amount_cents,
+                creditor_name, creditor_iban, creditor_address,
+                creditor_city, creditor_postal_code,
+                eb.reference, eb.due_date, purpose_code, purpose_text,
+                eb.invoice_number, filename,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -621,22 +851,22 @@ pub fn import_bills(
         results.push(Bill {
             id: Some(id),
             billing_period_id,
-            provider_id: provider.id,
+            provider_id,
             raw_text: String::new(),
-            amount_cents,
-            creditor_name: provider.creditor_name.clone(),
-            creditor_iban: provider.creditor_iban.clone(),
-            creditor_address: provider.creditor_address.clone(),
-            creditor_city: provider.creditor_city.clone(),
-            creditor_postal_code: provider.creditor_postal_code.clone(),
-            reference,
-            due_date,
-            purpose_code: provider.purpose_code.clone(),
+            amount_cents: eb.amount_cents,
+            creditor_name,
+            creditor_iban,
+            creditor_address,
+            creditor_city,
+            creditor_postal_code,
+            reference: eb.reference,
+            due_date: eb.due_date,
+            purpose_code,
             purpose_text,
-            invoice_number,
+            invoice_number: eb.invoice_number,
             status: "draft".to_string(),
             source_filename: filename.clone(),
-            provider_name: Some(provider.name.clone()),
+            provider_name: provider.map(|p| p.name.clone()),
         });
     }
 
