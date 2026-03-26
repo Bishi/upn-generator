@@ -1,4 +1,4 @@
-# UPN Generator — Apartment Bill Splitting App
+# UPN Generator - Apartment Bill Splitting App
 
 A Tauri desktop app (Windows) for the building accountant at **Kamniška ulica 36, Ljubljana**.
 
