@@ -32,8 +32,16 @@ export function SmtpSection() {
     if (data) setForm(data);
   }, [data]);
 
+  // Load existing password on mount
+  useEffect(() => {
+    ipc.getSmtpPassword().then((p) => { if (p) setPassword(p); }).catch(() => {});
+  }, []);
+
   const mutation = useMutation({
-    mutationFn: ipc.saveSmtpConfig,
+    mutationFn: async (cfg: SmtpConfig) => {
+      await ipc.saveSmtpConfig(cfg);
+      if (password) await ipc.saveSmtpPassword(password);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
       setSaved(true);
@@ -105,7 +113,7 @@ export function SmtpSection() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Stored securely in Windows Credential Manager"
+                placeholder="SMTP password"
                 className="pr-10"
               />
               <button

@@ -228,7 +228,7 @@ export function ProvidersSection() {
                       <div key={key} className="space-y-1.5">
                         <Label className="text-xs">{label}</Label>
                         <Input
-                          value={(editing as Record<string, string>)[key]}
+                          value={(editing as unknown as Record<string, string>)[key]}
                           onChange={(e) => setEditing({ ...editing, [key]: e.target.value })}
                           placeholder={placeholder}
                           className="font-mono text-xs"

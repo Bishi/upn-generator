@@ -92,5 +92,29 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         INSERT OR IGNORE INTO smtp_config (id) VALUES (1);
         ",
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    // Additive migrations — silently ignored if column already exists
+    let _ = conn.execute(
+        "ALTER TABLE smtp_config ADD COLUMN password TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN creditor_address TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN creditor_city TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN creditor_postal_code TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN invoice_number TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+
+    Ok(())
 }

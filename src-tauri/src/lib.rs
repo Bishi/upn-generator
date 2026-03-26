@@ -1,9 +1,17 @@
 mod commands;
 mod db;
 
+use commands::bills::{
+    create_billing_period, delete_bill, delete_billing_period, get_billing_periods, get_bills,
+    import_bill, save_bill,
+};
 use commands::config::{
     delete_apartment, delete_provider, get_apartments, get_building, get_providers,
     get_smtp_config, save_apartment, save_building, save_provider, save_smtp_config, DbState,
+};
+use commands::splits::{calculate_splits, get_splits, save_split};
+use commands::upn::{
+    generate_upn_pdf, get_smtp_password, save_all_upns, save_smtp_password, send_emails,
 };
 use db::migrations;
 use rusqlite::Connection;
@@ -25,6 +33,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(DbState(Mutex::new(conn)))
         .invoke_handler(tauri::generate_handler![
+            // Config
             get_building,
             save_building,
             get_apartments,
@@ -35,6 +44,24 @@ pub fn run() {
             delete_provider,
             get_smtp_config,
             save_smtp_config,
+            // Bills
+            get_billing_periods,
+            create_billing_period,
+            delete_billing_period,
+            import_bill,
+            get_bills,
+            save_bill,
+            delete_bill,
+            // Splits
+            calculate_splits,
+            get_splits,
+            save_split,
+            // UPN
+            generate_upn_pdf,
+            save_all_upns,
+            send_emails,
+            save_smtp_password,
+            get_smtp_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
