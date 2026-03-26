@@ -45,11 +45,12 @@ UPN output must look as close to real Slovenian bank UPN forms as possible. Tena
 To reference in new sessions, use `EnterPlanMode` to load it.
 
 - ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
+- ✅ **Phase 1.5** — UI polish: dark mode, seed data, bills page redesign, multi-bill PDF import
 - 🔲 **Phase 2** — Bill Import (PDF parsing, per-provider regex, store in DB)
 - 🔲 **Phase 3** — UPN Generation (split by apartment, render authentic UPN slips)
 - 🔲 **Phase 4** — Email Delivery + Security (SMTP send, keyring for password)
 
-Current status: **Phase 1 complete. Phase 2 (Bill Import) next.**
+Current status: **v0.2.0 released. Phase 2 (Bill Import) next.**
 
 See `README.md` for phase summary.
 
@@ -64,7 +65,7 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
 
 ```bash
-git tag v0.1.1 && git push origin v0.1.1
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
 This triggers the GitHub Actions workflow which builds the `.msi` and publishes it as a GitHub Release.

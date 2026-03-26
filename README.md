@@ -14,6 +14,14 @@ Replaces the manual Minimax workflow: import utility bills, split costs across 5
 - Settings page: Building info, Apartments (5), Providers (4), SMTP config
 - Pre-configured provider templates (Elektro energija, JP VOKA SNAGA ×2, Energetika Ljubljana, ZLM)
 
+### ✅ Phase 1.5 — UI Polish (v0.2.0)
+- Dark mode (zinc-based theme)
+- Seed data: building, 5 apartments, 5 providers pre-loaded on first run
+- Bills page redesigned: year selector, month tabs, Add Year button
+- Delete period confirmation modal (replaced broken `window.confirm`)
+- Multi-bill PDF import: auto-splits one PDF into multiple bills by provider
+- Manual bill entry without a PDF
+
 ### 🔲 Phase 2 — Bill Import
 - Import monthly utility bills (PDF or structured data)
 - Parse bill totals using per-provider regex templates
