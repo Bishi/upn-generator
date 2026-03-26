@@ -54,6 +54,12 @@ Current status: **v0.2.0 released. Phase 2 (Bill Import) next.**
 
 See `README.md` for phase summary.
 
+## Documentation
+
+After implementing a feature or completing a plan, always update documentation as needed:
+- `CLAUDE.md` — update phase status, current version in tag example, any new key files or architecture decisions
+- `README.md` — add completed phases, update feature list
+
 ## Versioning & Releases
 
 Use semantic versioning `MAJOR.MINOR.PATCH`:
