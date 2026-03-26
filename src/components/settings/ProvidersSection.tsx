@@ -116,12 +116,12 @@ export function ProvidersSection() {
 
       {editing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-xl max-h-[90vh] overflow-y-auto">
-            <CardHeader>
+          <Card className="w-full max-w-xl max-h-[90vh] flex flex-col">
+            <CardHeader className="shrink-0">
               <CardTitle>{isNew ? "Add Provider" : "Edit Provider"}</CardTitle>
             </CardHeader>
-            <form onSubmit={handleSave}>
-              <CardContent className="space-y-4">
+            <form onSubmit={handleSave} className="flex flex-col overflow-hidden flex-1">
+              <CardContent className="space-y-4 overflow-y-auto flex-1">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Provider name</Label>

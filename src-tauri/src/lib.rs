@@ -2,8 +2,8 @@ mod commands;
 mod db;
 
 use commands::bills::{
-    create_billing_period, delete_bill, delete_billing_period, get_billing_periods, get_bills,
-    import_bill, save_bill,
+    create_billing_period, create_year_periods, delete_bill, delete_billing_period,
+    get_billing_periods, get_bills, import_bill, import_bills, save_bill,
 };
 use commands::config::{
     delete_apartment, delete_provider, get_apartments, get_building, get_providers,
@@ -47,8 +47,10 @@ pub fn run() {
             // Bills
             get_billing_periods,
             create_billing_period,
+            create_year_periods,
             delete_billing_period,
             import_bill,
+            import_bills,
             get_bills,
             save_bill,
             delete_bill,

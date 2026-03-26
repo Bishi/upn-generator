@@ -191,6 +191,37 @@ pub fn delete_billing_period(db: State<DbState>, id: i64) -> Result<(), String> 
     Ok(())
 }
 
+#[tauri::command]
+pub fn create_year_periods(db: State<DbState>, year: i32) -> Result<Vec<BillingPeriod>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    for month in 1..=12 {
+        conn.execute(
+            "INSERT OR IGNORE INTO billing_periods (building_id, month, year, status) VALUES (1, ?1, ?2, 'draft')",
+            params![month, year],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, building_id, month, year, status, created_at
+             FROM billing_periods WHERE year=?1 ORDER BY month ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([year], |row| {
+            Ok(BillingPeriod {
+                id: Some(row.get(0)?),
+                building_id: row.get(1)?,
+                month: row.get(2)?,
+                year: row.get(3)?,
+                status: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
 // ─── Bill Commands ──────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -265,7 +296,36 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
             .map_err(|e| e.to_string())?;
             Ok(bill)
         }
-        None => Err("Cannot save bill without id".to_string()),
+        None => {
+            conn.execute(
+                "INSERT INTO bills
+                 (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
+                  creditor_address, creditor_city, creditor_postal_code, reference, due_date,
+                  purpose_code, purpose_text, invoice_number, status, source_filename)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                params![
+                    bill.billing_period_id,
+                    bill.provider_id,
+                    bill.raw_text,
+                    bill.amount_cents,
+                    bill.creditor_name,
+                    bill.creditor_iban,
+                    bill.creditor_address,
+                    bill.creditor_city,
+                    bill.creditor_postal_code,
+                    bill.reference,
+                    bill.due_date,
+                    bill.purpose_code,
+                    bill.purpose_text,
+                    bill.invoice_number,
+                    bill.status,
+                    bill.source_filename,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            let id = conn.last_insert_rowid();
+            Ok(Bill { id: Some(id), ..bill })
+        }
     }
 }
 
@@ -421,4 +481,164 @@ pub fn import_bill(
         source_filename: filename,
         provider_name,
     })
+}
+
+/// Import a PDF that may contain multiple bills. Splits by provider match patterns.
+#[tauri::command]
+pub fn import_bills(
+    db: State<DbState>,
+    file_path: String,
+    billing_period_id: i64,
+) -> Result<Vec<Bill>, String> {
+    let pdf_bytes = std::fs::read(&file_path).map_err(|e| e.to_string())?;
+    let raw_text = pdf_extract::extract_text_from_mem(&pdf_bytes)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let filename = std::path::Path::new(&file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&file_path)
+        .to_string();
+
+    let (month, year) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT month, year FROM billing_periods WHERE id=?1",
+            [billing_period_id],
+            |r| Ok((r.get::<_, i32>(0)?, r.get::<_, i32>(1)?)),
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    let providers = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        get_providers_inner(&conn)
+    };
+
+    // Find all provider match positions in the text
+    let mut matches: Vec<(usize, usize)> = Vec::new(); // (position, provider_index)
+    for (idx, provider) in providers.iter().enumerate() {
+        if provider.match_pattern.is_empty() {
+            continue;
+        }
+        if let Ok(re) = Regex::new(&provider.match_pattern) {
+            for m in re.find_iter(&raw_text) {
+                matches.push((m.start(), idx));
+            }
+        }
+    }
+    matches.sort_by_key(|(pos, _)| *pos);
+
+    // Deduplicate: if two providers match at overlapping positions, keep the first
+    matches.dedup_by(|a, b| a.0 == b.0);
+
+    // If no matches, create one unmatched bill with the full text
+    if matches.is_empty() {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO bills
+             (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
+              creditor_address, creditor_city, creditor_postal_code, reference, due_date,
+              purpose_code, purpose_text, invoice_number, status, source_filename)
+             VALUES (?1,NULL,?2,0,'','','','','','','','OTHR','','','draft',?3)",
+            params![billing_period_id, raw_text, filename],
+        )
+        .map_err(|e| e.to_string())?;
+        let id = conn.last_insert_rowid();
+        return Ok(vec![Bill {
+            id: Some(id),
+            billing_period_id,
+            provider_id: None,
+            raw_text: String::new(),
+            amount_cents: 0,
+            creditor_name: String::new(),
+            creditor_iban: String::new(),
+            creditor_address: String::new(),
+            creditor_city: String::new(),
+            creditor_postal_code: String::new(),
+            reference: String::new(),
+            due_date: String::new(),
+            purpose_code: "OTHR".to_string(),
+            purpose_text: String::new(),
+            invoice_number: String::new(),
+            status: "draft".to_string(),
+            source_filename: filename,
+            provider_name: None,
+        }]);
+    }
+
+    // Split text into segments by match positions and parse each
+    let mut results: Vec<Bill> = Vec::new();
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    for (i, &(start_pos, provider_idx)) in matches.iter().enumerate() {
+        let end_pos = if i + 1 < matches.len() {
+            matches[i + 1].0
+        } else {
+            raw_text.len()
+        };
+        let segment = &raw_text[start_pos..end_pos];
+        let provider = &providers[provider_idx];
+
+        let amount_str = first_capture(&provider.amount_pattern, segment).unwrap_or_default();
+        let amount_cents = parse_amount_to_cents(&amount_str);
+        let reference = first_capture(&provider.reference_pattern, segment).unwrap_or_default();
+        let due_date = first_capture(&provider.due_date_pattern, segment).unwrap_or_default();
+        let invoice_number =
+            first_capture(&provider.invoice_number_pattern, segment).unwrap_or_default();
+        let purpose_text =
+            interpolate_template(&provider.purpose_text_template, &invoice_number, month, year);
+
+        conn.execute(
+            "INSERT INTO bills
+             (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
+              creditor_address, creditor_city, creditor_postal_code, reference, due_date,
+              purpose_code, purpose_text, invoice_number, status, source_filename)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'draft',?15)",
+            params![
+                billing_period_id,
+                provider.id,
+                segment,
+                amount_cents,
+                provider.creditor_name,
+                provider.creditor_iban,
+                provider.creditor_address,
+                provider.creditor_city,
+                provider.creditor_postal_code,
+                reference,
+                due_date,
+                provider.purpose_code,
+                purpose_text,
+                invoice_number,
+                filename,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let id = conn.last_insert_rowid();
+        results.push(Bill {
+            id: Some(id),
+            billing_period_id,
+            provider_id: provider.id,
+            raw_text: String::new(),
+            amount_cents,
+            creditor_name: provider.creditor_name.clone(),
+            creditor_iban: provider.creditor_iban.clone(),
+            creditor_address: provider.creditor_address.clone(),
+            creditor_city: provider.creditor_city.clone(),
+            creditor_postal_code: provider.creditor_postal_code.clone(),
+            reference,
+            due_date,
+            purpose_code: provider.purpose_code.clone(),
+            purpose_text,
+            invoice_number,
+            status: "draft".to_string(),
+            source_filename: filename.clone(),
+            provider_name: Some(provider.name.clone()),
+        });
+    }
+
+    Ok(results)
 }

@@ -94,6 +94,62 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // Unique indexes for idempotent seed data
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_name_iban ON providers(name, creditor_iban)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_apartment_label ON apartments(building_id, label)",
+        [],
+    );
+
+    // Seed building data (only on fresh DB where name is empty)
+    let _ = conn.execute(
+        "UPDATE building SET name='Skupnost stanovalcev Kamniška 36', address='Kamniška ulica 36', city='Ljubljana', postal_code='1000' WHERE id=1 AND name=''",
+        [],
+    );
+
+    // Seed providers
+    let _ = conn.execute_batch(
+        "
+        INSERT OR IGNORE INTO providers (name, service_type, creditor_name, creditor_address, creditor_city, creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern, reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template)
+        VALUES ('Elektro energija d.o.o.', 'Electricity', 'Elektro energija d.o.o.', 'Dunajska cesta 119', 'Ljubljana', '1000', 'SI56 0400 1004 8988 093', 'ENRG', 'Elektro energija', 'ZA PLA.+?([\\d.,]+)\\s*.', '(SI\\d{2}\\s+[\\d\\s]+)', 'Rok pla.ila:\\s*(\\d{2}\\.\\s?\\d{2}\\.\\s?\\d{4})', 'Ra.un.*?([A-Z0-9\\-]+)', 'rn. {invoice} ({month}-{year})');
+
+        INSERT OR IGNORE INTO providers (name, service_type, creditor_name, creditor_address, creditor_city, creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern, reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template)
+        VALUES ('JP VOKA SNAGA d.o.o.', 'Waste (MKO/BIO)', 'JP VOKA SNAGA d.o.o.', 'Vodovodna cesta 90', 'Ljubljana', '1000', 'SI56 0400 1004 9142 226', 'SCVE', 'VOKA SNAGA.*(?:MKO|BIO|odpad)', 'ZA PLA.+?([\\d.,]+)\\s*.', '(SI\\d{2}\\s+[\\d\\s]+)', 'Rok pla.ila:\\s*(\\d{2}\\.\\s?\\d{2}\\.\\s?\\d{4})', '', 'Komunalne stor. {invoice} ({month}-{year})');
+
+        INSERT OR IGNORE INTO providers (name, service_type, creditor_name, creditor_address, creditor_city, creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern, reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template)
+        VALUES ('Energetika Ljubljana d.o.o.', 'Gas/Heating', 'Energetika Ljubljana d.o.o.', 'Verovškova ulica 62', 'Ljubljana', '1000', 'SI56 0292 4025 3764 022', 'ENRG', 'Energetika Ljubljana', 'ZA PLA.+?([\\d.,]+)\\s*.', '(SI\\d{2}\\s+[\\d\\s]+)', 'Rok pla.ila:\\s*(\\d{2}\\.\\s?\\d{2}\\.\\s?\\d{4})', '', 'rn. {invoice} ({month}-{year})');
+
+        INSERT OR IGNORE INTO providers (name, service_type, creditor_name, creditor_address, creditor_city, creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern, reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template)
+        VALUES ('ZLM d.o.o.', 'Cleaning', 'ZLM d.o.o.', '', 'Ljubljana', '1000', 'SI56 0201 1025 7890 131', 'OTHR', 'ZLM', 'ZA PLA.+?([\\d.,]+)\\s*.', '(SI\\d{2}\\s+[\\d\\s]+)', 'Rok pla.ila:\\s*(\\d{2}\\.\\s?\\d{2}\\.\\s?\\d{4})', 'RN\\.\\s*([A-Z0-9\\-]+)', 'RN. {invoice} ({month}-{year})');
+
+        INSERT OR IGNORE INTO providers (name, service_type, creditor_name, creditor_address, creditor_city, creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern, reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template)
+        VALUES ('JP VOKA SNAGA d.o.o.', 'Water/Sewage', 'JP VOKA SNAGA d.o.o.', 'Vodovodna cesta 90', 'Ljubljana', '1000', 'SI56 2900 0000 3057 588', 'WTER', 'VOKA SNAGA.*(?:vod|kanal)', 'ZA PLA.+?([\\d.,]+)\\s*.', '(SI\\d{2}\\s+[\\d\\s]+)', 'Rok pla.ila:\\s*(\\d{2}\\.\\s?\\d{2}\\.\\s?\\d{4})', '', 'Komunalne stor. {invoice} ({month}-{year})');
+        ",
+    );
+
+    // Seed apartments (5 apartments, 12 total occupants)
+    let _ = conn.execute_batch(
+        "
+        INSERT OR IGNORE INTO apartments (building_id, label, occupant_count, contact_email, payer_name, payer_address, payer_city, payer_postal_code, is_active)
+        VALUES (1, 'Stanovanje 1', 3, '', 'Stanovalec 1', 'Kamniška ulica 36', 'Ljubljana', '1000', 1);
+
+        INSERT OR IGNORE INTO apartments (building_id, label, occupant_count, contact_email, payer_name, payer_address, payer_city, payer_postal_code, is_active)
+        VALUES (1, 'Stanovanje 2', 2, '', 'Stanovalec 2', 'Kamniška ulica 36', 'Ljubljana', '1000', 1);
+
+        INSERT OR IGNORE INTO apartments (building_id, label, occupant_count, contact_email, payer_name, payer_address, payer_city, payer_postal_code, is_active)
+        VALUES (1, 'Stanovanje 3', 3, '', 'Stanovalec 3', 'Kamniška ulica 36', 'Ljubljana', '1000', 1);
+
+        INSERT OR IGNORE INTO apartments (building_id, label, occupant_count, contact_email, payer_name, payer_address, payer_city, payer_postal_code, is_active)
+        VALUES (1, 'Stanovanje 4', 2, '', 'Stanovalec 4', 'Kamniška ulica 36', 'Ljubljana', '1000', 1);
+
+        INSERT OR IGNORE INTO apartments (building_id, label, occupant_count, contact_email, payer_name, payer_address, payer_city, payer_postal_code, is_active)
+        VALUES (1, 'Stanovanje 5', 2, '', 'Stanovalec 5', 'Kamniška ulica 36', 'Ljubljana', '1000', 1);
+        ",
+    );
+
     // Additive migrations — silently ignored if column already exists
     let _ = conn.execute(
         "ALTER TABLE smtp_config ADD COLUMN password TEXT NOT NULL DEFAULT ''",

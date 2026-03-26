@@ -29,6 +29,10 @@ export function ApartmentsSection() {
     queryKey: ["apartments"],
     queryFn: ipc.getApartments,
   });
+  const { data: building } = useQuery({
+    queryKey: ["building"],
+    queryFn: ipc.getBuilding,
+  });
 
   const [editing, setEditing] = useState<Apartment | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -55,7 +59,12 @@ export function ApartmentsSection() {
   };
 
   const handleNew = () => {
-    setEditing(newApartment());
+    setEditing({
+      ...newApartment(),
+      payer_address: building?.address ?? "",
+      payer_city: building?.city ?? "Ljubljana",
+      payer_postal_code: building?.postal_code ?? "1000",
+    });
     setIsNew(true);
   };
 
@@ -128,12 +137,12 @@ export function ApartmentsSection() {
       {/* Edit / New form modal */}
       {editing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <CardHeader>
+          <Card className="w-full max-w-md max-h-[90vh] flex flex-col">
+            <CardHeader className="shrink-0">
               <CardTitle>{isNew ? "Add Apartment" : "Edit Apartment"}</CardTitle>
             </CardHeader>
-            <form onSubmit={handleSave}>
-              <CardContent className="space-y-4">
+            <form onSubmit={handleSave} className="flex flex-col overflow-hidden flex-1">
+              <CardContent className="space-y-4 overflow-y-auto flex-1">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Label</Label>

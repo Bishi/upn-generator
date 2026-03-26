@@ -34,6 +34,8 @@ export const ipc = {
   getBillingPeriods: () => invoke<BillingPeriod[]>("get_billing_periods"),
   createBillingPeriod: (month: number, year: number) =>
     invoke<BillingPeriod>("create_billing_period", { month, year }),
+  createYearPeriods: (year: number) =>
+    invoke<BillingPeriod[]>("create_year_periods", { year }),
   deleteBillingPeriod: (id: number) =>
     invoke<void>("delete_billing_period", { id }),
 
@@ -42,6 +44,8 @@ export const ipc = {
     invoke<Bill[]>("get_bills", { billingPeriodId }),
   importBill: (filePath: string, billingPeriodId: number) =>
     invoke<Bill>("import_bill", { filePath, billingPeriodId }),
+  importBills: (filePath: string, billingPeriodId: number) =>
+    invoke<Bill[]>("import_bills", { filePath, billingPeriodId }),
   saveBill: (bill: Bill) => invoke<Bill>("save_bill", { bill }),
   deleteBill: (id: number) => invoke<void>("delete_bill", { id }),
 
