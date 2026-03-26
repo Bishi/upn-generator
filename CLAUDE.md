@@ -39,6 +39,17 @@ npm run dev            # frontend only (no Tauri)
 
 UPN output must look as close to real Slovenian bank UPN forms as possible. Tenants receive these to pay bills — they must feel legitimate. Use official UPN template as background image with precisely positioned text overlay. Reference examples in `file-examples/` (1.PNG, 2.PNG, 3.PNG).
 
+## Plan Status — "UPN Generator - Apartment Bill Splitting App"
+
+- ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
+- 🔲 **Phase 2** — Bill Import (PDF parsing, per-provider regex, store in DB)
+- 🔲 **Phase 3** — UPN Generation (split by apartment, render authentic UPN slips)
+- 🔲 **Phase 4** — Email Delivery + Security (SMTP send, keyring for password)
+
+Current status: **Phase 1 complete. Starting Phase 2 next.**
+
+See `README.md` for full phase details.
+
 ## Versioning & Releases
 
 Use semantic versioning `MAJOR.MINOR.PATCH`:
