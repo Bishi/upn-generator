@@ -41,45 +41,6 @@ function PeriodTabs({
   );
 }
 
-// ─── PDF preview modal ────────────────────────────────────────────────────
-
-function PdfModal({
-  base64Pdf,
-  title,
-  onClose,
-}: {
-  base64Pdf: string;
-  title: string;
-  onClose: () => void;
-}) {
-  const src = `data:application/pdf;base64,${base64Pdf}`;
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-[780px] h-[90vh] bg-card rounded-lg shadow-xl flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <span className="font-medium text-sm">{title}</span>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground text-xl leading-none"
-          >
-            ×
-          </button>
-        </div>
-        <iframe
-          src={src}
-          className="flex-1 w-full rounded-b-lg"
-          title={title}
-        />
-      </div>
-    </div>
-  );
-}
 
 // ─── Apartment card ───────────────────────────────────────────────────────
 
@@ -94,16 +55,12 @@ function ApartmentCard({
   splits: SplitRow[];
   emailResult?: EmailResult;
 }) {
-  const [previewPdf, setPreviewPdf] = useState<string | null>(null);
-  const [previewTitle, setPreviewTitle] = useState("");
   const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
 
-  const previewUpn = async (billId: number, label: string) => {
+  const previewUpn = async (billId: number) => {
     setLoadingPreview(billId);
     try {
-      const b64 = await ipc.generateUpnPdf(billId, apartmentId);
-      setPreviewPdf(b64);
-      setPreviewTitle(label);
+      await ipc.previewUpn(billId, apartmentId);
     } finally {
       setLoadingPreview(null);
     }
@@ -146,12 +103,7 @@ function ApartmentCard({
                   {formatEur(s.split_amount_cents)} €
                 </span>
                 <button
-                  onClick={() =>
-                    previewUpn(
-                      s.bill_id,
-                      `${apartmentLabel} · ${s.provider_name ?? s.bill_source_filename}`
-                    )
-                  }
+                  onClick={() => previewUpn(s.bill_id)}
                   disabled={loadingPreview === s.bill_id}
                   className="text-muted-foreground hover:text-primary transition-colors"
                   title="Preview UPN"
@@ -173,13 +125,6 @@ function ApartmentCard({
         </div>
       </div>
 
-      {previewPdf && (
-        <PdfModal
-          base64Pdf={previewPdf}
-          title={previewTitle}
-          onClose={() => setPreviewPdf(null)}
-        />
-      )}
     </>
   );
 }

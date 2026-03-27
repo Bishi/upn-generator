@@ -407,6 +407,26 @@ pub fn generate_upn_pdf(
     Ok(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes))
 }
 
+/// Generate a UPN PDF for one bill+apartment and open it with the system PDF viewer.
+/// WebView2 cannot render PDF data URLs in iframes, so we save to a temp file instead.
+#[tauri::command]
+pub fn preview_upn(
+    db: State<DbState>,
+    _app: tauri::AppHandle,
+    bill_id: i64,
+    apartment_id: i64,
+) -> Result<(), String> {
+    let data = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        load_upn_data(&conn, bill_id, apartment_id)?
+    };
+    let pdf_bytes = render_upn_pdf(&data)?;
+    let temp_path = std::env::temp_dir().join(format!("upn_{}_{}.pdf", bill_id, apartment_id));
+    std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
+    tauri_plugin_opener::open_path(temp_path.to_str().unwrap_or(""), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn save_smtp_password(db: State<DbState>, password: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;

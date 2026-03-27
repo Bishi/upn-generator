@@ -573,17 +573,11 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             None => continue,
         };
         let iban_norm = normalize_iban(&iban_raw);
-        if !seen_ibans.insert(iban_norm.clone()) {
-            continue; // duplicate stub for same provider
-        }
 
-        // Payment reference (SI00/SI12/etc., not SI56)
+        // Extract everything BEFORE dedup check so duplicate stubs can contribute data
         let reference = find_payment_reference(after);
-
-        // Purpose code from stub line or next line
         let stub_line_end = after.find('\n').unwrap_or(after.len());
         let search_area = &after[..stub_line_end.min(after.len())];
-        // Also check 2 lines after if not found on stub line
         let search_area2 = &after[..after.find('\n').and_then(|i| after[i+1..].find('\n').map(|j| i+1+j)).unwrap_or(after.len()).min(after.len())];
 
         let (purpose_code, purpose_text) = if let Some(caps) = purpose_code_re.captures(search_area) {
@@ -598,7 +592,6 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             ("OTHR".to_string(), String::new())
         };
 
-        // Due date: look in a window before the stub too (label often precedes ***)
         let before_start = m.start().saturating_sub(500);
         let context = &text[before_start..after_end];
         let mut due_date = find_due_date(context);
@@ -609,6 +602,22 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
                     due_date = caps.get(1).unwrap().as_str().to_string();
                 }
             }
+        }
+
+        if !seen_ibans.insert(iban_norm.clone()) {
+            // Duplicate stub: merge any better data into the existing entry
+            if let Some(existing) = results.iter_mut().find(|b| b.iban_norm == iban_norm) {
+                if existing.due_date.is_empty() && !due_date.is_empty() {
+                    existing.due_date = due_date;
+                }
+                if existing.purpose_text.is_empty() && !purpose_text.is_empty() {
+                    existing.purpose_text = purpose_text;
+                }
+                if existing.purpose_code == "OTHR" && purpose_code != "OTHR" {
+                    existing.purpose_code = purpose_code;
+                }
+            }
+            continue;
         }
 
         results.push(ExtractedBill {
