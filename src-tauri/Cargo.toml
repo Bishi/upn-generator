@@ -26,6 +26,7 @@ printpdf = "0.6"
 lettre = { version = "0.11", features = ["smtp-transport", "rustls-tls", "builder"] }
 base64 = "0.22"
 chrono = "0.4"
+qrcodegen = "1.8"
 
 [profile.release]
 opt-level = 2        # slightly less optimization, noticeably faster compile

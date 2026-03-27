@@ -140,6 +140,105 @@ fn load_system_font() -> Option<Vec<u8>> {
     None
 }
 
+// ─── UPNQR generation ──────────────────────────────────────────────────────
+
+/// Convert a UTF-8 string to ISO-8859-2 bytes (required by the UPNQR standard).
+/// Only maps characters used in Slovenian text; everything else falls through as Latin-1.
+fn to_iso8859_2(s: &str) -> Vec<u8> {
+    s.chars().map(|c| match c {
+        'Š' => 0xA9, 'š' => 0xB9,
+        'Č' => 0xC8, 'č' => 0xE8,
+        'Ž' => 0xAE, 'ž' => 0xBE,
+        'Ć' => 0xC6, 'ć' => 0xE6,
+        'Đ' => 0xD0, 'đ' => 0xF0,
+        other => {
+            let n = other as u32;
+            if n < 256 { n as u8 } else { b'?' }
+        }
+    }).collect()
+}
+
+/// Build the 20-field UPNQR string with appended 3-digit checksum.
+fn build_upnqr_string(data: &UpnData) -> String {
+    // IBAN and reference must have no spaces
+    let iban: String = data.creditor_iban.chars().filter(|c| c.is_alphanumeric()).collect();
+    let reference: String = data.creditor_reference.chars().filter(|c| !c.is_whitespace()).collect();
+    let amount = format!("{:011}", data.amount_cents);
+
+    // Helper: truncate to N Unicode chars (= N ISO-8859-2 bytes for our charset)
+    let tr = |s: &str, n: usize| -> String { s.chars().take(n).collect() };
+
+    let fields: Vec<String> = vec![
+        "UPNQR".into(),                                                  // 1  header
+        "".into(),                                                        // 2  payer IBAN (blank — tenant fills in)
+        "".into(),                                                        // 3  deposit flag
+        "".into(),                                                        // 4  withdraw flag
+        "".into(),                                                        // 5  payer reference
+        tr(&data.payer_name, 33),                                        // 6  payer name
+        tr(&data.payer_address, 33),                                     // 7  payer street
+        tr(&format!("{} {}", data.payer_postal_code, data.payer_city), 33), // 8 payer city
+        amount,                                                           // 9  amount (cents, 11 digits)
+        "".into(),                                                        // 10 payment date
+        "".into(),                                                        // 11 urgent flag
+        tr(&data.purpose_code, 4),                                       // 12 purpose code
+        tr(&data.purpose_text, 42),                                      // 13 purpose text
+        tr(&data.due_date, 10),                                          // 14 due date DD.MM.YYYY
+        tr(&iban, 19),                                                   // 15 recipient IBAN (no spaces)
+        tr(&reference, 26),                                              // 16 recipient reference
+        tr(&data.creditor_name, 33),                                     // 17 recipient name
+        tr(&data.creditor_address, 33),                                  // 18 recipient street
+        tr(&data.creditor_city, 33),                                     // 19 recipient city
+        "".into(),                                                        // 20 reserved
+    ];
+
+    // Checksum = total character count of all 20 fields + 19 newline separators
+    let checksum: usize = fields.iter().map(|f| f.chars().count()).sum::<usize>() + 19;
+    format!("{}\n{:03}", fields.join("\n"), checksum)
+}
+
+/// Render the UPNQR string as a grayscale pixel buffer (returns pixels + side length in px).
+fn render_upnqr_pixels(data: &UpnData) -> Result<(Vec<u8>, usize), String> {
+    use qrcodegen::{QrCode, QrCodeEcc, QrSegment, Version, Mask};
+
+    let qr_string = build_upnqr_string(data);
+    let iso_bytes = to_iso8859_2(&qr_string);
+
+    // ECI designator 4 = ISO-8859-2, then raw bytes segment
+    let eci_seg = QrSegment::make_eci(4);
+    let data_seg = QrSegment::make_bytes(&iso_bytes);
+
+    let qr = QrCode::encode_segments_advanced(
+        &[eci_seg, data_seg],
+        QrCodeEcc::Medium,
+        Version::new(15),
+        Version::new(15),
+        Some(Mask::new(2)), // deterministic mask
+        false,
+    ).map_err(|e| format!("QR encode error: {:?}", e))?;
+
+    // 4 modules quiet zone + 4 px per module
+    let quiet = 4i32;
+    let scale = 4i32;
+    let total = qr.size() + 2 * quiet;
+    let img_size = (total * scale) as usize;
+
+    let mut pixels = vec![255u8; img_size * img_size]; // white fill
+    for y in 0..qr.size() {
+        for x in 0..qr.size() {
+            if qr.get_module(x, y) {
+                let ox = ((x + quiet) * scale) as usize;
+                let oy = ((y + quiet) * scale) as usize;
+                for dy in 0..scale as usize {
+                    for dx in 0..scale as usize {
+                        pixels[(oy + dy) * img_size + (ox + dx)] = 0u8;
+                    }
+                }
+            }
+        }
+    }
+    Ok((pixels, img_size))
+}
+
 fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     let (doc, page1, layer1) =
         PdfDocument::new("Nalog za placilo", Mm(210.0), Mm(297.0), "Layer 1");
@@ -220,6 +319,28 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
 
     hline(&layer, sl, hy3, c2); // barcode zone separator
     t(&layer, "QR/OCR koda", 5.5, lx, sb + 3.5, &font);
+
+    // ─── UPNQR code ─────────────────────────────────────────────────────
+    if let Ok((pixels, img_px)) = render_upnqr_pixels(data) {
+        let qr_mm = (hy3 - sb - 7.0) as f64; // fill the barcode zone (leave small margin)
+        let dpi = img_px as f64 * 25.4 / qr_mm;
+        let img_xobj = ImageXObject {
+            width: Px(img_px),
+            height: Px(img_px),
+            color_space: ColorSpace::Greyscale,
+            bits_per_component: ColorBits::Bit8,
+            image_data: pixels,
+            image_filter: None,
+            clipping_bbox: None,
+            interpolate: false,
+        };
+        Image::from(img_xobj).add_to_layer(layer.clone(), ImageTransform {
+            translate_x: Some(Mm(sl + 2.0)),
+            translate_y: Some(Mm(sb + 5.5)),
+            dpi: Some(dpi as f32),
+            ..Default::default()
+        });
+    }
 
     // ─── Middle column: Purpose + Amount ───────────────────────────────
     let mx = c1 + 1.5;
@@ -407,15 +528,15 @@ pub fn generate_upn_pdf(
     Ok(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes))
 }
 
-/// Generate a UPN PDF for one bill+apartment and open it with the system PDF viewer.
-/// WebView2 cannot render PDF data URLs in iframes, so we save to a temp file instead.
+/// Save UPN PDF to a temp file and return the absolute path so the frontend can
+/// open it in a new WebviewWindow (file:// URL). WebView2 renders PDFs natively
+/// in top-level windows but not inside iframes.
 #[tauri::command]
 pub fn preview_upn(
     db: State<DbState>,
-    _app: tauri::AppHandle,
     bill_id: i64,
     apartment_id: i64,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let data = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         load_upn_data(&conn, bill_id, apartment_id)?
@@ -423,8 +544,10 @@ pub fn preview_upn(
     let pdf_bytes = render_upn_pdf(&data)?;
     let temp_path = std::env::temp_dir().join(format!("upn_{}_{}.pdf", bill_id, apartment_id));
     std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
-    tauri_plugin_opener::open_path(temp_path.to_str().unwrap_or(""), None::<&str>)
-        .map_err(|e| e.to_string())
+    temp_path
+        .to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Invalid temp path".to_string())
 }
 
 #[tauri::command]

@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useEffect, useState } from "react";
 import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
@@ -11,17 +12,29 @@ export const Route = createFileRoute("/upn")({
   component: UpnPage,
 });
 
-// ─── Period tabs ──────────────────────────────────────────────────────────
+// ─── Year selector ────────────────────────────────────────────────────────
 
-function PeriodTabs({
-  periods,
-  selected,
-  onSelect,
-}: {
-  periods: BillingPeriod[];
-  selected: BillingPeriod | null;
-  onSelect: (p: BillingPeriod) => void;
-}) {
+function YearSelector({ years, selectedYear, onSelectYear }: { years: number[]; selectedYear: number; onSelectYear: (y: number) => void }) {
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {years.map((y) => (
+        <button
+          key={y}
+          onClick={() => onSelectYear(y)}
+          className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+            selectedYear === y ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
+          }`}
+        >
+          {y}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Month tabs ───────────────────────────────────────────────────────────
+
+function MonthTabs({ periods, selected, onSelect }: { periods: BillingPeriod[]; selected: BillingPeriod | null; onSelect: (p: BillingPeriod) => void }) {
   return (
     <div className="flex gap-1 flex-wrap">
       {periods.map((p) => (
@@ -29,12 +42,10 @@ function PeriodTabs({
           key={p.id}
           onClick={() => onSelect(p)}
           className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-            selected?.id === p.id
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border hover:bg-accent"
+            selected?.id === p.id ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
           }`}
         >
-          {MONTHS[p.month - 1]} {p.year}
+          {MONTHS[p.month - 1]}
         </button>
       ))}
     </div>
@@ -56,113 +67,88 @@ function ApartmentCard({
   emailResult?: EmailResult;
 }) {
   const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewTitle, setPreviewTitle] = useState("");
 
   const previewUpn = async (billId: number, label: string) => {
     setLoadingPreview(billId);
     try {
-      const b64 = await ipc.generateUpnPdf(billId, apartmentId);
-      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const blob = new Blob([bytes], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(url);
-      setPreviewTitle(label);
+      const path = await ipc.previewUpn(billId, apartmentId);
+      const url = `file:///${path.replace(/\\/g, "/")}`;
+      new WebviewWindow(`upn-preview-${billId}-${apartmentId}`, {
+        url,
+        title: label,
+        width: 900,
+        height: 700,
+      });
     } finally {
       setLoadingPreview(null);
     }
   };
 
-  const closePreview = () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
-  };
-
   const total = splits.reduce((s, r) => s + r.split_amount_cents, 0);
 
   return (
-    <>
-      <div className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">{apartmentLabel}</h3>
-          {emailResult && (
-            <span
-              className={`flex items-center gap-1 text-xs ${
-                emailResult.success ? "text-green-600" : "text-destructive"
-              }`}
-            >
-              {emailResult.success ? (
-                <CheckCircle2 className="size-3.5" />
-              ) : (
-                <XCircle className="size-3.5" />
-              )}
-              {emailResult.success ? "Sent" : emailResult.error ?? "Failed"}
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          {splits.map((s) => (
-            <div
-              key={s.bill_id}
-              className="flex items-center justify-between text-sm"
-            >
-              <span className="text-muted-foreground truncate max-w-40">
-                {s.provider_name ?? s.bill_source_filename}
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="font-mono font-medium">
-                  {formatEur(s.split_amount_cents)} €
-                </span>
-                <button
-                  onClick={() => previewUpn(s.bill_id, `${apartmentLabel} · ${s.provider_name ?? s.bill_source_filename}`)}
-                  disabled={loadingPreview === s.bill_id}
-                  className="text-muted-foreground hover:text-primary transition-colors"
-                  title="Preview UPN"
-                >
-                  {loadingPreview === s.bill_id ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Eye className="size-3.5" />
-                  )}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="border-t border-border pt-2 flex justify-between text-sm font-semibold">
-          <span>Total</span>
-          <span className="font-mono">{formatEur(total)} €</span>
-        </div>
+    <div className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">{apartmentLabel}</h3>
+        {emailResult && (
+          <span
+            className={`flex items-center gap-1 text-xs ${
+              emailResult.success ? "text-green-600" : "text-destructive"
+            }`}
+          >
+            {emailResult.success ? (
+              <CheckCircle2 className="size-3.5" />
+            ) : (
+              <XCircle className="size-3.5" />
+            )}
+            {emailResult.success ? "Sent" : emailResult.error ?? "Failed"}
+          </span>
+        )}
       </div>
 
-      {previewUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={closePreview}
-        >
+      <div className="flex flex-col gap-1.5">
+        {splits.map((s) => (
           <div
-            className="relative w-[780px] h-[90vh] bg-card rounded-lg shadow-xl flex flex-col"
-            onClick={(e) => e.stopPropagation()}
+            key={s.bill_id}
+            className="flex items-center justify-between text-sm"
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-              <span className="font-medium text-sm">{previewTitle}</span>
-              <button onClick={closePreview} className="text-muted-foreground hover:text-foreground text-xl leading-none">×</button>
+            <span className="text-muted-foreground truncate max-w-40">
+              {s.provider_name ?? s.bill_source_filename}
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono font-medium">
+                {formatEur(s.split_amount_cents)} €
+              </span>
+              <button
+                onClick={() => previewUpn(s.bill_id, `${apartmentLabel} · ${s.provider_name ?? s.bill_source_filename}`)}
+                disabled={loadingPreview === s.bill_id}
+                className="text-muted-foreground hover:text-primary transition-colors"
+                title="Preview UPN"
+              >
+                {loadingPreview === s.bill_id ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Eye className="size-3.5" />
+                )}
+              </button>
             </div>
-            <iframe src={previewUrl} className="flex-1 w-full rounded-b-lg" title={previewTitle} />
           </div>
-        </div>
-      )}
-    </>
+        ))}
+      </div>
+
+      <div className="border-t border-border pt-2 flex justify-between text-sm font-semibold">
+        <span>Total</span>
+        <span className="font-mono">{formatEur(total)} €</span>
+      </div>
+    </div>
   );
 }
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 function UpnPage() {
-  const [periods, setPeriods] = useState<BillingPeriod[]>([]);
+  const [allPeriods, setAllPeriods] = useState<BillingPeriod[]>([]);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selected, setSelected] = useState<BillingPeriod | null>(null);
   const [splits, setSplits] = useState<SplitRow[]>([]);
   const [sending, setSending] = useState(false);
@@ -170,10 +156,18 @@ function UpnPage() {
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
 
+  const years = [...new Set(allPeriods.map((p) => p.year))].sort((a, b) => b - a);
+  const yearPeriods = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => a.month - b.month);
+
   const loadPeriods = async () => {
     const ps = await ipc.getBillingPeriods();
-    setPeriods(ps);
-    if (!selected && ps.length > 0) setSelected(ps[0]);
+    setAllPeriods(ps);
+    if (ps.length > 0) {
+      const latestYear = Math.max(...ps.map((p) => p.year));
+      setSelectedYear(latestYear);
+      const latest = ps.filter((p) => p.year === latestYear).sort((a, b) => b.month - a.month)[0];
+      setSelected(latest ?? null);
+    }
   };
 
   const loadSplits = async (id: number) => {
@@ -183,11 +177,12 @@ function UpnPage() {
 
   useEffect(() => { loadPeriods(); }, []);
   useEffect(() => {
-    if (selected?.id) {
-      setEmailResults([]);
-      loadSplits(selected.id);
-    }
+    if (selected?.id) { setEmailResults([]); loadSplits(selected.id); }
   }, [selected]);
+  useEffect(() => {
+    const yp = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => b.month - a.month);
+    if (yp.length > 0 && (!selected || selected.year !== selectedYear)) setSelected(yp[0]);
+  }, [selectedYear, allPeriods]);
 
   const sendEmails = async () => {
     if (!selected?.id) return;
@@ -253,11 +248,10 @@ function UpnPage() {
         </div>
       </div>
 
-      <PeriodTabs
-        periods={periods}
-        selected={selected}
-        onSelect={(p) => { setSelected(p); setSplits([]); setEmailResults([]); }}
-      />
+      <YearSelector years={years} selectedYear={selectedYear} onSelectYear={setSelectedYear} />
+      {yearPeriods.length > 0 && (
+        <MonthTabs periods={yearPeriods} selected={selected} onSelect={(p) => { setSelected(p); setSplits([]); setEmailResults([]); }} />
+      )}
 
       {sendError && (
         <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">

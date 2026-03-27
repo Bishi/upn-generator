@@ -1,80 +1,179 @@
-# UPN Generator - Apartment Bill Splitting App
+# UPN Generator — User Manual
 
-A Tauri desktop app (Windows) for the building accountant at **Kamniška ulica 36, Ljubljana**.
+Desktop application for the **building manager at Kamniška ulica 36, Ljubljana**.
 
-Replaces the manual Minimax workflow: import utility bills, split costs across 5 apartments, and generate authentic Slovenian UPN payment slips for each tenant.
-
----
-
-## The Plan
-
-### ✅ Phase 1 — Scaffold + Settings UI
-- Tauri v2 + React + TypeScript + Tailwind v4 + TanStack Router
-- SQLite DB via `rusqlite` (bundled)
-- Settings page: Building info, Apartments (5), Providers (4), SMTP config
-- Pre-configured provider templates (Elektro energija, JP VOKA SNAGA ×2, Energetika Ljubljana, ZLM)
-
-### ✅ Phase 1.5 — UI Polish (v0.2.0)
-- Dark mode (zinc-based theme)
-- Seed data: building, 5 apartments, 5 providers pre-loaded on first run
-- Bills page redesigned: year selector, month tabs, Add Year button
-- Delete period confirmation modal (replaced broken `window.confirm`)
-- Multi-bill PDF import: auto-splits one PDF into multiple bills by provider
-- Manual bill entry without a PDF
-
-### 🔲 Phase 2 — Bill Import
-- Import monthly utility bills (PDF or structured data)
-- Parse bill totals using per-provider regex templates
-- Store imported bills in DB linked to provider + month
-
-### 🔲 Phase 3 — UPN Generation
-- Split each bill across apartments by occupancy share
-- Generate authentic Slovenian UPN payment slip per apartment per bill
-- UPN output uses official template as background with precisely positioned text overlay
-- Reference examples: `file-examples/1.PNG`, `2.PNG`, `3.PNG`
-
-### 🔲 Phase 4 — Email Delivery + Security
-- Send generated UPN slips to tenants via SMTP
-- Secure SMTP password using system keyring (`tauri-plugin-keyring`)
+Each month: import the combined utility bill PDF, split costs across apartments, and generate UPN payment slips for each tenant.
 
 ---
 
-## Building Data
+## Installation
 
-| | |
-|---|---|
-| **Address** | Kamniška ulica 36, 1000 Ljubljana |
-| **Apartments** | 5 |
-| **Occupants** | 12 |
+1. Download the latest `.msi` file from [Releases](https://github.com/Bishi/upn-generator/releases)
+2. Run the installer and follow the prompts
+3. Launch the app from the Start menu — **UPN Generator**
 
-**Monthly bills (5 bills from 4 providers):**
+---
+
+## First-Time Setup
+
+On first launch, all providers, apartments, and building details are **pre-configured for Kamniška ulica 36**. Before first use, verify the data is correct.
+
+### Settings → Building
+
+Check the building address and contact details. These appear on UPN slips as the payer address.
+
+### Settings → Apartments
+
+All 5 apartments are pre-configured. For each apartment, verify:
+
+| Field | Description |
+|-------|-------------|
+| **Payer name** | Tenant or owner name as it will appear on the UPN slip |
+| **Address / postal code / city** | Payer address on the UPN slip (defaults to Kamniška ulica 36) |
+| **Email address** | Where the UPN slip is sent each month |
+| **Number of occupants** | Used to calculate each apartment's share of the bills |
+
+### Settings → Providers
+
+All 5 utility providers are pre-configured with the correct IBANs and payment purpose templates. You normally do not need to change these.
 
 | Provider | Service | IBAN |
-|---|---|---|
+|----------|---------|------|
 | Elektro energija d.o.o. | Electricity | SI56 0400 1004 8988 093 |
-| JP VOKA SNAGA d.o.o. | Waste | SI56 0400 1004 9142 226 |
+| JP VOKA SNAGA d.o.o. | Waste collection | SI56 0400 1004 9142 226 |
 | JP VOKA SNAGA d.o.o. | Water | SI56 2900 0000 3057 588 |
 | Energetika Ljubljana d.o.o. | Gas | SI56 0292 4025 3764 022 |
 | ZLM d.o.o. | Cleaning | SI56 0201 1025 7890 131 |
 
+### Settings → Email (SMTP)
+
+Enter your outgoing mail server credentials so the app can send UPN slips to tenants. Typical Gmail settings:
+
+| Field | Value |
+|-------|-------|
+| Server | `smtp.gmail.com` |
+| Port | `587` |
+| Username | Your Gmail address |
+| Password | App password (not your regular Gmail password) |
+| TLS | Enabled |
+
+> **Gmail note:** You must create an **App Password** in your Google Account security settings. Your regular Gmail password will not work.
+
 ---
 
-## Tech Stack
+## Monthly Workflow
 
-- **Frontend:** React + TypeScript, TanStack Router (file-based), Tailwind v4
-- **Backend:** Rust + Tauri v2, `rusqlite` (bundled) for local SQLite
-- **Build:** Vite + `@tauri-apps/cli`
+### Step 1 — Create a billing period
 
-## Dev Commands
+Go to the **Bills** page.
 
-```bash
-npm run tauri dev      # dev with hot reload
-npm run tauri build    # production build
-npm run dev            # frontend only (no Tauri)
+- First time using a new year: click **Add Year**, enter the year (e.g. `2026`) — all 12 months are created at once.
+- In subsequent months, the periods already exist; just select the correct month.
+
+### Step 2 — Import bills
+
+Select the month and click **Import PDF**.
+
+The app supports importing a **single combined PDF** (e.g. `Racuni_02_2026.pdf`) containing all bills together. It automatically detects and splits them by provider:
+
+| Provider | Service | Detection method |
+|----------|---------|-----------------|
+| Elektro energija d.o.o. | Electricity | `ZA PLAČILO Z DDV:` text |
+| JP VOKA SNAGA d.o.o. | Waste / Water | UPN stub `***amount` |
+| Energetika Ljubljana d.o.o. | Gas | UPN stub `***amount` |
+| ZLM d.o.o. | Cleaning | `Za plačilo EUR:` text |
+
+After import, check the bills table: amount, reference, due date, and purpose should all be filled in correctly.
+
+**Manual entry:** If a bill was not detected, click **Add manually** and enter the details yourself.
+
+**Editing:** Click the pencil icon on any row to correct a bill.
+
+### Step 3 — Verify bills
+
+The Bills page should show 5 rows (one per provider) with correct amounts:
+
+- Elektro energija — electricity
+- JP VOKA SNAGA — waste collection
+- JP VOKA SNAGA — water
+- Energetika Ljubljana — gas
+- ZLM — cleaning
+
+The **total** of all bills for the month is shown at the bottom.
+
+### Step 4 — Calculate splits
+
+Go to the **Splits** page and click **Recalculate**.
+
+The app divides each bill across apartments proportionally by **number of occupants**. The matrix shows each apartment's share of each bill.
+
+Individual amounts can be manually adjusted by clicking a cell.
+
+### Step 5 — Preview and send UPN slips
+
+Go to the **UPN** page and select the billing period.
+
+Each apartment card shows its line items and the total amount due.
+
+| Action | Description |
+|--------|-------------|
+| **Eye icon (👁)** | Opens a preview of the UPN slip for that bill and apartment |
+| **Download All PDFs** | Saves all UPN slips to a folder of your choice |
+| **Send Emails** | Sends UPN slips to all tenants at their configured email addresses |
+
+---
+
+## Pages Overview
+
+### Bills
+
+Overview of all imported bills by year and month. Import PDFs, add manual entries, edit or delete rows.
+
+### Splits
+
+The split matrix: rows are bills, columns are apartments. Shows how much each apartment owes for each bill in the selected month. Values can be manually adjusted.
+
+### UPN
+
+Generate and distribute UPN payment slips. Each apartment card shows the total amount due and individual line items. Send emails or download PDFs from here.
+
+### Settings
+
+Four tabs for configuring the application:
+
+- **Building** — Building address and contact details
+- **Apartments** — List of apartments with tenant names and email addresses
+- **Providers** — Utility providers with IBANs and purpose text templates
+- **Email** — SMTP settings for sending emails
+
+---
+
+## Data & Privacy
+
+All data is stored locally in a SQLite database at:
+
+```
+%APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-## Releases
+Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings.
 
-Download the latest `.msi` installer from [Releases](https://github.com/Bishi/upn-generator/releases).
+---
 
-Versioning: `PATCH` for fixes (`0.1.0 → 0.1.1`), `MINOR` for features (`0.1.x → 0.2.0`), `MAJOR` for milestones.
+## Troubleshooting
+
+**PDF import doesn't find all bills**
+
+A parse log is written on every import:
+```
+%APPDATA%\si.upn-generator\import_debug.log
+```
+Open it to see the raw extracted PDF text and what each detection phase found or missed.
+
+**UPN preview doesn't open**
+
+Make sure a PDF viewer is installed (e.g. Adobe Acrobat or Microsoft Edge). The preview opens in a separate window using the system's built-in PDF renderer.
+
+**Email not sending**
+
+Check the SMTP settings under Settings → Email. For Gmail, you must use an **App Password** — your regular account password will be rejected.

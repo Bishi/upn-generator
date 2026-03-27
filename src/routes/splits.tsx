@@ -11,17 +11,29 @@ export const Route = createFileRoute("/splits")({
   component: SplitsPage,
 });
 
-// ─── Period selector (simple tabs) ────────────────────────────────────────
+// ─── Year selector ────────────────────────────────────────────────────────
 
-function PeriodTabs({
-  periods,
-  selected,
-  onSelect,
-}: {
-  periods: BillingPeriod[];
-  selected: BillingPeriod | null;
-  onSelect: (p: BillingPeriod) => void;
-}) {
+function YearSelector({ years, selectedYear, onSelectYear }: { years: number[]; selectedYear: number; onSelectYear: (y: number) => void }) {
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {years.map((y) => (
+        <button
+          key={y}
+          onClick={() => onSelectYear(y)}
+          className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+            selectedYear === y ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
+          }`}
+        >
+          {y}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Month tabs ───────────────────────────────────────────────────────────
+
+function MonthTabs({ periods, selected, onSelect }: { periods: BillingPeriod[]; selected: BillingPeriod | null; onSelect: (p: BillingPeriod) => void }) {
   return (
     <div className="flex gap-1 flex-wrap">
       {periods.map((p) => (
@@ -29,12 +41,10 @@ function PeriodTabs({
           key={p.id}
           onClick={() => onSelect(p)}
           className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-            selected?.id === p.id
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border hover:bg-accent"
+            selected?.id === p.id ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
           }`}
         >
-          {MONTHS[p.month - 1]} {p.year}
+          {MONTHS[p.month - 1]}
         </button>
       ))}
     </div>
@@ -110,16 +120,25 @@ function EditableCell({
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 function SplitsPage() {
-  const [periods, setPeriods] = useState<BillingPeriod[]>([]);
+  const [allPeriods, setAllPeriods] = useState<BillingPeriod[]>([]);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selected, setSelected] = useState<BillingPeriod | null>(null);
   const [splits, setSplits] = useState<SplitRow[]>([]);
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const years = [...new Set(allPeriods.map((p) => p.year))].sort((a, b) => b - a);
+  const yearPeriods = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => a.month - b.month);
+
   const loadPeriods = async () => {
     const ps = await ipc.getBillingPeriods();
-    setPeriods(ps);
-    if (!selected && ps.length > 0) setSelected(ps[0]);
+    setAllPeriods(ps);
+    if (ps.length > 0) {
+      const latestYear = Math.max(...ps.map((p) => p.year));
+      setSelectedYear(latestYear);
+      const latest = ps.filter((p) => p.year === latestYear).sort((a, b) => b.month - a.month)[0];
+      setSelected(latest ?? null);
+    }
   };
 
   const loadSplits = async (periodId: number) => {
@@ -131,6 +150,10 @@ function SplitsPage() {
   useEffect(() => {
     if (selected?.id) loadSplits(selected.id);
   }, [selected]);
+  useEffect(() => {
+    const yp = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => b.month - a.month);
+    if (yp.length > 0 && (!selected || selected.year !== selectedYear)) setSelected(yp[0]);
+  }, [selectedYear, allPeriods]);
 
   const recalculate = async () => {
     if (!selected?.id) return;
@@ -168,11 +191,10 @@ function SplitsPage() {
         </Button>
       </div>
 
-      <PeriodTabs
-        periods={periods}
-        selected={selected}
-        onSelect={(p) => { setSelected(p); setSplits([]); }}
-      />
+      <YearSelector years={years} selectedYear={selectedYear} onSelectYear={setSelectedYear} />
+      {yearPeriods.length > 0 && (
+        <MonthTabs periods={yearPeriods} selected={selected} onSelect={(p) => { setSelected(p); setSplits([]); }} />
+      )}
 
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">

@@ -26,6 +26,12 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src/lib/ipc.ts` — typed `invoke()` wrappers for all IPC commands
 - `src/routes/settings.tsx` — Settings page (4 tabs)
 - `src/components/settings/` — per-tab setting components
+- `src-tauri/src/commands/bills.rs` — bill import, PDF parsing, billing period commands
+- `src-tauri/src/commands/splits.rs` — split calculation logic
+- `src-tauri/src/commands/upn.rs` — UPN PDF rendering, email sending
+- `src/routes/bills.tsx` — Bills page (year/month UI, import, manual entry)
+- `src/routes/splits.tsx` — Splits matrix page
+- `src/routes/upn.tsx` — UPN preview + send page
 
 ## Dev Commands
 
@@ -46,13 +52,11 @@ To reference in new sessions, use `EnterPlanMode` to load it.
 
 - ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
 - ✅ **Phase 1.5** — UI polish: dark mode, seed data, bills page redesign, multi-bill PDF import
-- 🔲 **Phase 2** — Bill Import (PDF parsing, per-provider regex, store in DB)
-- 🔲 **Phase 3** — UPN Generation (split by apartment, render authentic UPN slips)
-- 🔲 **Phase 4** — Email Delivery + Security (SMTP send, keyring for password)
+- ✅ **Phase 2** — Bill Import: smart 3-phase PDF parser (UPN stubs + Elektro + ZLM), IBAN-based provider matching, manual entry, debug log
+- ✅ **Phase 3** — UPN Generation: split by occupant ratio, render UPN PDFs via printpdf, preview + download + email send
+- 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
 
-Current status: **v0.2.0 released. Phase 2 (Bill Import) next.**
-
-See `README.md` for phase summary.
+Current status: **v0.2.7. Phases 2 + 3 largely complete. Phase 4 (email + keyring) next.**
 
 ## Documentation
 
@@ -71,7 +75,7 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
 
 ```bash
-git tag v0.2.1 && git push origin main && git push origin v0.2.1
+git tag v0.2.7 && git push origin main && git push origin v0.2.7
 ```
 
 This triggers the GitHub Actions workflow which builds the `.msi` and publishes it as a GitHub Release.
@@ -85,5 +89,12 @@ This triggers the GitHub Actions workflow which builds the `.msi` and publishes 
 ## Building Data
 
 - 5 apartments, 12 occupants, 4 utility providers (5 bills/month)
-- Providers: Elektro energija, JP VOKA SNAGA (×2), Energetika Ljubljana, ZLM
 - Pre-configured provider templates live in DB, testable against `file-examples/`
+
+| Provider | Service | IBAN |
+|---|---|---|
+| Elektro energija d.o.o. | Electricity | SI56 0400 1004 8988 093 |
+| JP VOKA SNAGA d.o.o. | Waste | SI56 0400 1004 9142 226 |
+| JP VOKA SNAGA d.o.o. | Water | SI56 2900 0000 3057 588 |
+| Energetika Ljubljana d.o.o. | Gas | SI56 0292 4025 3764 022 |
+| ZLM d.o.o. | Cleaning | SI56 0201 1025 7890 131 |
