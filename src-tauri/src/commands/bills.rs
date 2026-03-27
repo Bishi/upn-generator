@@ -601,7 +601,15 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
         // Due date: look in a window before the stub too (label often precedes ***)
         let before_start = m.start().saturating_sub(500);
         let context = &text[before_start..after_end];
-        let due_date = find_due_date(context);
+        let mut due_date = find_due_date(context);
+        // Fallback: date embedded in purpose text (e.g. "SCVE ... 16.02.2026")
+        if due_date.is_empty() {
+            if let Ok(date_re) = Regex::new(r"(\d{2}\.\d{2}\.\d{4})") {
+                if let Some(caps) = date_re.captures(&purpose_text) {
+                    due_date = caps.get(1).unwrap().as_str().to_string();
+                }
+            }
+        }
 
         results.push(ExtractedBill {
             iban_norm,
@@ -667,8 +675,10 @@ fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
     let iban_norm = normalize_iban(iban_dirty_line);
     let iban_raw = iban_norm.clone();
 
-    // Reference from "Referenca: SI0 0  2 0 2 6 8 5" — also space-separated, normalize
-    let ref_re = Regex::new(r"Referenca:\s+([A-Z0-9][\sA-Z0-9]+)").ok()?;
+    // Reference from "Referenca: SI0 0  2 0 2 6 8 5" — space-separated chars.
+    // Require a space within the SI model code (e.g. "SI0 0") to avoid matching
+    // Elektro's "Referenca: SI12 9015175242273" which appears earlier in the PDF.
+    let ref_re = Regex::new(r"Referenca:\s+(SI\d\s+\d[\s\d]*)").ok()?;
     let ref_dirty = ref_re.captures(text)?.get(1)?.as_str();
     let ref_dirty_line = ref_dirty.lines().next().unwrap_or(ref_dirty);
     let ref_norm: String = ref_dirty_line.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase();
