@@ -732,29 +732,47 @@ pub fn import_bills(
         .map(|p| (normalize_iban(&p.creditor_iban), p))
         .collect();
 
+    // Write debug log: raw extracted text + parse results
+    let log_path = dirs_next::data_dir()
+        .map(|d| d.join("si.upn-generator").join("import_debug.log"));
+    let mut log = format!("=== import_bills: {} ===\n\n--- RAW TEXT ---\n{}\n\n--- PARSE RESULTS ---\n", filename, raw_text);
+
     // --- Collect extracted bills ---
     let mut extracted: Vec<ExtractedBill> = Vec::new();
     let mut seen_ibans: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Phase 1: UPN payment stubs (***amount) — covers VOKA ×2 and Energetika
-    for bill in parse_upn_stubs(&raw_text) {
+    let stubs = parse_upn_stubs(&raw_text);
+    log.push_str(&format!("Phase 1 (UPN stubs): {} found\n", stubs.len()));
+    for bill in stubs {
+        log.push_str(&format!("  IBAN={} amount={} ref={} due={}\n", bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date));
         if seen_ibans.insert(bill.iban_norm.clone()) {
             extracted.push(bill);
         }
     }
 
     // Phase 2: Elektro narrative format (ZA PLACILO Z DDV:)
-    if let Some(bill) = parse_elektro_style(&raw_text) {
+    let elektro = parse_elektro_style(&raw_text);
+    log.push_str(&format!("Phase 2 (Elektro): {}\n", if elektro.is_some() { "found" } else { "NOT FOUND" }));
+    if let Some(bill) = elektro {
+        log.push_str(&format!("  IBAN={} amount={} ref={} due={}\n", bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date));
         if seen_ibans.insert(bill.iban_norm.clone()) {
             extracted.push(bill);
         }
     }
 
     // Phase 3: ZLM format (Za placilo EUR: + TRR:)
-    if let Some(bill) = parse_zlm_style(&raw_text) {
+    let zlm = parse_zlm_style(&raw_text);
+    log.push_str(&format!("Phase 3 (ZLM): {}\n", if zlm.is_some() { "found" } else { "NOT FOUND" }));
+    if let Some(bill) = zlm {
+        log.push_str(&format!("  IBAN={} amount={} ref={} due={}\n", bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date));
         if seen_ibans.insert(bill.iban_norm.clone()) {
             extracted.push(bill);
         }
+    }
+
+    if let Some(ref path) = log_path {
+        let _ = std::fs::write(path, &log);
     }
 
     // Fallback: nothing found — create one blank bill
