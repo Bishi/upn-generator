@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
@@ -68,17 +68,11 @@ function ApartmentCard({
 }) {
   const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
 
-  const previewUpn = async (billId: number, label: string) => {
+  const previewUpn = async (billId: number) => {
     setLoadingPreview(billId);
     try {
       const path = await ipc.previewUpn(billId, apartmentId);
-      const url = `file:///${path.replace(/\\/g, "/")}`;
-      new WebviewWindow(`upn-preview-${billId}-${apartmentId}`, {
-        url,
-        title: label,
-        width: 900,
-        height: 700,
-      });
+      await openPath(path);
     } finally {
       setLoadingPreview(null);
     }
@@ -120,7 +114,7 @@ function ApartmentCard({
                 {formatEur(s.split_amount_cents)} €
               </span>
               <button
-                onClick={() => previewUpn(s.bill_id, `${apartmentLabel} · ${s.provider_name ?? s.bill_source_filename}`)}
+                onClick={() => previewUpn(s.bill_id)}
                 disabled={loadingPreview === s.bill_id}
                 className="text-muted-foreground hover:text-primary transition-colors"
                 title="Preview UPN"

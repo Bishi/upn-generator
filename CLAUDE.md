@@ -28,7 +28,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src/components/settings/` — per-tab setting components
 - `src-tauri/src/commands/bills.rs` — bill import, PDF parsing, billing period commands
 - `src-tauri/src/commands/splits.rs` — split calculation logic
-- `src-tauri/src/commands/upn.rs` — UPN PDF rendering, email sending
+- `src-tauri/src/commands/upn.rs` — UPN QR form rendering (official ZBS layout), email sending
 - `src/routes/bills.tsx` — Bills page (year/month UI, import, manual entry)
 - `src/routes/splits.tsx` — Splits matrix page
 - `src/routes/upn.tsx` — UPN preview + send page
@@ -43,7 +43,7 @@ npm run dev            # frontend only (no Tauri)
 
 ## UPN Forms
 
-UPN output must look as close to real Slovenian bank UPN forms as possible. Tenants receive these to pay bills — they must feel legitimate. Use official UPN template as background image with precisely positioned text overlay. Reference examples in `file-examples/` (1.PNG, 2.PNG, 3.PNG).
+UPN output must follow the official ZBS UPN QR technical standard: 210 mm × 99 mm form size, the standard two-part layout, official field geometry, and Courier New-style machine print. Reference examples in `file-examples/` (1.PNG, 2.PNG, 3.PNG) and the ZBS technical standard / IzpisUPNQR documentation when adjusting layout.
 
 ## Plan Status — "UPN Generator - Apartment Bill Splitting App"
 
@@ -53,10 +53,10 @@ To reference in new sessions, use `EnterPlanMode` to load it.
 - ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
 - ✅ **Phase 1.5** — UI polish: dark mode, seed data, bills page redesign, multi-bill PDF import
 - ✅ **Phase 2** — Bill Import: smart 3-phase PDF parser (UPN stubs + Elektro + ZLM), IBAN-based provider matching, manual entry, debug log
-- ✅ **Phase 3** — UPN Generation: split by occupant ratio, render UPN PDFs via printpdf, preview + download + email send
+- ✅ **Phase 3** — UPN Generation: split by occupant ratio, render official-style UPN QR PDFs via printpdf, preview + download + email send
 - 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
 
-Current status: **v0.2.7. Phases 2 + 3 largely complete. Phase 4 (email + keyring) next.**
+Current status: **v0.2.9. Phases 2 + 3 largely complete. Phase 4 (email + keyring) next.**
 
 ## Documentation
 
@@ -75,7 +75,7 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
 
 ```bash
-git tag v0.2.7 && git push origin main && git push origin v0.2.7
+git tag v0.2.9 && git push origin main && git push origin v0.2.9
 ```
 
 This triggers the GitHub Actions workflow which builds the `.msi` and publishes it as a GitHub Release.

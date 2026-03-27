@@ -11,8 +11,6 @@ use tauri::State;
 
 use super::config::DbState;
 
-// ─── Structs ───────────────────────────────────────────────────────────────
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EmailResult {
     pub apartment_label: String,
@@ -37,86 +35,96 @@ struct UpnData {
     creditor_city: String,
 }
 
-// ─── UPN PDF helpers ────────────────────────────────────────────────────────
-
-fn format_amount(cents: i64) -> String {
-    let euros = cents / 100;
-    let c = (cents % 100).unsigned_abs();
-    format!("{}.{:02}", euros, c)
-}
+const FORM_WIDTH_MM: f32 = 210.0;
+const FORM_HEIGHT_MM: f32 = 99.0;
+const LEFT_WIDTH_MM: f32 = 60.0;
+const TOP_RIGHT_HEIGHT_MM: f32 = 50.0;
 
 fn format_iban(iban: &str) -> String {
     iban.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
         .collect::<Vec<_>>()
         .chunks(4)
-        .map(|c| c.iter().collect::<String>())
+        .map(|chunk| chunk.iter().collect::<String>())
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            current = word.to_string();
-        } else if current.len() + 1 + word.len() <= max_chars {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(current.clone());
-            current = word.to_string();
-        }
+fn normalize_spaces(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
+fn format_amount_display(cents: i64) -> String {
+    let euros = cents / 100;
+    let cents_part = (cents % 100).unsigned_abs();
+    format!("***{},{}", euros, format!("{:02}", cents_part))
+}
+
+fn split_reference(reference: &str) -> (String, String) {
+    let compact = normalize_spaces(reference);
+    let mut parts = compact.splitn(2, ' ');
+    let head = parts.next().unwrap_or("").trim().to_string();
+    let tail = parts.next().unwrap_or("").trim().to_string();
+
+    if head.len() == 4 && head.starts_with("SI") {
+        let digits = tail
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        (head, digits)
+    } else {
+        let stripped = compact
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        let model = truncate_chars(&stripped, 4);
+        let rest = stripped
+            .chars()
+            .skip(model.chars().count())
+            .collect::<String>();
+        (model, rest)
     }
-    if !current.is_empty() {
-        lines.push(current);
-    }
-    lines
 }
 
-/// Draw a stroked line segment (open path).
-fn hline(layer: &PdfLayerReference, x1: f32, y: f32, x2: f32) {
-    let l = Line {
+fn pt_to_mm(points: f32) -> f32 {
+    points * 0.352_778
+}
+
+fn y_from_top(y_top: f32) -> f32 {
+    FORM_HEIGHT_MM - y_top
+}
+
+fn rgb(r: u8, g: u8, b: u8) -> Color {
+    Color::Rgb(Rgb::new(
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0,
+        None,
+    ))
+}
+
+fn line_top(layer: &PdfLayerReference, x1: f32, y1_top: f32, x2: f32, y2_top: f32) {
+    let line = Line {
         points: vec![
-            (Point::new(Mm(x1), Mm(y)), false),
-            (Point::new(Mm(x2), Mm(y)), false),
+            (Point::new(Mm(x1), Mm(y_from_top(y1_top))), false),
+            (Point::new(Mm(x2), Mm(y_from_top(y2_top))), false),
         ],
         is_closed: false,
     };
-    layer.add_line(l);
+    layer.add_line(line);
 }
 
-fn vline(layer: &PdfLayerReference, x: f32, y1: f32, y2: f32) {
-    let l = Line {
-        points: vec![
-            (Point::new(Mm(x), Mm(y1)), false),
-            (Point::new(Mm(x), Mm(y2)), false),
-        ],
-        is_closed: false,
-    };
-    layer.add_line(l);
-}
-
-/// Draw a stroked open line (any two points).
-fn draw_line(layer: &PdfLayerReference, x1: f32, y1: f32, x2: f32, y2: f32) {
-    let l = Line {
-        points: vec![
-            (Point::new(Mm(x1), Mm(y1)), false),
-            (Point::new(Mm(x2), Mm(y2)), false),
-        ],
-        is_closed: false,
-    };
-    layer.add_line(l);
-}
-
-/// Draw a stroked rectangle.
-fn draw_rect(layer: &PdfLayerReference, x: f32, y: f32, w: f32, h: f32) {
+fn stroke_rect_top(layer: &PdfLayerReference, x1: f32, y1_top: f32, x2: f32, y2_top: f32) {
     let poly = Polygon {
         rings: vec![vec![
-            (Point::new(Mm(x), Mm(y)), false),
-            (Point::new(Mm(x + w), Mm(y)), false),
-            (Point::new(Mm(x + w), Mm(y + h)), false),
-            (Point::new(Mm(x), Mm(y + h)), false),
+            (Point::new(Mm(x1), Mm(y_from_top(y1_top))), false),
+            (Point::new(Mm(x2), Mm(y_from_top(y1_top))), false),
+            (Point::new(Mm(x2), Mm(y_from_top(y2_top))), false),
+            (Point::new(Mm(x1), Mm(y_from_top(y2_top))), false),
         ]],
         mode: PolygonMode::Stroke,
         winding_order: WindingOrder::NonZero,
@@ -124,14 +132,74 @@ fn draw_rect(layer: &PdfLayerReference, x: f32, y: f32, w: f32, h: f32) {
     layer.add_polygon(poly);
 }
 
-fn t(layer: &PdfLayerReference, text: &str, size: f32, x: f32, y: f32, font: &IndirectFontRef) {
-    layer.use_text(text, size, Mm(x), Mm(y), font);
+fn fill_rect_top(layer: &PdfLayerReference, x1: f32, y1_top: f32, x2: f32, y2_top: f32) {
+    let poly = Polygon {
+        rings: vec![vec![
+            (Point::new(Mm(x1), Mm(y_from_top(y1_top))), false),
+            (Point::new(Mm(x2), Mm(y_from_top(y1_top))), false),
+            (Point::new(Mm(x2), Mm(y_from_top(y2_top))), false),
+            (Point::new(Mm(x1), Mm(y_from_top(y2_top))), false),
+        ]],
+        mode: PolygonMode::Fill,
+        winding_order: WindingOrder::NonZero,
+    };
+    layer.add_polygon(poly);
 }
 
-/// Load a TTF font from Windows system fonts for Slovenian character support.
-fn load_system_font() -> Option<Vec<u8>> {
+fn text_top(
+    layer: &PdfLayerReference,
+    text: &str,
+    size_pt: f32,
+    x: f32,
+    y_top: f32,
+    font: &IndirectFontRef,
+) {
+    let baseline = y_from_top(y_top + pt_to_mm(size_pt) * 0.8);
+    layer.use_text(text, size_pt, Mm(x), Mm(baseline), font);
+}
+
+fn draw_grid_field(
+    layer: &PdfLayerReference,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    cell_width: Option<f32>,
+) {
+    stroke_rect_top(layer, x1, y1, x2, y2);
+    if let Some(step) = cell_width {
+        let mut x = x1 + step;
+        while x < x2 - 0.15 {
+            line_top(layer, x, y1, x, y2);
+            x += step;
+        }
+    }
+}
+
+fn draw_three_line_box(layer: &PdfLayerReference, x1: f32, y1: f32, x2: f32, y2: f32) {
+    stroke_rect_top(layer, x1, y1, x2, y2);
+    let h = (y2 - y1) / 3.0;
+    line_top(layer, x1, y1 + h, x2, y1 + h);
+    line_top(layer, x1, y1 + 2.0 * h, x2, y1 + 2.0 * h);
+}
+
+fn draw_perforation(layer: &PdfLayerReference) {
+    let mut y = 0.0;
+    while y < FORM_HEIGHT_MM {
+        line_top(
+            layer,
+            LEFT_WIDTH_MM,
+            y,
+            LEFT_WIDTH_MM,
+            (y + 1.2).min(FORM_HEIGHT_MM),
+        );
+        y += 2.0;
+    }
+}
+
+fn load_system_font(preferred_names: &[&str]) -> Option<Vec<u8>> {
     let win_dir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
-    for name in &["arial.ttf", "calibri.ttf", "verdana.ttf", "tahoma.ttf"] {
+    for name in preferred_names {
         let path = format!("{}\\Fonts\\{}", win_dir, name);
         if let Ok(bytes) = std::fs::read(&path) {
             return Some(bytes);
@@ -140,70 +208,81 @@ fn load_system_font() -> Option<Vec<u8>> {
     None
 }
 
-// ─── UPNQR generation ──────────────────────────────────────────────────────
-
-/// Convert a UTF-8 string to ISO-8859-2 bytes (required by the UPNQR standard).
-/// Only maps characters used in Slovenian text; everything else falls through as Latin-1.
 fn to_iso8859_2(s: &str) -> Vec<u8> {
-    s.chars().map(|c| match c {
-        'Š' => 0xA9, 'š' => 0xB9,
-        'Č' => 0xC8, 'č' => 0xE8,
-        'Ž' => 0xAE, 'ž' => 0xBE,
-        'Ć' => 0xC6, 'ć' => 0xE6,
-        'Đ' => 0xD0, 'đ' => 0xF0,
-        other => {
-            let n = other as u32;
-            if n < 256 { n as u8 } else { b'?' }
-        }
-    }).collect()
+    s.chars()
+        .map(|c| match c {
+            'Š' => 0xA9,
+            'š' => 0xB9,
+            'Č' => 0xC8,
+            'č' => 0xE8,
+            'Ž' => 0xAE,
+            'ž' => 0xBE,
+            'Ć' => 0xC6,
+            'ć' => 0xE6,
+            'Đ' => 0xD0,
+            'đ' => 0xF0,
+            other => {
+                let n = other as u32;
+                if n < 256 {
+                    n as u8
+                } else {
+                    b'?'
+                }
+            }
+        })
+        .collect()
 }
 
-/// Build the 20-field UPNQR string with appended 3-digit checksum.
 fn build_upnqr_string(data: &UpnData) -> String {
-    // IBAN and reference must have no spaces
-    let iban: String = data.creditor_iban.chars().filter(|c| c.is_alphanumeric()).collect();
-    let reference: String = data.creditor_reference.chars().filter(|c| !c.is_whitespace()).collect();
+    let iban: String = data
+        .creditor_iban
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect();
+    let reference: String = data
+        .creditor_reference
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let amount = format!("{:011}", data.amount_cents);
-
-    // Helper: truncate to N Unicode chars (= N ISO-8859-2 bytes for our charset)
     let tr = |s: &str, n: usize| -> String { s.chars().take(n).collect() };
 
     let fields: Vec<String> = vec![
-        "UPNQR".into(),                                                  // 1  header
-        "".into(),                                                        // 2  payer IBAN (blank — tenant fills in)
-        "".into(),                                                        // 3  deposit flag
-        "".into(),                                                        // 4  withdraw flag
-        "".into(),                                                        // 5  payer reference
-        tr(&data.payer_name, 33),                                        // 6  payer name
-        tr(&data.payer_address, 33),                                     // 7  payer street
-        tr(&format!("{} {}", data.payer_postal_code, data.payer_city), 33), // 8 payer city
-        amount,                                                           // 9  amount (cents, 11 digits)
-        "".into(),                                                        // 10 payment date
-        "".into(),                                                        // 11 urgent flag
-        tr(&data.purpose_code, 4),                                       // 12 purpose code
-        tr(&data.purpose_text, 42),                                      // 13 purpose text
-        tr(&data.due_date, 10),                                          // 14 due date DD.MM.YYYY
-        tr(&iban, 19),                                                   // 15 recipient IBAN (no spaces)
-        tr(&reference, 26),                                              // 16 recipient reference
-        tr(&data.creditor_name, 33),                                     // 17 recipient name
-        tr(&data.creditor_address, 33),                                  // 18 recipient street
-        tr(&data.creditor_city, 33),                                     // 19 recipient city
-        "".into(),                                                        // 20 reserved
+        "UPNQR".into(),
+        "".into(),
+        "".into(),
+        "".into(),
+        "".into(),
+        tr(&data.payer_name, 33),
+        tr(&data.payer_address, 33),
+        tr(
+            &format!("{} {}", data.payer_postal_code, data.payer_city),
+            33,
+        ),
+        amount,
+        "".into(),
+        "".into(),
+        tr(&data.purpose_code, 4),
+        tr(&data.purpose_text, 42),
+        tr(&data.due_date, 10),
+        tr(&iban, 19),
+        tr(&reference, 26),
+        tr(&data.creditor_name, 33),
+        tr(&data.creditor_address, 33),
+        tr(&data.creditor_city, 33),
+        "".into(),
     ];
 
-    // Checksum = total character count of all 20 fields + 19 newline separators
     let checksum: usize = fields.iter().map(|f| f.chars().count()).sum::<usize>() + 19;
     format!("{}\n{:03}", fields.join("\n"), checksum)
 }
 
-/// Render the UPNQR string as a grayscale pixel buffer (returns pixels + side length in px).
 fn render_upnqr_pixels(data: &UpnData) -> Result<(Vec<u8>, usize), String> {
-    use qrcodegen::{QrCode, QrCodeEcc, QrSegment, Version, Mask};
+    use qrcodegen::{Mask, QrCode, QrCodeEcc, QrSegment, Version};
 
     let qr_string = build_upnqr_string(data);
     let iso_bytes = to_iso8859_2(&qr_string);
 
-    // ECI designator 4 = ISO-8859-2, then raw bytes segment
     let eci_seg = QrSegment::make_eci(4);
     let data_seg = QrSegment::make_bytes(&iso_bytes);
 
@@ -212,17 +291,17 @@ fn render_upnqr_pixels(data: &UpnData) -> Result<(Vec<u8>, usize), String> {
         QrCodeEcc::Medium,
         Version::new(15),
         Version::new(15),
-        Some(Mask::new(2)), // deterministic mask
+        Some(Mask::new(2)),
         false,
-    ).map_err(|e| format!("QR encode error: {:?}", e))?;
+    )
+    .map_err(|e| format!("QR encode error: {:?}", e))?;
 
-    // 4 modules quiet zone + 4 px per module
     let quiet = 4i32;
     let scale = 4i32;
     let total = qr.size() + 2 * quiet;
     let img_size = (total * scale) as usize;
 
-    let mut pixels = vec![255u8; img_size * img_size]; // white fill
+    let mut pixels = vec![255u8; img_size * img_size];
     for y in 0..qr.size() {
         for x in 0..qr.size() {
             if qr.get_module(x, y) {
@@ -240,90 +319,249 @@ fn render_upnqr_pixels(data: &UpnData) -> Result<(Vec<u8>, usize), String> {
 }
 
 fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
-    let (doc, page1, layer1) =
-        PdfDocument::new("Nalog za placilo", Mm(210.0), Mm(297.0), "Layer 1");
+    let (doc, page1, layer1) = PdfDocument::new(
+        "Obrazec UPN QR",
+        Mm(FORM_WIDTH_MM),
+        Mm(FORM_HEIGHT_MM),
+        "Layer 1",
+    );
     let layer = doc.get_page(page1).get_layer(layer1);
 
-    let (font, font_bold) = if let Some(font_bytes) = load_system_font() {
-        let f = doc
-            .add_external_font(std::io::Cursor::new(font_bytes.clone()))
-            .map_err(|e| e.to_string())?;
-        let fb = doc
-            .add_external_font(std::io::Cursor::new(font_bytes))
-            .map_err(|e| e.to_string())?;
-        (f, fb)
+    let label_font = if let Some(bytes) =
+        load_system_font(&["arialbd.ttf", "calibrib.ttf", "seguisb.ttf", "verdanab.ttf"])
+    {
+        doc.add_external_font(std::io::Cursor::new(bytes))
+            .map_err(|e| e.to_string())?
     } else {
-        let f = doc
-            .add_builtin_font(BuiltinFont::Helvetica)
-            .map_err(|e| e.to_string())?;
-        let fb = doc
-            .add_builtin_font(BuiltinFont::HelveticaBold)
-            .map_err(|e| e.to_string())?;
-        (f, fb)
+        doc.add_builtin_font(BuiltinFont::HelveticaBold)
+            .map_err(|e| e.to_string())?
     };
 
-    // ─── Layout constants (all mm, f32) ────────────────────────────────
-    let sl: f32 = 6.0; // slip left
-    let sr: f32 = 204.0; // slip right
-    let sb: f32 = 6.0; // slip bottom
-    let st: f32 = 111.0; // slip top
+    let mono_font = if let Some(bytes) =
+        load_system_font(&["courbd.ttf", "lucon.ttf", "consolab.ttf", "couri.ttf"])
+    {
+        doc.add_external_font(std::io::Cursor::new(bytes))
+            .map_err(|e| e.to_string())?
+    } else {
+        doc.add_builtin_font(BuiltinFont::CourierBold)
+            .map_err(|e| e.to_string())?
+    };
 
-    let c1: f32 = sl + 72.0; // col divider 1 (x≈78)
-    let c2: f32 = sl + 132.0; // col divider 2 (x≈138)
-    let hb: f32 = st - 7.0; // header bottom (y≈104)
+    let orange = rgb(244, 120, 54);
+    let top_fill = rgb(254, 224, 205);
+    let bottom_fill = rgb(255, 244, 210);
+    let black = rgb(0, 0, 0);
 
-    // Horizontal row dividers
-    let hy1: f32 = hb - 31.0; // y≈73 — below payer name
-    let hy2: f32 = hy1 - 16.0; // y≈57 — below IBAN plačnika
-    let hy3: f32 = hy2 - 20.0; // y≈37 — barcode zone top
-
-    // Right-column sub-dividers
-    let ry1: f32 = hb - 13.0; // y≈91 — below IBAN prejemnika
-    let ry2: f32 = ry1 - 11.0; // y≈80 — below BIC
-    let ry3: f32 = ry2 - 13.0; // y≈67 — below referenca
-
-    let my1: f32 = hb - 15.0; // y≈89 — below kod namena (middle col)
-
-    // ─── Borders ────────────────────────────────────────────────────────
-    layer.set_outline_thickness(0.3);
-    draw_rect(&layer, sl, sb, sr - sl, st - sb);
-    hline(&layer, sl, hb, sr);
-    t(&layer, "NALOG ZA PLACILO / UPN", 8.0, sl + 2.0, hb + 2.0, &font_bold);
-    t(&layer, "Univerzalni placilni nalog", 5.5, sl + 2.0, hb + 8.5, &font);
-
-    // Column dividers
-    vline(&layer, c1, sb, hb);
-    vline(&layer, c2, sb, hb);
-
-    // ─── Left column: Payer ─────────────────────────────────────────────
-    let lx = sl + 1.5;
-    t(&layer, "PLACNIK", 6.0, lx, hb - 4.0, &font_bold);
-    t(&layer, &data.payer_name, 8.5, lx, hb - 10.5, &font);
-    t(&layer, &data.payer_address, 8.0, lx, hb - 17.5, &font);
-    t(
+    layer.set_fill_color(rgb(255, 255, 255));
+    fill_rect_top(&layer, 0.0, 0.0, FORM_WIDTH_MM, FORM_HEIGHT_MM);
+    layer.set_fill_color(top_fill);
+    fill_rect_top(
         &layer,
-        &format!("{} {}", data.payer_postal_code, data.payer_city),
-        8.0,
-        lx,
-        hb - 24.5,
-        &font,
+        LEFT_WIDTH_MM,
+        0.0,
+        FORM_WIDTH_MM,
+        TOP_RIGHT_HEIGHT_MM,
+    );
+    layer.set_fill_color(bottom_fill);
+    fill_rect_top(
+        &layer,
+        LEFT_WIDTH_MM,
+        TOP_RIGHT_HEIGHT_MM,
+        FORM_WIDTH_MM,
+        FORM_HEIGHT_MM,
     );
 
-    hline(&layer, sl, hy1, c1);
-    t(&layer, "IBAN PLACNIKA", 6.0, lx, hy1 - 4.0, &font_bold);
-    // Payer IBAN left blank for tenants
+    layer.set_outline_color(orange.clone());
+    layer.set_fill_color(orange.clone());
+    layer.set_outline_thickness(0.25);
+    draw_perforation(&layer);
 
-    hline(&layer, sl, hy2, c2); // spans left + middle
-    t(&layer, "ROK PLACILA", 6.0, lx, hy2 - 4.0, &font_bold);
-    t(&layer, &data.due_date, 9.0, lx, hy2 - 12.0, &font_bold);
+    stroke_rect_top(&layer, 4.0, 6.0, 56.5, 19.5);
+    stroke_rect_top(&layer, 4.0, 22.5, 56.5, 31.5);
+    stroke_rect_top(&layer, 16.5, 34.5, 56.5, 39.5);
+    stroke_rect_top(&layer, 4.0, 42.0, 56.5, 56.0);
+    stroke_rect_top(&layer, 4.0, 59.0, 56.5, 72.5);
 
-    hline(&layer, sl, hy3, c2); // barcode zone separator
-    t(&layer, "QR/OCR koda", 5.5, lx, sb + 3.5, &font);
+    draw_grid_field(&layer, 106.5, 6.0, 177.7, 11.0, Some(3.75));
+    draw_grid_field(&layer, 185.2, 6.5, 189.2, 10.5, None);
+    draw_grid_field(&layer, 196.5, 6.5, 200.5, 10.5, None);
+    stroke_rect_top(&layer, 63.5, 6.0, 103.5, 45.5);
+    draw_grid_field(&layer, 106.5, 14.0, 121.5, 19.0, Some(3.75));
+    draw_grid_field(&layer, 123.5, 14.0, 206.0, 19.0, Some(3.75));
+    draw_three_line_box(&layer, 106.5, 22.0, 206.0, 37.0);
+    draw_grid_field(&layer, 114.2, 40.5, 155.5, 45.5, Some(3.75));
+    draw_grid_field(&layer, 161.2, 40.5, 191.2, 45.5, Some(3.75));
+    draw_grid_field(&layer, 196.5, 41.0, 200.5, 45.0, None);
+    draw_grid_field(&layer, 63.5, 49.0, 78.5, 54.0, Some(3.75));
+    draw_grid_field(&layer, 80.5, 49.0, 174.2, 54.0, Some(3.75));
+    draw_grid_field(&layer, 176.2, 49.0, 206.0, 54.0, Some(3.72));
+    draw_grid_field(&layer, 63.5, 58.0, 191.0, 63.0, Some(3.75));
+    draw_grid_field(&layer, 63.5, 66.0, 78.5, 71.0, Some(3.75));
+    draw_grid_field(&layer, 80.5, 66.0, 163.0, 71.0, Some(3.75));
+    draw_three_line_box(&layer, 63.5, 74.0, 163.0, 89.0);
+    stroke_rect_top(&layer, 168.6, 71.0, 203.3, 89.0);
+    line_top(&layer, 172.0, 85.6, 200.0, 85.6);
 
-    // ─── UPNQR code ─────────────────────────────────────────────────────
+    layer.set_fill_color(black.clone());
+    fill_rect_top(&layer, 61.0, 1.0, 62.5, 2.5);
+    fill_rect_top(&layer, 207.5, 1.0, 209.0, 2.5);
+    fill_rect_top(&layer, 207.5, 96.5, 209.0, 98.0);
+
+    layer.set_fill_color(orange.clone());
+    text_top(&layer, "Ime plačnika", 7.0, 4.0, 3.5, &label_font);
+    text_top(&layer, "UPN QR - potrdilo", 10.0, 32.6, 2.0, &label_font);
+    text_top(&layer, "Namen in rok plačila", 7.0, 4.0, 20.0, &label_font);
+    text_top(&layer, "Znesek", 7.0, 16.5, 32.0, &label_font);
+    text_top(
+        &layer,
+        "IBAN in referenca prejemnika",
+        7.0,
+        4.0,
+        40.0,
+        &label_font,
+    );
+    text_top(&layer, "Ime prejemnika", 7.0, 4.0, 56.5, &label_font);
+    text_top(
+        &layer,
+        "Prostor za vpise ponudnika plačilnih storitev",
+        6.0,
+        13.8,
+        97.0,
+        &label_font,
+    );
+    text_top(&layer, "Koda QR", 7.0, 63.5, 3.5, &label_font);
+    text_top(&layer, "IBAN plačnika", 7.0, 106.5, 3.5, &label_font);
+    text_top(&layer, "Polog", 7.0, 184.3, 3.5, &label_font);
+    text_top(&layer, "Dvig", 7.0, 196.1, 3.5, &label_font);
+    text_top(&layer, "Referenca plačnika", 7.0, 106.5, 11.0, &label_font);
+    text_top(
+        &layer,
+        "Ime, ulica in kraj plačnika",
+        7.0,
+        106.5,
+        19.5,
+        &label_font,
+    );
+    text_top(&layer, "EUR", 11.0, 7.8, 35.6, &label_font);
+    text_top(&layer, "EUR", 11.0, 111.2, 41.6, &label_font);
+    text_top(&layer, "Znesek", 7.0, 114.2, 38.0, &label_font);
+    text_top(&layer, "Datum plačila", 7.0, 161.2, 38.0, &label_font);
+    text_top(&layer, "Nujno", 7.0, 195.3, 38.0, &label_font);
+    text_top(&layer, "Koda namena", 7.0, 63.5, 46.5, &label_font);
+    text_top(&layer, "Namen plačila", 7.0, 80.5, 46.5, &label_font);
+    text_top(&layer, "Rok plačila", 7.0, 176.2, 46.5, &label_font);
+    text_top(&layer, "IBAN prejemnika", 7.0, 63.5, 55.5, &label_font);
+    text_top(&layer, "UPN QR", 10.0, 194.3, 59.1, &label_font);
+    text_top(&layer, "Referenca prejemnika", 7.0, 63.5, 63.5, &label_font);
+    text_top(
+        &layer,
+        "Ime, ulica in kraj prejemnika",
+        7.0,
+        63.5,
+        71.5,
+        &label_font,
+    );
+    text_top(
+        &layer,
+        "Podpis plačnika (neobvezno žig)",
+        6.0,
+        172.0,
+        89.0,
+        &label_font,
+    );
+    text_top(
+        &layer,
+        "Prostor za vpise ponudnika plačilnih storitev",
+        5.0,
+        118.9,
+        97.0,
+        &label_font,
+    );
+
+    layer.set_fill_color(black);
+
+    let payer_city_line = format!("{} {}", data.payer_postal_code, data.payer_city);
+    let creditor_city_line = normalize_spaces(&data.creditor_city);
+    let creditor_iban = format_iban(&data.creditor_iban);
+    let (reference_model, reference_body) = split_reference(&data.creditor_reference);
+    let purpose_line = truncate_chars(&normalize_spaces(&data.purpose_text), 42);
+    let receipt_detail = truncate_chars(
+        &format!("{}, {}", truncate_chars(&reference_body, 18), data.due_date),
+        34,
+    );
+    let amount_display = format_amount_display(data.amount_cents);
+
+    text_top(
+        &layer,
+        &truncate_chars(&data.payer_name, 24),
+        12.0,
+        7.0,
+        8.4,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&data.payer_address, 24),
+        12.0,
+        7.0,
+        14.2,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&payer_city_line, 24),
+        12.0,
+        7.0,
+        20.0,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&purpose_line, 28),
+        11.0,
+        7.0,
+        25.2,
+        &mono_font,
+    );
+    text_top(&layer, &receipt_detail, 10.5, 7.0, 30.0, &mono_font);
+    text_top(&layer, &amount_display, 12.0, 22.0, 35.3, &mono_font);
+    text_top(&layer, &creditor_iban, 11.0, 7.0, 45.0, &mono_font);
+    text_top(
+        &layer,
+        &truncate_chars(&format!("{} {}", reference_model, reference_body), 28),
+        11.0,
+        7.0,
+        51.0,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&data.creditor_name, 24),
+        12.0,
+        7.0,
+        61.8,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&data.creditor_address, 24),
+        12.0,
+        7.0,
+        67.6,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&creditor_city_line, 24),
+        12.0,
+        7.0,
+        73.4,
+        &mono_font,
+    );
+
     if let Ok((pixels, img_px)) = render_upnqr_pixels(data) {
-        let qr_mm = (hy3 - sb - 7.0) as f64; // fill the barcode zone (leave small margin)
-        let dpi = img_px as f64 * 25.4 / qr_mm;
+        let qr_target_mm = 36.5f64;
+        let dpi = img_px as f64 * 25.4 / qr_target_mm;
         let img_xobj = ImageXObject {
             width: Px(img_px),
             height: Px(img_px),
@@ -334,105 +572,106 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
             clipping_bbox: None,
             interpolate: false,
         };
-        Image::from(img_xobj).add_to_layer(layer.clone(), ImageTransform {
-            translate_x: Some(Mm(sl + 2.0)),
-            translate_y: Some(Mm(sb + 5.5)),
-            dpi: Some(dpi as f32),
-            ..Default::default()
-        });
+        Image::from(img_xobj).add_to_layer(
+            layer.clone(),
+            ImageTransform {
+                translate_x: Some(Mm(65.2)),
+                translate_y: Some(Mm(y_from_top(7.8 + qr_target_mm as f32))),
+                dpi: Some(dpi as f32),
+                ..Default::default()
+            },
+        );
     }
 
-    // ─── Middle column: Purpose + Amount ───────────────────────────────
-    let mx = c1 + 1.5;
-    t(&layer, "KOD NAMENA", 6.0, mx, hb - 4.0, &font_bold);
-    t(&layer, &data.purpose_code, 8.5, mx, hb - 10.5, &font);
-
-    hline(&layer, c1, my1, c2);
-    t(&layer, "NAMEN PLACILA", 6.0, mx, my1 - 4.0, &font_bold);
-    for (i, l) in wrap_text(&data.purpose_text, 26).iter().take(3).enumerate() {
-        t(&layer, l, 8.0, mx, my1 - 11.0 - (i as f32 * 7.0), &font);
-    }
-
-    t(&layer, "ZNESEK EUR", 6.0, mx, hy2 - 4.0, &font_bold);
-    t(
+    text_top(
         &layer,
-        &format_amount(data.amount_cents),
-        10.0,
-        mx,
-        hy2 - 13.0,
-        &font_bold,
+        &truncate_chars(&data.payer_name, 29),
+        14.0,
+        109.0,
+        24.0,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&data.payer_address, 29),
+        14.0,
+        109.0,
+        30.0,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&payer_city_line, 29),
+        14.0,
+        109.0,
+        36.0,
+        &mono_font,
+    );
+    text_top(&layer, &amount_display, 12.0, 118.0, 41.2, &mono_font);
+    text_top(
+        &layer,
+        &truncate_chars(&data.purpose_code.to_uppercase(), 4),
+        11.0,
+        66.5,
+        49.6,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&purpose_line, 42),
+        11.0,
+        82.5,
+        49.6,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&data.due_date, 10),
+        12.0,
+        178.0,
+        49.6,
+        &mono_font,
+    );
+    text_top(&layer, &creditor_iban, 11.0, 65.5, 58.3, &mono_font);
+    text_top(&layer, &reference_model, 11.0, 65.5, 66.4, &mono_font);
+    text_top(
+        &layer,
+        &truncate_chars(&reference_body, 22),
+        11.0,
+        82.5,
+        66.4,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&data.creditor_name, 30),
+        14.0,
+        66.5,
+        76.0,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&data.creditor_address, 30),
+        14.0,
+        66.5,
+        82.0,
+        &mono_font,
+    );
+    text_top(
+        &layer,
+        &truncate_chars(&creditor_city_line, 30),
+        14.0,
+        66.5,
+        88.0,
+        &mono_font,
     );
 
-    // ─── Right column: Creditor ─────────────────────────────────────────
-    let rx = c2 + 1.5;
-    t(&layer, "IBAN PREJEMNIKA", 6.0, rx, hb - 4.0, &font_bold);
-    t(
-        &layer,
-        &format_iban(&data.creditor_iban),
-        8.0,
-        rx,
-        hb - 10.5,
-        &font,
-    );
-
-    hline(&layer, c2, ry1, sr);
-    t(&layer, "BIC BANKE PREJEMNIKA", 6.0, rx, ry1 - 4.0, &font_bold);
-
-    hline(&layer, c2, ry2, sr);
-    t(&layer, "REFERENCA PREJEMNIKA", 6.0, rx, ry2 - 4.0, &font_bold);
-    t(&layer, &data.creditor_reference, 8.5, rx, ry2 - 12.0, &font);
-
-    hline(&layer, c2, ry3, sr);
-    t(&layer, "PREJEMNIK", 6.0, rx, ry3 - 4.0, &font_bold);
-    t(&layer, &data.creditor_name, 8.5, rx, ry3 - 11.0, &font);
-    t(&layer, &data.creditor_address, 8.0, rx, ry3 - 18.0, &font);
-    t(&layer, &data.creditor_city, 8.0, rx, ry3 - 25.0, &font);
-
-    // ─── Upper portion: payment notice ─────────────────────────────────
-    let ny = st + 5.0;
-    draw_line(&layer, sl, st + 3.0, sr, st + 3.0);
-    t(&layer, "OBVESTILO O PLACILU", 11.0, sl, ny + 170.0, &font_bold);
-    t(
-        &layer,
-        &format!("Prejemnik:  {}", data.creditor_name),
-        9.0,
-        sl,
-        ny + 162.0,
-        &font,
-    );
-    t(
-        &layer,
-        &format!("Znesek:  {} EUR", format_amount(data.amount_cents)),
-        9.0,
-        sl,
-        ny + 154.0,
-        &font,
-    );
-    t(
-        &layer,
-        &format!("Namen:  {}", data.purpose_text),
-        9.0,
-        sl,
-        ny + 146.0,
-        &font,
-    );
-    t(
-        &layer,
-        &format!("Rok placila:  {}", data.due_date),
-        9.0,
-        sl,
-        ny + 138.0,
-        &font,
-    );
-
-    // ─── Save to bytes ──────────────────────────────────────────────────
     let mut buf: Vec<u8> = Vec::new();
     doc.save(&mut BufWriter::new(std::io::Cursor::new(&mut buf)))
         .map_err(|e| e.to_string())?;
     Ok(buf)
 }
-
-// ─── DB helper ─────────────────────────────────────────────────────────────
 
 fn load_upn_data(
     conn: &rusqlite::Connection,
@@ -447,8 +686,25 @@ fn load_upn_data(
         )
         .map_err(|e| format!("No split for bill {} apt {}: {}", bill_id, apartment_id, e))?;
 
-    let (reference, due_date, purpose_code, purpose_text, creditor_name, creditor_iban, creditor_address, creditor_city):
-        (String, String, String, String, String, String, String, String) = conn
+    let (
+        reference,
+        due_date,
+        purpose_code,
+        purpose_text,
+        creditor_name,
+        creditor_iban,
+        creditor_address,
+        creditor_city,
+    ): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = conn
         .query_row(
             "SELECT reference, due_date, purpose_code, purpose_text,
              creditor_name, creditor_iban, creditor_address, creditor_city
@@ -456,8 +712,14 @@ fn load_upn_data(
             [bill_id],
             |r| {
                 Ok((
-                    r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
-                    r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
                 ))
             },
         )
@@ -512,8 +774,6 @@ where
     Ok(rows)
 }
 
-// ─── Commands ──────────────────────────────────────────────────────────────
-
 #[tauri::command]
 pub fn generate_upn_pdf(
     db: State<DbState>,
@@ -528,15 +788,8 @@ pub fn generate_upn_pdf(
     Ok(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes))
 }
 
-/// Save UPN PDF to a temp file and return the absolute path so the frontend can
-/// open it in a new WebviewWindow (file:// URL). WebView2 renders PDFs natively
-/// in top-level windows but not inside iframes.
 #[tauri::command]
-pub fn preview_upn(
-    db: State<DbState>,
-    bill_id: i64,
-    apartment_id: i64,
-) -> Result<String, String> {
+pub fn preview_upn(db: State<DbState>, bill_id: i64, apartment_id: i64) -> Result<String, String> {
     let data = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         load_upn_data(&conn, bill_id, apartment_id)?
@@ -568,10 +821,7 @@ pub fn get_smtp_password(db: State<DbState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn send_emails(
-    db: State<DbState>,
-    billing_period_id: i64,
-) -> Result<Vec<EmailResult>, String> {
+pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<EmailResult>, String> {
     let (smtp_host, smtp_port, smtp_user, smtp_from, use_tls, smtp_pass) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         conn.query_row(
@@ -622,9 +872,7 @@ pub fn send_emails(
     };
 
     if apartments.is_empty() {
-        return Err(
-            "No apartments with email addresses have splits in this period.".to_string(),
-        );
+        return Err("No apartments with email addresses have splits in this period.".to_string());
     }
 
     let creds = Credentials::new(smtp_user, smtp_pass);
@@ -670,7 +918,7 @@ pub fn send_emails(
 
             match result {
                 Ok(bytes) => {
-                    attachments.push((format!("UPN_{}_{}.pdf", apt_label, bill_id), bytes));
+                    attachments.push((format!("UPN_{}_{}.pdf", apt_label, bill_id), bytes))
                 }
                 Err(e) => {
                     pdf_error = Some(format!("PDF error bill {}: {}", bill_id, e));
