@@ -9,9 +9,6 @@ jobs:
   build-windows:
     name: Build Windows installer
     runs-on: windows-latest
-    concurrency:
-      group: release-windows-${{ github.ref }}
-      cancel-in-progress: false
     permissions:
       contents: write
 
@@ -33,22 +30,11 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
-          shared-key: windows-tauri
           cache-on-failure: true
-
-      - name: Configure Rust compiler cache
-        shell: bash
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -73,8 +59,3 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: false
-
-      - name: Show sccache stats
-        if: always()
-        shell: bash
-        run: sccache --show-stats
