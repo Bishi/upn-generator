@@ -105,9 +105,11 @@ fn find_payment_reference(text: &str) -> String {
 /// Search text for a due date near payment labels
 fn find_due_date(text: &str) -> String {
     let patterns = [
-        r"(?i)rok\s+placila:\s*\n?\s*(\d{2}\.\s*\d{2}\.\s*\d{4})",
+        // Elektro: "ROK PLAČILA:\n02. 03. 2026" (diacritic č/Č)
+        r"(?i)rok\s+pla[čc]ila:\s*\n?\s*(\d{2}\.\s*\d{2}\.\s*\d{4})",
         r"(?i)zapadlost:\s*(\d{2}\.\d{2}\.\d{4})",
-        r"(?i)zapade:\s*\n?\s*(\d{2}\.\d{2}\.\d{4})",
+        // ZLM: "Zapade: 1 6 .0 2 .2 0 2 6" (space-separated chars)
+        r"(?i)zapade:\s*\n?\s*(\d\s*\d\s*\.\s*\d\s*\d\s*\.\s*\d\s*\d\s*\d\s*\d)",
         r"(?i)datum:\s*(\d{2}\.\d{2}\.\d{4})",
     ];
     for p in &patterns {
@@ -617,11 +619,11 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
 
 /// Parse Elektro energija-style bills (no QR code, narrative format).
 fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
-    // Amount appears on its own line after "ZA PLACILO Z DDV:"
-    let amount_re = Regex::new(r"ZA PLACILO Z DDV:\s*\n\s*(\d+[.,]\d{2})").ok()?;
+    // Amount on its own line after "ZA PLAČILO Z DDV:" (PDF preserves diacritic Č)
+    let amount_re = Regex::new(r"ZA PLAČILO Z DDV:\s*\n\s*(\d+[.,]\d{2})").ok()?;
     let amount_cents = parse_amount_to_cents(amount_re.captures(text)?.get(1)?.as_str());
 
-    // IBAN from "IBAN: SI56 ..."
+    // IBAN from "IBAN: SI56 ..." — take the first match (Elektro's own IBAN)
     let iban_re = Regex::new(r"IBAN:\s+(SI56[\s\d]+)").ok()?;
     let iban_raw = iban_re.captures(text)?.get(1)?.as_str().trim().to_string();
     let iban_norm = normalize_iban(&iban_raw);
@@ -633,8 +635,8 @@ fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
     // Due date
     let due_date = find_due_date(text);
 
-    // Invoice number from "Racun stevilka: IR..."
-    let inv_re = Regex::new(r"Racun stevilka:\s*(\S+)").ok()?;
+    // Invoice number from "Račun številka: IR..." (diacritics preserved)
+    let inv_re = Regex::new(r"R[ae][čc]un [šs]tevilka:\s*(\S+)").ok()?;
     let invoice_number = inv_re.captures(text)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -652,26 +654,36 @@ fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
     })
 }
 
-/// Parse ZLM-style bills (different layout, no *** stub, uses "Za placilo EUR:").
+/// Parse ZLM-style bills (different layout, no *** stub, uses "Za plačilo EUR:").
 fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
-    // Amount from "Za placilo EUR: 139,28"
-    let amount_re = Regex::new(r"Za placilo EUR:\s*(\d+[.,]\d{2})").ok()?;
+    // Amount from "Za plačilo EUR: 139,28" (PDF preserves diacritic č)
+    let amount_re = Regex::new(r"Za plačilo EUR:\s*(\d+[.,]\d{2})").ok()?;
     let amount_cents = parse_amount_to_cents(amount_re.captures(text)?.get(1)?.as_str());
 
-    // IBAN from "TRR:SI56..." (no spaces in this field)
-    let iban_re = Regex::new(r"TRR:(SI56\d+)").ok()?;
-    let iban_raw = iban_re.captures(text)?.get(1)?.as_str().to_string();
-    let iban_norm = normalize_iban(&iban_raw);
+    // IBAN from "TRR:SI5 6  0 2 0 1 ..." — chars space-separated, grab to EOL and normalize
+    let iban_re = Regex::new(r"TRR:([A-Z0-9][\sA-Z0-9]+)").ok()?;
+    let iban_dirty = iban_re.captures(text)?.get(1)?.as_str();
+    let iban_dirty_line = iban_dirty.lines().next().unwrap_or(iban_dirty);
+    let iban_norm = normalize_iban(iban_dirty_line);
+    let iban_raw = iban_norm.clone();
 
-    // Reference from "Stevilka: SI00 ..."
-    let ref_re = Regex::new(r"Stevilka:\s+(SI\d{2}\s*\d+)").ok()?;
-    let reference = ref_re.captures(text)?.get(1)?.as_str().trim().to_string();
+    // Reference from "Referenca: SI0 0  2 0 2 6 8 5" — also space-separated, normalize
+    let ref_re = Regex::new(r"Referenca:\s+([A-Z0-9][\sA-Z0-9]+)").ok()?;
+    let ref_dirty = ref_re.captures(text)?.get(1)?.as_str();
+    let ref_dirty_line = ref_dirty.lines().next().unwrap_or(ref_dirty);
+    let ref_norm: String = ref_dirty_line.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase();
+    // Format as "SI00 202685"
+    let reference = if ref_norm.len() > 4 {
+        format!("{} {}", &ref_norm[..4], &ref_norm[4..])
+    } else {
+        ref_norm
+    };
 
-    // Due date — "Datum:" in ZLM format is the due date
+    // Due date
     let due_date = find_due_date(text);
 
-    // Invoice from "RACUN 2026-85"
-    let inv_re = Regex::new(r"RACUN\s+(\d{4}-\d+)").ok()?;
+    // Invoice from "Številka: 2026-85"
+    let inv_re = Regex::new(r"[ŠS]tevilka:\s*(\d{4}-\d+)").ok()?;
     let invoice_number = inv_re.captures(text)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
