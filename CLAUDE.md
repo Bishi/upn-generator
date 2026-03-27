@@ -31,7 +31,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src-tauri/src/commands/upn.rs` — UPN QR form rendering (official ZBS layout), email sending
 - `src/routes/bills.tsx` — Bills page (year/month UI, import, manual entry)
 - `src/routes/splits.tsx` — Splits matrix page
-- `src/routes/upn.tsx` — UPN preview + send page
+- `src/routes/upn.tsx` — UPN preview + send page (system PDF opener with visible preview errors)
 
 ## Dev Commands
 

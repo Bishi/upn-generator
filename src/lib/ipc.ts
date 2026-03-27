@@ -61,6 +61,8 @@ export const ipc = {
     invoke<string>("generate_upn_pdf", { billId, apartmentId }),
   previewUpn: (billId: number, apartmentId: number) =>
     invoke<string>("preview_upn", { billId, apartmentId }),
+  openPreviewUpn: (billId: number, apartmentId: number) =>
+    invoke<string>("open_preview_upn", { billId, apartmentId }),
   saveAllUpns: (billingPeriodId: number, folderPath: string) =>
     invoke<string[]>("save_all_upns", { billingPeriodId, folderPath }),
   sendEmails: (billingPeriodId: number) =>

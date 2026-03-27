@@ -7,7 +7,8 @@ use printpdf::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::io::BufWriter;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 use super::config::DbState;
 
@@ -39,6 +40,26 @@ const FORM_WIDTH_MM: f32 = 210.0;
 const FORM_HEIGHT_MM: f32 = 99.0;
 const LEFT_WIDTH_MM: f32 = 60.0;
 const TOP_RIGHT_HEIGHT_MM: f32 = 50.0;
+const MONO_WIDTH_FACTOR: f32 = 0.62;
+const MIN_FONT_SIZE_PT: f32 = 7.5;
+
+#[derive(Clone, Copy)]
+struct Rect {
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+}
+
+impl Rect {
+    fn width(self) -> f32 {
+        self.x2 - self.x1
+    }
+
+    fn height(self) -> f32 {
+        self.y2 - self.y1
+    }
+}
 
 fn format_iban(iban: &str) -> String {
     iban.chars()
@@ -92,6 +113,10 @@ fn split_reference(reference: &str) -> (String, String) {
 
 fn pt_to_mm(points: f32) -> f32 {
     points * 0.352_778
+}
+
+fn mm_to_pt(mm: f32) -> f32 {
+    mm / 0.352_778
 }
 
 fn y_from_top(y_top: f32) -> f32 {
@@ -156,6 +181,73 @@ fn text_top(
 ) {
     let baseline = y_from_top(y_top + pt_to_mm(size_pt) * 0.8);
     layer.use_text(text, size_pt, Mm(x), Mm(baseline), font);
+}
+
+fn mono_text_width_mm(text: &str, size_pt: f32) -> f32 {
+    text.chars().count() as f32 * pt_to_mm(size_pt * MONO_WIDTH_FACTOR)
+}
+
+fn fit_mono_text_to_width(text: &str, width_mm: f32, preferred_pt: f32, min_pt: f32) -> (String, f32) {
+    let compact = normalize_spaces(text);
+    if compact.is_empty() {
+        return (compact, preferred_pt);
+    }
+
+    let mut size_pt = preferred_pt;
+    while size_pt > min_pt && mono_text_width_mm(&compact, size_pt) > width_mm {
+        size_pt -= 0.25;
+    }
+
+    if mono_text_width_mm(&compact, size_pt) <= width_mm {
+        return (compact, size_pt.max(min_pt));
+    }
+
+    let max_chars = ((width_mm / pt_to_mm(size_pt * MONO_WIDTH_FACTOR)).floor() as usize).max(1);
+    (truncate_chars(&compact, max_chars), size_pt.max(min_pt))
+}
+
+fn draw_fitted_single_line(
+    layer: &PdfLayerReference,
+    text: &str,
+    rect: Rect,
+    preferred_pt: f32,
+    min_pt: f32,
+    font: &IndirectFontRef,
+) {
+    let horizontal_padding = 1.4f32;
+    let available_width = (rect.width() - horizontal_padding * 2.0).max(1.0);
+    let available_height = rect.height().max(1.0);
+    let max_height_pt = (mm_to_pt(available_height) * 0.76).max(min_pt);
+    let preferred_pt = preferred_pt.min(max_height_pt);
+    let min_pt = min_pt.min(preferred_pt);
+    let (fitted, size_pt) = fit_mono_text_to_width(text, available_width, preferred_pt, min_pt);
+    let text_height_mm = pt_to_mm(size_pt) * 0.92;
+    let top = rect.y1 + ((available_height - text_height_mm).max(0.0) / 2.0);
+    text_top(layer, &fitted, size_pt, rect.x1 + horizontal_padding, top, font);
+}
+
+fn draw_fitted_multi_line(
+    layer: &PdfLayerReference,
+    lines: &[String],
+    rect: Rect,
+    preferred_pt: f32,
+    min_pt: f32,
+    font: &IndirectFontRef,
+) {
+    if lines.is_empty() {
+        return;
+    }
+
+    let row_height = rect.height() / lines.len() as f32;
+    for (index, line) in lines.iter().enumerate() {
+        let row = Rect {
+            x1: rect.x1,
+            y1: rect.y1 + row_height * index as f32,
+            x2: rect.x2,
+            y2: rect.y1 + row_height * (index as f32 + 1.0),
+        };
+        draw_fitted_single_line(layer, line, row, preferred_pt, min_pt, font);
+    }
 }
 
 fn draw_grid_field(
@@ -338,7 +430,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     };
 
     let mono_font = if let Some(bytes) =
-        load_system_font(&["courbd.ttf", "lucon.ttf", "consolab.ttf", "couri.ttf"])
+        load_system_font(&["courbd.ttf", "cour.ttf", "lucon.ttf", "consola.ttf"])
     {
         doc.add_external_font(std::io::Cursor::new(bytes))
             .map_err(|e| e.to_string())?
@@ -351,6 +443,97 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     let top_fill = rgb(254, 224, 205);
     let bottom_fill = rgb(255, 244, 210);
     let black = rgb(0, 0, 0);
+
+    let receipt_payer_box = Rect {
+        x1: 4.0,
+        y1: 6.0,
+        x2: 56.5,
+        y2: 19.5,
+    };
+    let receipt_purpose_box = Rect {
+        x1: 4.0,
+        y1: 22.5,
+        x2: 56.5,
+        y2: 31.5,
+    };
+    let receipt_amount_box = Rect {
+        x1: 16.5,
+        y1: 34.5,
+        x2: 56.5,
+        y2: 39.5,
+    };
+    let receipt_iban_ref_box = Rect {
+        x1: 4.0,
+        y1: 42.0,
+        x2: 56.5,
+        y2: 56.0,
+    };
+    let receipt_creditor_box = Rect {
+        x1: 4.0,
+        y1: 59.0,
+        x2: 56.5,
+        y2: 72.5,
+    };
+    let qr_box = Rect {
+        x1: 63.5,
+        y1: 6.0,
+        x2: 103.5,
+        y2: 45.5,
+    };
+    let main_payer_box = Rect {
+        x1: 106.5,
+        y1: 22.0,
+        x2: 206.0,
+        y2: 37.0,
+    };
+    let amount_box = Rect {
+        x1: 114.2,
+        y1: 40.5,
+        x2: 155.5,
+        y2: 45.5,
+    };
+    let purpose_code_box = Rect {
+        x1: 63.5,
+        y1: 49.0,
+        x2: 78.5,
+        y2: 54.0,
+    };
+    let purpose_box = Rect {
+        x1: 80.5,
+        y1: 49.0,
+        x2: 174.2,
+        y2: 54.0,
+    };
+    let date_box = Rect {
+        x1: 176.2,
+        y1: 49.0,
+        x2: 206.0,
+        y2: 54.0,
+    };
+    let creditor_iban_box = Rect {
+        x1: 63.5,
+        y1: 58.0,
+        x2: 191.0,
+        y2: 63.0,
+    };
+    let creditor_reference_model_box = Rect {
+        x1: 63.5,
+        y1: 66.0,
+        x2: 78.5,
+        y2: 71.0,
+    };
+    let creditor_reference_body_box = Rect {
+        x1: 80.5,
+        y1: 66.0,
+        x2: 163.0,
+        y2: 71.0,
+    };
+    let creditor_box = Rect {
+        x1: 63.5,
+        y1: 74.0,
+        x2: 163.0,
+        y2: 89.0,
+    };
 
     layer.set_fill_color(rgb(255, 255, 255));
     fill_rect_top(&layer, 0.0, 0.0, FORM_WIDTH_MM, FORM_HEIGHT_MM);
@@ -376,29 +559,87 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     layer.set_outline_thickness(0.25);
     draw_perforation(&layer);
 
-    stroke_rect_top(&layer, 4.0, 6.0, 56.5, 19.5);
-    stroke_rect_top(&layer, 4.0, 22.5, 56.5, 31.5);
-    stroke_rect_top(&layer, 16.5, 34.5, 56.5, 39.5);
-    stroke_rect_top(&layer, 4.0, 42.0, 56.5, 56.0);
-    stroke_rect_top(&layer, 4.0, 59.0, 56.5, 72.5);
+    stroke_rect_top(
+        &layer,
+        receipt_payer_box.x1,
+        receipt_payer_box.y1,
+        receipt_payer_box.x2,
+        receipt_payer_box.y2,
+    );
+    stroke_rect_top(
+        &layer,
+        receipt_purpose_box.x1,
+        receipt_purpose_box.y1,
+        receipt_purpose_box.x2,
+        receipt_purpose_box.y2,
+    );
+    stroke_rect_top(
+        &layer,
+        receipt_amount_box.x1,
+        receipt_amount_box.y1,
+        receipt_amount_box.x2,
+        receipt_amount_box.y2,
+    );
+    stroke_rect_top(
+        &layer,
+        receipt_iban_ref_box.x1,
+        receipt_iban_ref_box.y1,
+        receipt_iban_ref_box.x2,
+        receipt_iban_ref_box.y2,
+    );
+    stroke_rect_top(
+        &layer,
+        receipt_creditor_box.x1,
+        receipt_creditor_box.y1,
+        receipt_creditor_box.x2,
+        receipt_creditor_box.y2,
+    );
 
     draw_grid_field(&layer, 106.5, 6.0, 177.7, 11.0, Some(3.75));
     draw_grid_field(&layer, 185.2, 6.5, 189.2, 10.5, None);
     draw_grid_field(&layer, 196.5, 6.5, 200.5, 10.5, None);
-    stroke_rect_top(&layer, 63.5, 6.0, 103.5, 45.5);
+    stroke_rect_top(&layer, qr_box.x1, qr_box.y1, qr_box.x2, qr_box.y2);
     draw_grid_field(&layer, 106.5, 14.0, 121.5, 19.0, Some(3.75));
     draw_grid_field(&layer, 123.5, 14.0, 206.0, 19.0, Some(3.75));
-    draw_three_line_box(&layer, 106.5, 22.0, 206.0, 37.0);
-    draw_grid_field(&layer, 114.2, 40.5, 155.5, 45.5, Some(3.75));
+    draw_three_line_box(&layer, main_payer_box.x1, main_payer_box.y1, main_payer_box.x2, main_payer_box.y2);
+    draw_grid_field(&layer, amount_box.x1, amount_box.y1, amount_box.x2, amount_box.y2, Some(3.75));
     draw_grid_field(&layer, 161.2, 40.5, 191.2, 45.5, Some(3.75));
     draw_grid_field(&layer, 196.5, 41.0, 200.5, 45.0, None);
-    draw_grid_field(&layer, 63.5, 49.0, 78.5, 54.0, Some(3.75));
-    draw_grid_field(&layer, 80.5, 49.0, 174.2, 54.0, Some(3.75));
-    draw_grid_field(&layer, 176.2, 49.0, 206.0, 54.0, Some(3.72));
-    draw_grid_field(&layer, 63.5, 58.0, 191.0, 63.0, Some(3.75));
-    draw_grid_field(&layer, 63.5, 66.0, 78.5, 71.0, Some(3.75));
-    draw_grid_field(&layer, 80.5, 66.0, 163.0, 71.0, Some(3.75));
-    draw_three_line_box(&layer, 63.5, 74.0, 163.0, 89.0);
+    draw_grid_field(
+        &layer,
+        purpose_code_box.x1,
+        purpose_code_box.y1,
+        purpose_code_box.x2,
+        purpose_code_box.y2,
+        Some(3.75),
+    );
+    draw_grid_field(&layer, purpose_box.x1, purpose_box.y1, purpose_box.x2, purpose_box.y2, Some(3.75));
+    draw_grid_field(&layer, date_box.x1, date_box.y1, date_box.x2, date_box.y2, Some(3.72));
+    draw_grid_field(
+        &layer,
+        creditor_iban_box.x1,
+        creditor_iban_box.y1,
+        creditor_iban_box.x2,
+        creditor_iban_box.y2,
+        Some(3.75),
+    );
+    draw_grid_field(
+        &layer,
+        creditor_reference_model_box.x1,
+        creditor_reference_model_box.y1,
+        creditor_reference_model_box.x2,
+        creditor_reference_model_box.y2,
+        Some(3.75),
+    );
+    draw_grid_field(
+        &layer,
+        creditor_reference_body_box.x1,
+        creditor_reference_body_box.y1,
+        creditor_reference_body_box.x2,
+        creditor_reference_body_box.y2,
+        Some(3.75),
+    );
+    draw_three_line_box(&layer, creditor_box.x1, creditor_box.y1, creditor_box.x2, creditor_box.y2);
     stroke_rect_top(&layer, 168.6, 71.0, 203.3, 89.0);
     line_top(&layer, 172.0, 85.6, 200.0, 85.6);
 
@@ -412,14 +653,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "UPN QR - potrdilo", 10.0, 32.6, 2.0, &label_font);
     text_top(&layer, "Namen in rok plačila", 7.0, 4.0, 20.0, &label_font);
     text_top(&layer, "Znesek", 7.0, 16.5, 32.0, &label_font);
-    text_top(
-        &layer,
-        "IBAN in referenca prejemnika",
-        7.0,
-        4.0,
-        40.0,
-        &label_font,
-    );
+    text_top(&layer, "IBAN in referenca prejemnika", 7.0, 4.0, 40.0, &label_font);
     text_top(&layer, "Ime prejemnika", 7.0, 4.0, 56.5, &label_font);
     text_top(
         &layer,
@@ -434,14 +668,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "Polog", 7.0, 184.3, 3.5, &label_font);
     text_top(&layer, "Dvig", 7.0, 196.1, 3.5, &label_font);
     text_top(&layer, "Referenca plačnika", 7.0, 106.5, 11.0, &label_font);
-    text_top(
-        &layer,
-        "Ime, ulica in kraj plačnika",
-        7.0,
-        106.5,
-        19.5,
-        &label_font,
-    );
+    text_top(&layer, "Ime, ulica in kraj plačnika", 7.0, 106.5, 19.5, &label_font);
     text_top(&layer, "EUR", 11.0, 7.8, 35.6, &label_font);
     text_top(&layer, "EUR", 11.0, 111.2, 41.6, &label_font);
     text_top(&layer, "Znesek", 7.0, 114.2, 38.0, &label_font);
@@ -453,14 +680,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "IBAN prejemnika", 7.0, 63.5, 55.5, &label_font);
     text_top(&layer, "UPN QR", 10.0, 194.3, 59.1, &label_font);
     text_top(&layer, "Referenca prejemnika", 7.0, 63.5, 63.5, &label_font);
-    text_top(
-        &layer,
-        "Ime, ulica in kraj prejemnika",
-        7.0,
-        63.5,
-        71.5,
-        &label_font,
-    );
+    text_top(&layer, "Ime, ulica in kraj prejemnika", 7.0, 63.5, 71.5, &label_font);
     text_top(
         &layer,
         "Podpis plačnika (neobvezno žig)",
@@ -491,71 +711,45 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     );
     let amount_display = format_amount_display(data.amount_cents);
 
-    text_top(
+    draw_fitted_multi_line(
         &layer,
-        &truncate_chars(&data.payer_name, 24),
-        12.0,
-        7.0,
-        8.4,
+        &[
+            data.payer_name.clone(),
+            data.payer_address.clone(),
+            payer_city_line.clone(),
+        ],
+        receipt_payer_box,
+        10.8,
+        MIN_FONT_SIZE_PT,
         &mono_font,
     );
-    text_top(
+    draw_fitted_multi_line(
         &layer,
-        &truncate_chars(&data.payer_address, 24),
-        12.0,
-        7.0,
-        14.2,
+        &[purpose_line.clone(), receipt_detail],
+        receipt_purpose_box,
+        9.6,
+        7.8,
         &mono_font,
     );
-    text_top(
+    draw_fitted_single_line(&layer, &amount_display, receipt_amount_box, 11.5, 9.0, &mono_font);
+    draw_fitted_multi_line(
         &layer,
-        &truncate_chars(&payer_city_line, 24),
-        12.0,
-        7.0,
-        20.0,
+        &[creditor_iban.clone(), format!("{} {}", reference_model, reference_body)],
+        receipt_iban_ref_box,
+        10.0,
+        7.8,
         &mono_font,
     );
-    text_top(
+    draw_fitted_multi_line(
         &layer,
-        &truncate_chars(&purpose_line, 28),
-        11.0,
-        7.0,
-        25.2,
-        &mono_font,
-    );
-    text_top(&layer, &receipt_detail, 10.5, 7.0, 30.0, &mono_font);
-    text_top(&layer, &amount_display, 12.0, 22.0, 35.3, &mono_font);
-    text_top(&layer, &creditor_iban, 11.0, 7.0, 45.0, &mono_font);
-    text_top(
-        &layer,
-        &truncate_chars(&format!("{} {}", reference_model, reference_body), 28),
-        11.0,
-        7.0,
-        51.0,
-        &mono_font,
-    );
-    text_top(
-        &layer,
-        &truncate_chars(&data.creditor_name, 24),
-        12.0,
-        7.0,
-        61.8,
-        &mono_font,
-    );
-    text_top(
-        &layer,
-        &truncate_chars(&data.creditor_address, 24),
-        12.0,
-        7.0,
-        67.6,
-        &mono_font,
-    );
-    text_top(
-        &layer,
-        &truncate_chars(&creditor_city_line, 24),
-        12.0,
-        7.0,
-        73.4,
+        &[
+            data.creditor_name.clone(),
+            data.creditor_address.clone(),
+            creditor_city_line.clone(),
+        ],
+        receipt_creditor_box,
+        10.6,
+        MIN_FONT_SIZE_PT,
         &mono_font,
     );
 
@@ -583,87 +777,56 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         );
     }
 
-    text_top(
+    draw_fitted_multi_line(
         &layer,
-        &truncate_chars(&data.payer_name, 29),
-        14.0,
-        109.0,
-        24.0,
+        &[
+            data.payer_name.clone(),
+            data.payer_address.clone(),
+            payer_city_line,
+        ],
+        main_payer_box,
+        13.2,
+        9.0,
         &mono_font,
     );
-    text_top(
+    draw_fitted_single_line(&layer, &amount_display, amount_box, 11.5, 8.5, &mono_font);
+    draw_fitted_single_line(
         &layer,
-        &truncate_chars(&data.payer_address, 29),
-        14.0,
-        109.0,
-        30.0,
+        &data.purpose_code.to_uppercase(),
+        purpose_code_box,
+        10.5,
+        8.0,
         &mono_font,
     );
-    text_top(
+    draw_fitted_single_line(&layer, &purpose_line, purpose_box, 10.0, 7.8, &mono_font);
+    draw_fitted_single_line(&layer, &data.due_date, date_box, 11.0, 8.5, &mono_font);
+    draw_fitted_single_line(&layer, &creditor_iban, creditor_iban_box, 10.4, 8.0, &mono_font);
+    draw_fitted_single_line(
         &layer,
-        &truncate_chars(&payer_city_line, 29),
-        14.0,
-        109.0,
-        36.0,
+        &reference_model,
+        creditor_reference_model_box,
+        10.0,
+        8.0,
         &mono_font,
     );
-    text_top(&layer, &amount_display, 12.0, 118.0, 41.2, &mono_font);
-    text_top(
+    draw_fitted_single_line(
         &layer,
-        &truncate_chars(&data.purpose_code.to_uppercase(), 4),
-        11.0,
-        66.5,
-        49.6,
+        &reference_body,
+        creditor_reference_body_box,
+        10.0,
+        7.8,
         &mono_font,
     );
-    text_top(
+    draw_fitted_multi_line(
         &layer,
-        &truncate_chars(&purpose_line, 42),
-        11.0,
-        82.5,
-        49.6,
-        &mono_font,
-    );
-    text_top(
-        &layer,
-        &truncate_chars(&data.due_date, 10),
-        12.0,
-        178.0,
-        49.6,
-        &mono_font,
-    );
-    text_top(&layer, &creditor_iban, 11.0, 65.5, 58.3, &mono_font);
-    text_top(&layer, &reference_model, 11.0, 65.5, 66.4, &mono_font);
-    text_top(
-        &layer,
-        &truncate_chars(&reference_body, 22),
-        11.0,
-        82.5,
-        66.4,
-        &mono_font,
-    );
-    text_top(
-        &layer,
-        &truncate_chars(&data.creditor_name, 30),
-        14.0,
-        66.5,
-        76.0,
-        &mono_font,
-    );
-    text_top(
-        &layer,
-        &truncate_chars(&data.creditor_address, 30),
-        14.0,
-        66.5,
-        82.0,
-        &mono_font,
-    );
-    text_top(
-        &layer,
-        &truncate_chars(&creditor_city_line, 30),
-        14.0,
-        66.5,
-        88.0,
+        &[
+            data.creditor_name.clone(),
+            data.creditor_address.clone(),
+            creditor_city_line,
+        ],
+        creditor_box,
+        12.2,
+        8.8,
         &mono_font,
     );
 
@@ -788,19 +951,41 @@ pub fn generate_upn_pdf(
     Ok(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes))
 }
 
-#[tauri::command]
-pub fn preview_upn(db: State<DbState>, bill_id: i64, apartment_id: i64) -> Result<String, String> {
-    let data = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        load_upn_data(&conn, bill_id, apartment_id)?
-    };
-    let pdf_bytes = render_upn_pdf(&data)?;
+fn write_preview_pdf(data: &UpnData, bill_id: i64, apartment_id: i64) -> Result<String, String> {
+    let pdf_bytes = render_upn_pdf(data)?;
     let temp_path = std::env::temp_dir().join(format!("upn_{}_{}.pdf", bill_id, apartment_id));
     std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
     temp_path
         .to_str()
         .map(|s| s.to_string())
         .ok_or_else(|| "Invalid temp path".to_string())
+}
+
+#[tauri::command]
+pub fn preview_upn(db: State<DbState>, bill_id: i64, apartment_id: i64) -> Result<String, String> {
+    let data = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        load_upn_data(&conn, bill_id, apartment_id)?
+    };
+    write_preview_pdf(&data, bill_id, apartment_id)
+}
+
+#[tauri::command]
+pub fn open_preview_upn(
+    app: AppHandle,
+    db: State<DbState>,
+    bill_id: i64,
+    apartment_id: i64,
+) -> Result<String, String> {
+    let data = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        load_upn_data(&conn, bill_id, apartment_id)?
+    };
+    let path = write_preview_pdf(&data, bill_id, apartment_id)?;
+    app.opener()
+        .open_path(&path, None::<String>)
+        .map_err(|e| format!("System PDF opener failed for {}: {}", path, e))?;
+    Ok(path)
 }
 
 #[tauri::command]

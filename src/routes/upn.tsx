@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
@@ -60,19 +59,27 @@ function ApartmentCard({
   apartmentLabel,
   splits,
   emailResult,
+  onPreviewError,
 }: {
   apartmentId: number;
   apartmentLabel: string;
   splits: SplitRow[];
   emailResult?: EmailResult;
+  onPreviewError: (message: string | null) => void;
 }) {
   const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
 
   const previewUpn = async (billId: number) => {
     setLoadingPreview(billId);
     try {
-      const path = await ipc.previewUpn(billId, apartmentId);
-      await openPath(path);
+      onPreviewError(null);
+      const path = await ipc.openPreviewUpn(billId, apartmentId);
+      if (!path || !path.trim()) {
+        throw new Error("Preview did not return a PDF path.");
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      onPreviewError(`Could not open the UPN preview. ${message}`);
     } finally {
       setLoadingPreview(null);
     }
@@ -274,6 +281,7 @@ function UpnPage() {
               apartmentLabel={label}
               splits={aptSplits}
               emailResult={emailResults.find((r) => r.apartment_label === label)}
+              onPreviewError={setSendError}
             />
           ))}
         </div>

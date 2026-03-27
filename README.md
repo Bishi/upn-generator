@@ -117,7 +117,7 @@ Each apartment card shows its line items and the total amount due.
 
 | Action | Description |
 |--------|-------------|
-| **Eye icon (👁)** | Generates the UPN PDF and opens it in your default PDF viewer |
+| **Eye icon (👁)** | Generates the UPN PDF and opens it in your default PDF viewer. If Windows refuses to launch it, the UPN page shows the error. |
 | **Download All PDFs** | Saves all UPN slips to a folder of your choice |
 | **Send Emails** | Sends UPN slips to all tenants at their configured email addresses |
 
@@ -172,7 +172,7 @@ Open it to see the raw extracted PDF text and what each detection phase found or
 
 **UPN preview doesn't open**
 
-Make sure a PDF viewer is installed (e.g. Adobe Acrobat or Microsoft Edge). The eye button saves a temporary PDF and opens it with Windows' default PDF app.
+Make sure a PDF viewer is installed (e.g. Adobe Acrobat or Microsoft Edge). The eye button saves a temporary PDF and opens it with Windows' default PDF app. If the launch fails, the error is shown directly on the UPN page instead of failing silently.
 
 **Email not sending**
 

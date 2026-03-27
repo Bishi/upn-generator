@@ -11,8 +11,8 @@ use commands::config::{
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
-    generate_upn_pdf, get_smtp_password, preview_upn, save_all_upns, save_smtp_password,
-    send_emails,
+    generate_upn_pdf, get_smtp_password, open_preview_upn, preview_upn, save_all_upns,
+    save_smtp_password, send_emails,
 };
 use db::migrations;
 use rusqlite::Connection;
@@ -62,6 +62,7 @@ pub fn run() {
             // UPN
             generate_upn_pdf,
             preview_upn,
+            open_preview_upn,
             save_all_upns,
             send_emails,
             save_smtp_password,
