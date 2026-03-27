@@ -650,7 +650,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
 
     layer.set_fill_color(orange.clone());
     text_top(&layer, "Ime plačnika", 7.0, 4.0, 3.5, &label_font);
-    text_top(&layer, "UPN QR - potrdilo", 10.0, 32.6, 2.0, &label_font);
+    text_top(&layer, "UPN QR - potrdilo", 10.0, 28.0, 2.0, &label_font);
     text_top(&layer, "Namen in rok plačila", 7.0, 4.0, 20.0, &label_font);
     text_top(&layer, "Znesek", 7.0, 16.5, 32.0, &label_font);
     text_top(&layer, "IBAN in referenca prejemnika", 7.0, 4.0, 40.0, &label_font);
@@ -670,7 +670,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "Referenca plačnika", 7.0, 106.5, 11.0, &label_font);
     text_top(&layer, "Ime, ulica in kraj plačnika", 7.0, 106.5, 19.5, &label_font);
     text_top(&layer, "EUR", 11.0, 7.8, 35.6, &label_font);
-    text_top(&layer, "EUR", 11.0, 111.2, 41.6, &label_font);
+    text_top(&layer, "EUR", 11.0, 107.0, 41.6, &label_font);
     text_top(&layer, "Znesek", 7.0, 114.2, 38.0, &label_font);
     text_top(&layer, "Datum plačila", 7.0, 161.2, 38.0, &label_font);
     text_top(&layer, "Nujno", 7.0, 195.3, 38.0, &label_font);
