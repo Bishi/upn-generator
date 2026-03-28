@@ -63,6 +63,7 @@ Current status: **v0.2.9. Phases 2 + 3 largely complete. Phase 4 (email + keyrin
 After implementing a feature or completing a plan, always update documentation as needed:
 - `CLAUDE.md` — update phase status, current version in tag example, any new key files or architecture decisions
 - `README.md` — add completed phases, update feature list
+- `STATUS.md` — update the current released version/tag and short release snapshot
 
 ## Versioning & Releases
 

@@ -1,6 +1,7 @@
 # AGENTS.md
 
 Read `CLAUDE.md` for full project context, architecture notes, plan/status, and release workflow details. Treat `CLAUDE.md` as the canonical project handbook.
+Use `STATUS.md` as the quick release snapshot for the current version/tag.
 
 Critical rules for agents:
 
@@ -9,5 +10,6 @@ Critical rules for agents:
 - Preserve the existing architecture choices documented in `CLAUDE.md`, including direct `rusqlite` usage and singleton `building` / `smtp_config` rows.
 - UPN output must remain visually close to real Slovenian bank UPN forms; use the examples in `file-examples/` as reference.
 - When implementing features, update documentation as needed in `CLAUDE.md` and `README.md`.
+- Keep `STATUS.md` updated with the current released version and tag whenever a release is prepared.
 - Before any push to `main`, follow the version bump and git tag workflow documented in `CLAUDE.md`.
 - Never push to `main` without bumping `src-tauri/tauri.conf.json` and creating/pushing a new matching `vX.Y.Z` tag in the same release step.
