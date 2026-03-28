@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Check, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -122,8 +122,10 @@ function EditableCell({
 
 function SplitsPage() {
   const [splits, setSplits] = useState<SplitRow[]>([]);
+  const [loadingSplits, setLoadingSplits] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadRequestRef = useRef(0);
   const {
     years,
     yearPeriods,
@@ -139,8 +141,23 @@ function SplitsPage() {
   };
 
   useEffect(() => {
-    if (selected?.id) loadSplits(selected.id);
-    else setSplits([]);
+    const requestId = ++loadRequestRef.current;
+    if (!selected?.id) {
+      setSplits([]);
+      setLoadingSplits(false);
+      return;
+    }
+
+    setSplits([]);
+    setLoadingSplits(true);
+    void ipc.getSplits(selected.id).then((rows) => {
+      if (loadRequestRef.current !== requestId) return;
+      setSplits(rows);
+      setLoadingSplits(false);
+    });
+    return () => {
+      loadRequestRef.current += 1;
+    };
   }, [selected]);
 
   const recalculate = async () => {
@@ -197,24 +214,38 @@ function SplitsPage() {
       )}
 
       {selected && splits.length === 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-          <span>No splits yet. Import bills first, then click Recalculate.</span>
-          <div className="flex gap-2">
-            <Link
-              to="/bills"
-              className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
-            >
-              Go to Bills
-            </Link>
-            <Button onClick={recalculate} disabled={calculating}>
-              <RefreshCw className={`size-4 mr-2 ${calculating ? "animate-spin" : ""}`} />
-              {calculating ? "Calculating..." : "Recalculate"}
-            </Button>
+        <div className="overflow-auto rounded-lg border border-border min-h-[268px]">
+          <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
+            <div className="max-w-md space-y-3">
+              {loadingSplits ? (
+                <>
+                  <div className="text-sm font-medium">Loading splits...</div>
+                  <div className="text-sm text-muted-foreground">
+                    Preparing this billing period.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm font-medium">No splits yet for this period</div>
+                  <div className="text-sm text-muted-foreground">
+                    Import bills first, then use the Recalculate button above.
+                  </div>
+                  <div>
+                    <Link
+                      to="/bills"
+                      className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+                    >
+                      Go to Bills
+                    </Link>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {splits.length > 0 && (
+      {!loadingSplits && splits.length > 0 && (
         <div className="overflow-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
@@ -276,7 +307,7 @@ function SplitsPage() {
         </div>
       )}
 
-      {splits.length > 0 && (
+      {!loadingSplits && splits.length > 0 && (
         <div className="flex justify-end">
           <Link
             to="/upn"

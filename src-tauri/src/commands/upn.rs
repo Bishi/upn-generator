@@ -78,6 +78,36 @@ fn normalize_spaces(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn receipt_purpose_text(full_purpose_text: &str) -> String {
+    let normalized = normalize_spaces(full_purpose_text);
+    if normalized.is_empty() {
+        return normalized;
+    }
+
+    let month_marker =
+        regex::Regex::new(r"\b\d{2}[-/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b").unwrap();
+    if !month_marker.is_match(&normalized) {
+        return normalized;
+    }
+
+    let mut parts: Vec<&str> = normalized.split_whitespace().collect();
+    if parts.len() < 2 {
+        return normalized;
+    }
+
+    let last = parts.last().copied().unwrap_or_default();
+    let compact_last: String = last.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let looks_like_trailing_document_number =
+        compact_last.len() >= 6 && compact_last.chars().all(|c| c.is_ascii_digit());
+
+    if looks_like_trailing_document_number {
+        parts.pop();
+        return parts.join(" ");
+    }
+
+    normalized
+}
+
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
@@ -708,6 +738,8 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     let creditor_iban = format_iban(&data.creditor_iban);
     let (reference_model, reference_body) = split_reference(&data.creditor_reference);
     let purpose_line = truncate_chars(&normalize_spaces(&data.purpose_text), 42);
+    let receipt_purpose_line =
+        truncate_chars(&receipt_purpose_text(&data.purpose_text), 42);
     let receipt_detail = truncate_chars(
         &format!("{}, {}", truncate_chars(&reference_body, 18), data.due_date),
         34,
@@ -728,7 +760,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     );
     draw_fitted_multi_line(
         &layer,
-        &[purpose_line.clone(), receipt_detail],
+        &[receipt_purpose_line, receipt_detail],
         receipt_purpose_box,
         9.6,
         7.8,

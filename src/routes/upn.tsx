@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2, Files } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -191,10 +191,12 @@ function ApartmentCard({
 
 function UpnPage() {
   const [splits, setSplits] = useState<SplitRow[]>([]);
+  const [loadingSplits, setLoadingSplits] = useState(false);
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
+  const loadRequestRef = useRef(0);
   const {
     years,
     yearPeriods,
@@ -204,18 +206,24 @@ function UpnPage() {
     setSelected,
   } = useBillingPeriodSelection();
 
-  const loadSplits = async (id: number) => {
-    const rows = await ipc.getSplits(id);
-    setSplits(rows);
-  };
-
   useEffect(() => {
+    const requestId = ++loadRequestRef.current;
     if (selected?.id) {
       setEmailResults([]);
-      loadSplits(selected.id);
+      setSplits([]);
+      setLoadingSplits(true);
+      void ipc.getSplits(selected.id).then((rows) => {
+        if (loadRequestRef.current !== requestId) return;
+        setSplits(rows);
+        setLoadingSplits(false);
+      });
     } else {
       setSplits([]);
+      setLoadingSplits(false);
     }
+    return () => {
+      loadRequestRef.current += 1;
+    };
   }, [selected]);
 
   const sendEmails = async () => {
@@ -304,18 +312,29 @@ function UpnPage() {
       )}
 
       {selected && splits.length === 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-          <span>No splits found. Go to Splits and click Recalculate first.</span>
-          <Link
-            to="/splits"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
-          >
-            Go to Splits
-          </Link>
+        <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground min-h-[132px] flex items-center justify-center">
+          {loadingSplits ? (
+            <div className="text-center">
+              <div className="text-sm font-medium text-foreground">Loading UPN data...</div>
+              <div className="text-sm text-muted-foreground">
+                Preparing apartment packets for this period.
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3 w-full">
+              <span>No splits found. Go to Splits and click Recalculate first.</span>
+              <Link
+                to="/splits"
+                className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+              >
+                Go to Splits
+              </Link>
+            </div>
+          )}
         </div>
       )}
 
-      {apartments.length > 0 && (
+      {!loadingSplits && apartments.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {apartments.map(([aptId, { label, splits: aptSplits }]) => (
             <ApartmentCard

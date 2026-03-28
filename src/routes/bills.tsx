@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FilePlus,
   Trash2,
@@ -301,9 +301,11 @@ function BillRow({
 
 function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([]);
+  const [loadingBills, setLoadingBills] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const loadRequestRef = useRef(0);
   const {
     years,
     yearPeriods,
@@ -320,8 +322,23 @@ function BillsPage() {
   };
 
   useEffect(() => {
-    if (selected?.id) loadBills(selected.id);
-    else setBills([]);
+    const requestId = ++loadRequestRef.current;
+    if (!selected?.id) {
+      setBills([]);
+      setLoadingBills(false);
+      return;
+    }
+
+    setBills([]);
+    setLoadingBills(true);
+    void ipc.getBills(selected.id).then((bs) => {
+      if (loadRequestRef.current !== requestId) return;
+      setBills(bs);
+      setLoadingBills(false);
+    });
+    return () => {
+      loadRequestRef.current += 1;
+    };
   }, [selected]);
 
   const addYear = async (year: number) => {
@@ -459,7 +476,16 @@ function BillsPage() {
 
       {selected && (
         <div className="rounded-lg border border-border overflow-hidden min-h-[268px]">
-          {bills.length === 0 ? (
+          {loadingBills ? (
+            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
+              <div className="max-w-md space-y-2">
+                <div className="text-sm font-medium">Loading bills...</div>
+                <div className="text-sm text-muted-foreground">
+                  Preparing this billing period.
+                </div>
+              </div>
+            </div>
+          ) : bills.length === 0 ? (
             <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
               <div className="max-w-md space-y-2">
                 <div className="text-sm font-medium">No bills yet for this period</div>
@@ -510,7 +536,7 @@ function BillsPage() {
         </div>
       )}
 
-      {selected && bills.length > 0 && (
+      {selected && !loadingBills && bills.length > 0 && (
         <div className="flex justify-end">
           <Link
             to="/splits"

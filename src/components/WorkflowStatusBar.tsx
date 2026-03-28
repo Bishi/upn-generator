@@ -1,5 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { FileText, SplitSquareHorizontal, CreditCard } from "lucide-react";
 import { resolveStoredBillingPeriod } from "@/lib/billing-period-selection";
 import { ipc } from "@/lib/ipc";
@@ -17,18 +17,23 @@ const SELECTION_EVENT = "billing-period-selection-changed";
 
 export function WorkflowStatusBar() {
   const location = useLocation();
+  const requestRef = useRef(0);
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>({
     period: null,
     billCount: 0,
     splitCount: 0,
     apartmentCount: 0,
   });
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (location.pathname === "/settings") return;
 
     const refresh = async () => {
+      const requestId = ++requestRef.current;
+      setLoading(true);
       const periods = await ipc.getBillingPeriods();
+      if (requestRef.current !== requestId) return;
       const period = resolveStoredBillingPeriod(periods);
       if (!period?.id) {
         setSnapshot({
@@ -37,6 +42,7 @@ export function WorkflowStatusBar() {
           splitCount: 0,
           apartmentCount: 0,
         });
+        setLoading(false);
         return;
       }
 
@@ -44,6 +50,7 @@ export function WorkflowStatusBar() {
         ipc.getBills(period.id),
         ipc.getSplits(period.id),
       ]);
+      if (requestRef.current !== requestId) return;
 
       setSnapshot({
         period,
@@ -51,11 +58,15 @@ export function WorkflowStatusBar() {
         splitCount: splits.length,
         apartmentCount: new Set(splits.map((split) => split.apartment_id)).size,
       });
+      setLoading(false);
     };
 
     void refresh();
     window.addEventListener(SELECTION_EVENT, refresh);
-    return () => window.removeEventListener(SELECTION_EVENT, refresh);
+    return () => {
+      requestRef.current += 1;
+      window.removeEventListener(SELECTION_EVENT, refresh);
+    };
   }, [location.pathname]);
 
   if (location.pathname === "/settings") return null;
@@ -102,20 +113,38 @@ export function WorkflowStatusBar() {
         <div className="flex flex-wrap gap-2">
           <StatusChip
             icon={<FileText className="size-3.5" />}
-            label={billsReady ? `${snapshot.billCount} bill${snapshot.billCount === 1 ? "" : "s"} imported` : "Import bills"}
-            tone={billsReady ? "ready" : "waiting"}
+            label={
+              loading
+                ? "Checking bills..."
+                : billsReady
+                  ? `${snapshot.billCount} bill${snapshot.billCount === 1 ? "" : "s"} imported`
+                  : "Import bills"
+            }
+            tone={loading ? "loading" : billsReady ? "ready" : "waiting"}
             to="/bills"
           />
           <StatusChip
             icon={<SplitSquareHorizontal className="size-3.5" />}
-            label={splitsReady ? `${snapshot.apartmentCount} apartment${snapshot.apartmentCount === 1 ? "" : "s"} split` : "Recalculate splits"}
-            tone={splitsReady ? "ready" : "waiting"}
+            label={
+              loading
+                ? "Checking splits..."
+                : splitsReady
+                  ? `${snapshot.apartmentCount} apartment${snapshot.apartmentCount === 1 ? "" : "s"} split`
+                  : "Recalculate splits"
+            }
+            tone={loading ? "loading" : splitsReady ? "ready" : "waiting"}
             to="/splits"
           />
           <StatusChip
             icon={<CreditCard className="size-3.5" />}
-            label={upnsReady ? "UPNs ready to preview/send" : "UPNs waiting for splits"}
-            tone={upnsReady ? "ready" : "waiting"}
+            label={
+              loading
+                ? "Checking UPNs..."
+                : upnsReady
+                  ? "UPNs ready to preview/send"
+                  : "UPNs waiting for splits"
+            }
+            tone={loading ? "loading" : upnsReady ? "ready" : "waiting"}
             to="/upn"
           />
         </div>
@@ -132,7 +161,7 @@ function StatusChip({
 }: {
   icon: ReactNode;
   label: string;
-  tone: "ready" | "waiting";
+  tone: "ready" | "waiting" | "loading";
   to: "/bills" | "/splits" | "/upn";
 }) {
   return (
@@ -142,7 +171,9 @@ function StatusChip({
         className={
           tone === "ready"
             ? "gap-2 border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-            : "gap-2 border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+            : tone === "loading"
+              ? "gap-2 border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+              : "gap-2 border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
         }
       >
         {icon}

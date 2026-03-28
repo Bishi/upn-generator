@@ -65,6 +65,57 @@ fn first_capture(pattern: &str, text: &str) -> Option<String> {
         .map(|m| m.as_str().trim().to_string())
 }
 
+fn normalize_spaces(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn extract_upn_purpose_from_context(
+    context: &str,
+    stub_offset_in_context: usize,
+    purpose_code_re: &Regex,
+) -> Option<(String, String)> {
+    let mut best: Option<(usize, String, String)> = None;
+
+    for caps in purpose_code_re.captures_iter(context) {
+        let code_match = match caps.get(1) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let line_end = context[code_match.start()..]
+            .find('\n')
+            .map(|idx| code_match.start() + idx)
+            .unwrap_or(context.len());
+        let raw_line = context[code_match.start()..line_end].trim();
+        if raw_line.is_empty() {
+            continue;
+        }
+
+        let candidate = normalize_spaces(raw_line);
+        if candidate.contains("SI56")
+            || candidate.contains("***")
+            || candidate.contains("Referenca")
+            || candidate.contains("IBAN")
+        {
+            continue;
+        }
+
+        let distance = code_match.start().abs_diff(stub_offset_in_context);
+        let code = code_match.as_str().to_string();
+        let text = candidate[code.len()..].trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+
+        match &best {
+            Some((best_distance, _, _)) if distance >= *best_distance => {}
+            _ => best = Some((distance, code, text)),
+        }
+    }
+
+    best.map(|(_, code, text)| (code, text))
+}
+
 fn interpolate_template(template: &str, invoice_number: &str, month: i32, year: i32) -> String {
     template
         .replace("{invoice_number}", invoice_number)
@@ -594,6 +645,9 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
 
         let before_start = m.start().saturating_sub(500);
         let context = &text[before_start..after_end];
+        let stub_offset_in_context = m.start() - before_start;
+        let parsed_from_context =
+            extract_upn_purpose_from_context(context, stub_offset_in_context, &purpose_code_re);
         let mut due_date = find_due_date(context);
         // Fallback: date embedded in purpose text (e.g. "SCVE ... 16.02.2026")
         if due_date.is_empty() {
@@ -610,7 +664,10 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
                 if existing.due_date.is_empty() && !due_date.is_empty() {
                     existing.due_date = due_date;
                 }
-                if existing.purpose_text.is_empty() && !purpose_text.is_empty() {
+                if let Some((context_code, context_text)) = &parsed_from_context {
+                    existing.purpose_code = context_code.clone();
+                    existing.purpose_text = context_text.clone();
+                } else if existing.purpose_text.is_empty() && !purpose_text.is_empty() {
                     existing.purpose_text = purpose_text;
                 }
                 if existing.purpose_code == "OTHR" && purpose_code != "OTHR" {
@@ -619,6 +676,9 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             }
             continue;
         }
+
+        let (purpose_code, purpose_text) = parsed_from_context
+            .unwrap_or((purpose_code, purpose_text));
 
         results.push(ExtractedBill {
             iban_norm,

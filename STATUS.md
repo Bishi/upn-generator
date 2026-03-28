@@ -1,7 +1,7 @@
 # Status
 
-- Current version: `0.2.17`
-- Current tag: `v0.2.17`
+- Current version: `0.2.18`
+- Current tag: `v0.2.18`
 - Release status: ready to be tagged and pushed to `origin`
 
 ## Latest Included Changes
@@ -12,3 +12,6 @@
 - Combined apartment UPN preview/email handling
 - Stable workflow chip placement in the header card
 - Non-jumping Bills empty state with toolbar-only actions
+- Loading placeholders to prevent stale flashes between Bills, Splits, and UPN
+- Better purpose-text extraction from imported UPN bill text
+- Left receipt and right main-section purpose text now distinguish short vs full names
