@@ -457,61 +457,56 @@ function BillsPage() {
         </div>
       )}
 
-      {selected && bills.length === 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-          <span>No bills yet. Import PDF invoices or add a bill manually.</span>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={addBlankBill}>
-              <Plus className="size-4 mr-2" />
-              Add Bill
-            </Button>
-            <Button onClick={importFiles} disabled={importing}>
-              <FilePlus className="size-4 mr-2" />
-              {importing ? "Importing..." : "Import PDFs"}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {bills.length > 0 && (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/50 text-left text-xs font-medium text-muted-foreground">
-                <th className="px-3 py-2">File / Provider</th>
-                <th className="px-3 py-2">Creditor</th>
-                <th className="px-3 py-2">Amount</th>
-                <th className="px-3 py-2">Reference</th>
-                <th className="px-3 py-2">Due Date</th>
-                <th className="px-3 py-2">Purpose</th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {bills.map((b) => (
-                <BillRow
-                  key={b.id}
-                  bill={b}
-                  onSave={saveBill}
-                  onDelete={deleteBill}
-                />
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-muted/30 font-medium">
-                <td
-                  className="px-3 py-2 text-xs text-muted-foreground"
-                  colSpan={2}
-                >
-                  Total ({bills.length} bills)
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {formatEur(totalCents)} EUR
-                </td>
-                <td colSpan={4}></td>
-              </tr>
-            </tfoot>
-          </table>
+      {selected && (
+        <div className="rounded-lg border border-border overflow-hidden min-h-[268px]">
+          {bills.length === 0 ? (
+            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
+              <div className="max-w-md space-y-2">
+                <div className="text-sm font-medium">No bills yet for this period</div>
+                <div className="text-sm text-muted-foreground">
+                  Use the buttons above to import PDF invoices or add a bill manually.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+                  <th className="px-3 py-2">File / Provider</th>
+                  <th className="px-3 py-2">Creditor</th>
+                  <th className="px-3 py-2">Amount</th>
+                  <th className="px-3 py-2">Reference</th>
+                  <th className="px-3 py-2">Due Date</th>
+                  <th className="px-3 py-2">Purpose</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {bills.map((b) => (
+                  <BillRow
+                    key={b.id}
+                    bill={b}
+                    onSave={saveBill}
+                    onDelete={deleteBill}
+                  />
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-muted/30 font-medium">
+                  <td
+                    className="px-3 py-2 text-xs text-muted-foreground"
+                    colSpan={2}
+                  >
+                    Total ({bills.length} bills)
+                  </td>
+                  <td className="px-3 py-2 font-mono">
+                    {formatEur(totalCents)} EUR
+                  </td>
+                  <td colSpan={4}></td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
         </div>
       )}
 
