@@ -1,8 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2, Files } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import type { BillingPeriod, EmailResult, SplitRow } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -55,12 +56,14 @@ function MonthTabs({ periods, selected, onSelect }: { periods: BillingPeriod[]; 
 // ─── Apartment card ───────────────────────────────────────────────────────
 
 function ApartmentCard({
+  billingPeriodId,
   apartmentId,
   apartmentLabel,
   splits,
   emailResult,
   onPreviewError,
 }: {
+  billingPeriodId: number;
   apartmentId: number;
   apartmentLabel: string;
   splits: SplitRow[];
@@ -68,6 +71,7 @@ function ApartmentCard({
   onPreviewError: (message: string | null) => void;
 }) {
   const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
+  const [previewingAll, setPreviewingAll] = useState(false);
 
   const previewUpn = async (billId: number) => {
     setLoadingPreview(billId);
@@ -85,26 +89,62 @@ function ApartmentCard({
     }
   };
 
+  const previewAll = async () => {
+    setPreviewingAll(true);
+    try {
+      onPreviewError(null);
+      const path = await ipc.openPreviewApartmentUpns(billingPeriodId, apartmentId);
+      if (!path || !path.trim()) {
+        throw new Error("Preview All did not return a PDF path.");
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      onPreviewError(`Could not open the combined UPN preview. ${message}`);
+    } finally {
+      setPreviewingAll(false);
+    }
+  };
+
   const total = splits.reduce((s, r) => s + r.split_amount_cents, 0);
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold">{apartmentLabel}</h3>
-        {emailResult && (
-          <span
-            className={`flex items-center gap-1 text-xs ${
-              emailResult.success ? "text-green-600" : "text-destructive"
-            }`}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold">{apartmentLabel}</h3>
+          <p className="text-xs text-muted-foreground">
+            {splits.length} UPN{splits.length === 1 ? "" : "s"} in one apartment packet
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={previewAll}
+            disabled={previewingAll || splits.length === 0}
           >
-            {emailResult.success ? (
-              <CheckCircle2 className="size-3.5" />
+            {previewingAll ? (
+              <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <XCircle className="size-3.5" />
+              <Files className="size-3.5" />
             )}
-            {emailResult.success ? "Sent" : emailResult.error ?? "Failed"}
-          </span>
-        )}
+            Preview All
+          </Button>
+          {emailResult && (
+            <span
+              className={`flex items-center gap-1 text-xs ${
+                emailResult.success ? "text-green-600" : "text-destructive"
+              }`}
+            >
+              {emailResult.success ? (
+                <CheckCircle2 className="size-3.5" />
+              ) : (
+                <XCircle className="size-3.5" />
+              )}
+              {emailResult.success ? "Sent" : emailResult.error ?? "Failed"}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -118,12 +158,13 @@ function ApartmentCard({
             </span>
             <div className="flex items-center gap-2">
               <span className="font-mono font-medium">
-                {formatEur(s.split_amount_cents)} €
+                {formatEur(s.split_amount_cents)} EUR
               </span>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => previewUpn(s.bill_id)}
                 disabled={loadingPreview === s.bill_id}
-                className="text-muted-foreground hover:text-primary transition-colors"
                 title="Preview UPN"
               >
                 {loadingPreview === s.bill_id ? (
@@ -131,7 +172,8 @@ function ApartmentCard({
                 ) : (
                   <Eye className="size-3.5" />
                 )}
-              </button>
+                Preview
+              </Button>
             </div>
           </div>
         ))}
@@ -139,7 +181,7 @@ function ApartmentCard({
 
       <div className="border-t border-border pt-2 flex justify-between text-sm font-semibold">
         <span>Total</span>
-        <span className="font-mono">{formatEur(total)} €</span>
+        <span className="font-mono">{formatEur(total)} EUR</span>
       </div>
     </div>
   );
@@ -148,52 +190,43 @@ function ApartmentCard({
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 function UpnPage() {
-  const [allPeriods, setAllPeriods] = useState<BillingPeriod[]>([]);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selected, setSelected] = useState<BillingPeriod | null>(null);
   const [splits, setSplits] = useState<SplitRow[]>([]);
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
-  const [sendError, setSendError] = useState<string | null>(null);
-
-  const years = [...new Set(allPeriods.map((p) => p.year))].sort((a, b) => b - a);
-  const yearPeriods = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => a.month - b.month);
-
-  const loadPeriods = async () => {
-    const ps = await ipc.getBillingPeriods();
-    setAllPeriods(ps);
-    if (ps.length > 0) {
-      const latestYear = Math.max(...ps.map((p) => p.year));
-      setSelectedYear(latestYear);
-      const latest = ps.filter((p) => p.year === latestYear).sort((a, b) => b.month - a.month)[0];
-      setSelected(latest ?? null);
-    }
-  };
+  const [pageMessage, setPageMessage] = useState<string | null>(null);
+  const {
+    years,
+    yearPeriods,
+    selectedYear,
+    selected,
+    setSelectedYear,
+    setSelected,
+  } = useBillingPeriodSelection();
 
   const loadSplits = async (id: number) => {
     const rows = await ipc.getSplits(id);
     setSplits(rows);
   };
 
-  useEffect(() => { loadPeriods(); }, []);
   useEffect(() => {
-    if (selected?.id) { setEmailResults([]); loadSplits(selected.id); }
+    if (selected?.id) {
+      setEmailResults([]);
+      loadSplits(selected.id);
+    } else {
+      setSplits([]);
+    }
   }, [selected]);
-  useEffect(() => {
-    const yp = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => b.month - a.month);
-    if (yp.length > 0 && (!selected || selected.year !== selectedYear)) setSelected(yp[0]);
-  }, [selectedYear, allPeriods]);
 
   const sendEmails = async () => {
     if (!selected?.id) return;
-    setSendError(null);
+    setPageMessage(null);
     setSending(true);
     try {
       const results = await ipc.sendEmails(selected.id);
       setEmailResults(results);
     } catch (e) {
-      setSendError(String(e));
+      setPageMessage(String(e));
     } finally {
       setSending(false);
     }
@@ -206,9 +239,9 @@ function UpnPage() {
       const folder = await open({ directory: true, title: "Choose folder to save UPN PDFs" });
       if (!folder || typeof folder !== "string") return;
       const saved = await ipc.saveAllUpns(selected.id, folder);
-      alert(`Saved ${saved.length} PDF(s) to ${folder}`);
+      setPageMessage(`Saved ${saved.length} PDF(s) to ${folder}`);
     } catch (e) {
-      setSendError(String(e));
+      setPageMessage(String(e));
     } finally {
       setDownloading(false);
     }
@@ -237,14 +270,14 @@ function UpnPage() {
             disabled={!selected || splits.length === 0 || downloading}
           >
             <Download className="size-4 mr-2" />
-            {downloading ? "Saving…" : "Download All PDFs"}
+            {downloading ? "Saving..." : "Download All PDFs"}
           </Button>
           <Button
             onClick={sendEmails}
             disabled={!selected || splits.length === 0 || sending}
           >
             <Mail className="size-4 mr-2" />
-            {sending ? "Sending…" : "Send Emails"}
+            {sending ? "Sending..." : "Send All Emails"}
           </Button>
         </div>
       </div>
@@ -254,9 +287,13 @@ function UpnPage() {
         <MonthTabs periods={yearPeriods} selected={selected} onSelect={(p) => { setSelected(p); setSplits([]); setEmailResults([]); }} />
       )}
 
-      {sendError && (
+      <p className="text-sm text-muted-foreground">
+        Each apartment email now sends one combined PDF attachment with all UPN pages for the selected period.
+      </p>
+
+      {pageMessage && (
         <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {sendError}
+          {pageMessage}
         </div>
       )}
 
@@ -267,9 +304,15 @@ function UpnPage() {
       )}
 
       {selected && splits.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          No splits found. Go to Splits and click Recalculate first.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+          <span>No splits found. Go to Splits and click Recalculate first.</span>
+          <Link
+            to="/splits"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+          >
+            Go to Splits
+          </Link>
+        </div>
       )}
 
       {apartments.length > 0 && (
@@ -277,11 +320,12 @@ function UpnPage() {
           {apartments.map(([aptId, { label, splits: aptSplits }]) => (
             <ApartmentCard
               key={aptId}
+              billingPeriodId={selected!.id!}
               apartmentId={aptId}
               apartmentLabel={label}
               splits={aptSplits}
               emailResult={emailResults.find((r) => r.apartment_label === label)}
-              onPreviewError={setSendError}
+              onPreviewError={setPageMessage}
             />
           ))}
         </div>

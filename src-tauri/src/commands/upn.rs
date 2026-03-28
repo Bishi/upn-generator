@@ -3,9 +3,11 @@ use lettre::message::header::ContentType;
 use lettre::message::{Attachment, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
+use ::lopdf::{Document as LoDocument, Object, ObjectId};
 use printpdf::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io::BufWriter;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
@@ -20,6 +22,7 @@ pub struct EmailResult {
     pub error: Option<String>,
 }
 
+#[derive(Clone)]
 struct UpnData {
     payer_name: String,
     payer_address: String,
@@ -670,7 +673,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "Referenca plačnika", 7.0, 106.5, 11.0, &label_font);
     text_top(&layer, "Ime, ulica in kraj plačnika", 7.0, 106.5, 19.5, &label_font);
     text_top(&layer, "EUR", 11.0, 7.8, 35.6, &label_font);
-    text_top(&layer, "EUR", 11.0, 107.0, 41.6, &label_font);
+    text_top(&layer, "EUR", 11.0, 104.5, 41.6, &label_font);
     text_top(&layer, "Znesek", 7.0, 114.2, 38.0, &label_font);
     text_top(&layer, "Datum plačila", 7.0, 161.2, 38.0, &label_font);
     text_top(&layer, "Nujno", 7.0, 195.3, 38.0, &label_font);
@@ -836,6 +839,118 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+fn merge_pdf_documents(documents: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
+    if documents.is_empty() {
+        return Err("No UPN PDFs to merge.".to_string());
+    }
+    if documents.len() == 1 {
+        return Ok(documents.into_iter().next().unwrap());
+    }
+
+    let mut max_id = 1;
+    let mut pages = BTreeMap::<ObjectId, Object>::new();
+    let mut objects = BTreeMap::<ObjectId, Object>::new();
+    let mut merged = LoDocument::with_version("1.5");
+    let mut catalog_object: Option<(ObjectId, Object)> = None;
+    let mut pages_object: Option<(ObjectId, Object)> = None;
+
+    for bytes in documents {
+        let mut document = LoDocument::load_mem(&bytes).map_err(|e| e.to_string())?;
+        document.renumber_objects_with(max_id);
+        max_id = document.max_id + 1;
+
+        for (object_id, object) in document.get_pages().into_values().map(|object_id| {
+            let object = document
+                .get_object(object_id)
+                .map(|obj| obj.to_owned())
+                .unwrap_or(Object::Null);
+            (object_id, object)
+        }) {
+            pages.insert(object_id, object);
+        }
+
+        objects.extend(document.objects);
+    }
+
+    for (object_id, object) in objects {
+        match object.type_name().unwrap_or("") {
+            "Catalog" => {
+                catalog_object = Some((
+                    catalog_object.map(|(id, _)| id).unwrap_or(object_id),
+                    object,
+                ));
+            }
+            "Pages" => {
+                if let Ok(dictionary) = object.as_dict() {
+                    let mut dictionary = dictionary.clone();
+                    if let Some((_, ref existing)) = pages_object {
+                        if let Ok(existing_dictionary) = existing.as_dict() {
+                            dictionary.extend(existing_dictionary);
+                        }
+                    }
+                    pages_object = Some((
+                        pages_object.map(|(id, _)| id).unwrap_or(object_id),
+                        Object::Dictionary(dictionary),
+                    ));
+                }
+            }
+            "Page" | "Outlines" | "Outline" => {}
+            _ => {
+                merged.objects.insert(object_id, object);
+            }
+        }
+    }
+
+    let (pages_id, pages_root) = pages_object.ok_or_else(|| "Pages root not found.".to_string())?;
+    let (catalog_id, catalog_root) =
+        catalog_object.ok_or_else(|| "Catalog root not found.".to_string())?;
+
+    for (object_id, object) in &pages {
+        if let Ok(dictionary) = object.as_dict() {
+            let mut dictionary = dictionary.clone();
+            dictionary.set("Parent", pages_id);
+            merged.objects.insert(*object_id, Object::Dictionary(dictionary));
+        }
+    }
+
+    if let Ok(dictionary) = pages_root.as_dict() {
+        let mut dictionary = dictionary.clone();
+        dictionary.set("Count", pages.len() as u32);
+        dictionary.set(
+            "Kids",
+            pages
+                .keys()
+                .copied()
+                .map(Object::Reference)
+                .collect::<Vec<_>>(),
+        );
+        merged.objects.insert(pages_id, Object::Dictionary(dictionary));
+    }
+
+    if let Ok(dictionary) = catalog_root.as_dict() {
+        let mut dictionary = dictionary.clone();
+        dictionary.set("Pages", pages_id);
+        dictionary.remove(b"Outlines");
+        merged.objects.insert(catalog_id, Object::Dictionary(dictionary));
+    }
+
+    merged.trailer.set("Root", catalog_id);
+    merged.max_id = merged.objects.len() as u32;
+    merged.renumber_objects();
+
+    let mut output = Vec::new();
+    merged.save_to(&mut output).map_err(|e| e.to_string())?;
+    Ok(output)
+}
+
+fn render_upn_pdf_batch(items: &[UpnData]) -> Result<Vec<u8>, String> {
+    let pdfs = items
+        .iter()
+        .map(render_upn_pdf)
+        .collect::<Result<Vec<_>, _>>()?;
+    merge_pdf_documents(pdfs)
+}
+
 fn load_upn_data(
     conn: &rusqlite::Connection,
     bill_id: i64,
@@ -919,6 +1034,28 @@ fn load_upn_data(
     })
 }
 
+fn load_apartment_upn_data(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+    apartment_id: i64,
+) -> Result<Vec<UpnData>, String> {
+    let bill_ids = query_vec(
+        conn,
+        "SELECT bs.bill_id
+         FROM bill_splits bs
+         JOIN bills b ON bs.bill_id = b.id
+         WHERE b.billing_period_id = ?1 AND bs.apartment_id = ?2
+         ORDER BY b.id",
+        &[&billing_period_id, &apartment_id],
+        |r| r.get::<_, i64>(0),
+    )?;
+
+    bill_ids
+        .into_iter()
+        .map(|bill_id| load_upn_data(conn, bill_id, apartment_id))
+        .collect()
+}
+
 fn query_vec<T, F>(
     conn: &rusqlite::Connection,
     sql: &str,
@@ -961,6 +1098,21 @@ fn write_preview_pdf(data: &UpnData, bill_id: i64, apartment_id: i64) -> Result<
         .ok_or_else(|| "Invalid temp path".to_string())
 }
 
+fn write_batch_preview_pdf(
+    items: &[UpnData],
+    billing_period_id: i64,
+    apartment_id: i64,
+) -> Result<String, String> {
+    let pdf_bytes = render_upn_pdf_batch(items)?;
+    let temp_path =
+        std::env::temp_dir().join(format!("upn_batch_{}_{}.pdf", billing_period_id, apartment_id));
+    std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
+    temp_path
+        .to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Invalid temp path".to_string())
+}
+
 #[tauri::command]
 pub fn preview_upn(db: State<DbState>, bill_id: i64, apartment_id: i64) -> Result<String, String> {
     let data = {
@@ -982,6 +1134,24 @@ pub fn open_preview_upn(
         load_upn_data(&conn, bill_id, apartment_id)?
     };
     let path = write_preview_pdf(&data, bill_id, apartment_id)?;
+    app.opener()
+        .open_path(&path, None::<String>)
+        .map_err(|e| format!("System PDF opener failed for {}: {}", path, e))?;
+    Ok(path)
+}
+
+#[tauri::command]
+pub fn open_preview_apartment_upns(
+    app: AppHandle,
+    db: State<DbState>,
+    billing_period_id: i64,
+    apartment_id: i64,
+) -> Result<String, String> {
+    let items = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        load_apartment_upn_data(&conn, billing_period_id, apartment_id)?
+    };
+    let path = write_batch_preview_pdf(&items, billing_period_id, apartment_id)?;
     app.opener()
         .open_path(&path, None::<String>)
         .map_err(|e| format!("System PDF opener failed for {}: {}", path, e))?;
@@ -1078,49 +1248,24 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
     let mut results: Vec<EmailResult> = Vec::new();
 
     for (apt_id, apt_label, apt_email) in &apartments {
-        let bill_ids: Vec<i64> = {
+        let attachment_bytes = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
-            query_vec(
-                &conn,
-                "SELECT bs.bill_id
-                 FROM bill_splits bs
-                 JOIN bills b ON bs.bill_id = b.id
-                 WHERE b.billing_period_id = ?1 AND bs.apartment_id = ?2",
-                &[&billing_period_id, apt_id],
-                |r| r.get(0),
-            )?
+            load_apartment_upn_data(&conn, billing_period_id, *apt_id)
+                .and_then(|items| render_upn_pdf_batch(&items))
         };
 
-        let mut attachments: Vec<(String, Vec<u8>)> = Vec::new();
-        let mut pdf_error: Option<String> = None;
-
-        for bill_id in &bill_ids {
-            let result = {
-                let conn = db.0.lock().map_err(|e| e.to_string())?;
-                load_upn_data(&conn, *bill_id, *apt_id)
+        let attachment_bytes = match attachment_bytes {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                results.push(EmailResult {
+                    apartment_label: apt_label.clone(),
+                    email: apt_email.clone(),
+                    success: false,
+                    error: Some(e),
+                });
+                continue;
             }
-            .and_then(|d| render_upn_pdf(&d));
-
-            match result {
-                Ok(bytes) => {
-                    attachments.push((format!("UPN_{}_{}.pdf", apt_label, bill_id), bytes))
-                }
-                Err(e) => {
-                    pdf_error = Some(format!("PDF error bill {}: {}", bill_id, e));
-                    break;
-                }
-            }
-        }
-
-        if let Some(e) = pdf_error {
-            results.push(EmailResult {
-                apartment_label: apt_label.clone(),
-                email: apt_email.clone(),
-                success: false,
-                error: Some(e),
-            });
-            continue;
-        }
+        };
 
         let subject = format!("Poloznice za {}/{}", month, year);
         let body = format!(
@@ -1143,13 +1288,20 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
             }
         };
 
-        let mut mp = MultiPart::mixed().singlepart(SinglePart::plain(body));
-        for (filename, bytes) in attachments {
-            mp = mp.singlepart(
-                Attachment::new(filename)
-                    .body(bytes, ContentType::parse("application/pdf").unwrap()),
+        let filename = format!(
+            "UPN_{}_{:02}_{}.pdf",
+            apt_label.replace(' ', "_"),
+            month,
+            year
+        );
+        let mp = MultiPart::mixed()
+            .singlepart(SinglePart::plain(body))
+            .singlepart(
+                Attachment::new(filename).body(
+                    attachment_bytes,
+                    ContentType::parse("application/pdf").unwrap(),
+                ),
             );
-        }
 
         match Message::builder()
             .from(from_addr)

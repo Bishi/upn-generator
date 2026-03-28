@@ -1,5 +1,6 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { Building2, FileText, SplitSquareHorizontal, CreditCard, Settings } from "lucide-react";
+import { WorkflowStatusBar } from "@/components/WorkflowStatusBar";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -19,6 +20,7 @@ function RootLayout() {
         </div>
       </nav>
       <main className="flex-1 overflow-auto p-6">
+        <WorkflowStatusBar />
         <Outlet />
       </main>
     </div>

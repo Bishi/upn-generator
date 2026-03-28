@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { RefreshCw, Check, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import type { BillingPeriod, SplitRow } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -120,40 +121,27 @@ function EditableCell({
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 function SplitsPage() {
-  const [allPeriods, setAllPeriods] = useState<BillingPeriod[]>([]);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selected, setSelected] = useState<BillingPeriod | null>(null);
   const [splits, setSplits] = useState<SplitRow[]>([]);
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const years = [...new Set(allPeriods.map((p) => p.year))].sort((a, b) => b - a);
-  const yearPeriods = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => a.month - b.month);
-
-  const loadPeriods = async () => {
-    const ps = await ipc.getBillingPeriods();
-    setAllPeriods(ps);
-    if (ps.length > 0) {
-      const latestYear = Math.max(...ps.map((p) => p.year));
-      setSelectedYear(latestYear);
-      const latest = ps.filter((p) => p.year === latestYear).sort((a, b) => b.month - a.month)[0];
-      setSelected(latest ?? null);
-    }
-  };
+  const {
+    years,
+    yearPeriods,
+    selectedYear,
+    selected,
+    setSelectedYear,
+    setSelected,
+  } = useBillingPeriodSelection();
 
   const loadSplits = async (periodId: number) => {
     const rows = await ipc.getSplits(periodId);
     setSplits(rows);
   };
 
-  useEffect(() => { loadPeriods(); }, []);
   useEffect(() => {
     if (selected?.id) loadSplits(selected.id);
+    else setSplits([]);
   }, [selected]);
-  useEffect(() => {
-    const yp = allPeriods.filter((p) => p.year === selectedYear).sort((a, b) => b.month - a.month);
-    if (yp.length > 0 && (!selected || selected.year !== selectedYear)) setSelected(yp[0]);
-  }, [selectedYear, allPeriods]);
 
   const recalculate = async () => {
     if (!selected?.id) return;
@@ -209,9 +197,21 @@ function SplitsPage() {
       )}
 
       {selected && splits.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          No splits yet. Import bills first, then click Recalculate.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+          <span>No splits yet. Import bills first, then click Recalculate.</span>
+          <div className="flex gap-2">
+            <Link
+              to="/bills"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+            >
+              Go to Bills
+            </Link>
+            <Button onClick={recalculate} disabled={calculating}>
+              <RefreshCw className={`size-4 mr-2 ${calculating ? "animate-spin" : ""}`} />
+              {calculating ? "Calculating..." : "Recalculate"}
+            </Button>
+          </div>
+        </div>
       )}
 
       {splits.length > 0 && (
@@ -242,7 +242,7 @@ function SplitsPage() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right font-mono font-medium">
-                    {formatEur(info.total)} €
+                    {formatEur(info.total)} EUR
                   </td>
                   {apartments.map(([aptId]) => {
                     const cell = matrix.get(billId)?.get(aptId);
@@ -263,16 +263,27 @@ function SplitsPage() {
               <tr className="border-t border-border bg-muted/30 font-semibold">
                 <td className="px-3 py-2">Total per Apartment</td>
                 <td className="px-3 py-2 text-right font-mono">
-                  {formatEur(splits.reduce((s, r) => s + r.bill_amount_cents, 0) / apartments.length || 0)} €
+                  {formatEur(splits.reduce((s, r) => s + r.bill_amount_cents, 0) / apartments.length || 0)} EUR
                 </td>
                 {apartments.map(([aptId]) => (
                   <td key={aptId} className="px-3 py-2 text-right font-mono">
-                    {formatEur(apartmentTotals.get(aptId) ?? 0)} €
+                    {formatEur(apartmentTotals.get(aptId) ?? 0)} EUR
                   </td>
                 ))}
               </tr>
             </tfoot>
           </table>
+        </div>
+      )}
+
+      {splits.length > 0 && (
+        <div className="flex justify-end">
+          <Link
+            to="/upn"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+          >
+            Continue to UPN Preview
+          </Link>
         </div>
       )}
     </div>

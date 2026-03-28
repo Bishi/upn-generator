@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import {
@@ -11,6 +11,7 @@ import {
   CalendarPlus,
 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import type { Bill, BillingPeriod } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -269,7 +270,7 @@ function BillRow({
       </td>
       <td className="px-3 py-2 text-sm">{bill.creditor_name}</td>
       <td className="px-3 py-2 text-sm font-mono font-medium">
-        {formatEur(bill.amount_cents)} €
+        {formatEur(bill.amount_cents)} EUR
       </td>
       <td className="px-3 py-2 text-xs font-mono">{bill.reference}</td>
       <td className="px-3 py-2 text-sm">{bill.due_date}</td>
@@ -299,27 +300,19 @@ function BillRow({
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 function BillsPage() {
-  const [allPeriods, setAllPeriods] = useState<BillingPeriod[]>([]);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selected, setSelected] = useState<BillingPeriod | null>(null);
   const [bills, setBills] = useState<Bill[]>([]);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
-
-  // Derived: unique years and periods for selected year
-  const years = [...new Set(allPeriods.map((p) => p.year))].sort(
-    (a, b) => b - a
-  );
-  const yearPeriods = allPeriods
-    .filter((p) => p.year === selectedYear)
-    .sort((a, b) => a.month - b.month);
-
-  const loadPeriods = async () => {
-    const ps = await ipc.getBillingPeriods();
-    setAllPeriods(ps);
-    return ps;
-  };
+  const {
+    years,
+    yearPeriods,
+    selectedYear,
+    selected,
+    loadPeriods,
+    setSelectedYear,
+    setSelected,
+  } = useBillingPeriodSelection();
 
   const loadBills = async (periodId: number) => {
     const bs = await ipc.getBills(periodId);
@@ -327,39 +320,16 @@ function BillsPage() {
   };
 
   useEffect(() => {
-    loadPeriods().then((ps) => {
-      if (ps.length > 0) {
-        // Auto-select the most recent year and its latest period
-        const latestYear = ps[0].year;
-        setSelectedYear(latestYear);
-        setSelected(ps[0]);
-      }
-    });
-  }, []);
-
-  useEffect(() => {
     if (selected?.id) loadBills(selected.id);
     else setBills([]);
   }, [selected]);
 
-  // When year changes, auto-select the latest period in that year
-  useEffect(() => {
-    const yp = allPeriods
-      .filter((p) => p.year === selectedYear)
-      .sort((a, b) => b.month - a.month);
-    if (yp.length > 0 && (!selected || selected.year !== selectedYear)) {
-      setSelected(yp[0]);
-    }
-  }, [selectedYear, allPeriods]);
-
   const addYear = async (year: number) => {
     await ipc.createYearPeriods(year);
     const ps = await loadPeriods();
-    setSelectedYear(year);
-    // Select first period of new year
     const yp = ps
       .filter((p) => p.year === year)
-      .sort((a, b) => a.month - b.month);
+      .sort((a, b) => b.month - a.month);
     if (yp.length > 0) setSelected(yp[0]);
   };
 
@@ -367,10 +337,9 @@ function BillsPage() {
     await ipc.deleteBillingPeriod(id);
     setConfirmDeleteId(null);
     const ps = await loadPeriods();
-    // Select another period in the same year, or clear
     const yp = ps
       .filter((p) => p.year === selectedYear)
-      .sort((a, b) => a.month - b.month);
+      .sort((a, b) => b.month - a.month);
     setSelected(yp[0] ?? null);
     setBills([]);
   };
@@ -477,9 +446,9 @@ function BillsPage() {
       )}
 
       {years.length === 0 && (
-        <p className="text-muted-foreground text-sm">
+        <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
           No billing periods yet. Add a year to get started.
-        </p>
+        </div>
       )}
 
       {error && (
@@ -489,9 +458,19 @@ function BillsPage() {
       )}
 
       {selected && bills.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          No bills yet. Import PDF invoices or add a bill manually.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+          <span>No bills yet. Import PDF invoices or add a bill manually.</span>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={addBlankBill}>
+              <Plus className="size-4 mr-2" />
+              Add Bill
+            </Button>
+            <Button onClick={importFiles} disabled={importing}>
+              <FilePlus className="size-4 mr-2" />
+              {importing ? "Importing..." : "Import PDFs"}
+            </Button>
+          </div>
+        </div>
       )}
 
       {bills.length > 0 && (
@@ -527,12 +506,23 @@ function BillsPage() {
                   Total ({bills.length} bills)
                 </td>
                 <td className="px-3 py-2 font-mono">
-                  {formatEur(totalCents)} €
+                  {formatEur(totalCents)} EUR
                 </td>
                 <td colSpan={4}></td>
               </tr>
             </tfoot>
           </table>
+        </div>
+      )}
+
+      {selected && bills.length > 0 && (
+        <div className="flex justify-end">
+          <Link
+            to="/splits"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+          >
+            Continue to Splits
+          </Link>
         </div>
       )}
 
