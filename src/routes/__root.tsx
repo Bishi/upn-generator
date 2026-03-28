@@ -1,12 +1,21 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
+import { getVersion } from "@tauri-apps/api/app";
+import { type ReactNode, useEffect, useState } from "react";
 import { Building2, FileText, SplitSquareHorizontal, CreditCard, Settings } from "lucide-react";
 import { WorkflowStatusBar } from "@/components/WorkflowStatusBar";
+import { BillingPeriodSelectionProvider } from "@/lib/billing-period-selection";
 
 export const Route = createRootRoute({
   component: RootLayout,
 });
 
 function RootLayout() {
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getVersion().then(setVersion).catch(() => setVersion(null));
+  }, []);
+
   return (
     <div className="flex h-screen bg-background text-foreground">
       <nav className="w-56 shrink-0 border-r border-border bg-card p-4 flex flex-col gap-1">
@@ -17,17 +26,24 @@ function RootLayout() {
         <NavLink to="/upn" icon={<CreditCard className="size-4" />} label="UPN Preview" />
         <div className="mt-auto">
           <NavLink to="/settings" icon={<Settings className="size-4" />} label="Settings" />
+          {version && (
+            <div className="px-3 pt-3 text-xs text-muted-foreground">
+              Version {version}
+            </div>
+          )}
         </div>
       </nav>
       <main className="flex-1 overflow-auto p-6">
-        <WorkflowStatusBar />
-        <Outlet />
+        <BillingPeriodSelectionProvider>
+          <WorkflowStatusBar />
+          <Outlet />
+        </BillingPeriodSelectionProvider>
       </main>
     </div>
   );
 }
 
-function NavLink({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
+function NavLink({ to, icon, label }: { to: string; icon: ReactNode; label: string }) {
   return (
     <Link
       to={to}

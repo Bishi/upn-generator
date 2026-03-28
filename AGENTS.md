@@ -10,3 +10,4 @@ Critical rules for agents:
 - UPN output must remain visually close to real Slovenian bank UPN forms; use the examples in `file-examples/` as reference.
 - When implementing features, update documentation as needed in `CLAUDE.md` and `README.md`.
 - Before any push to `main`, follow the version bump and git tag workflow documented in `CLAUDE.md`.
+- Never push to `main` without bumping `src-tauri/tauri.conf.json` and creating/pushing a new matching `vX.Y.Z` tag in the same release step.

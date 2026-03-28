@@ -80,7 +80,7 @@ git tag v0.2.9 && git push origin main && git push origin v0.2.9
 
 This triggers the GitHub Actions workflow which builds the `.msi` and publishes it as a GitHub Release.
 
-**IMPORTANT: Every push to `main` must be accompanied by a version bump and a tag.** Never push commits without also tagging. Steps every time:
+**IMPORTANT: Every push to `main` must be accompanied by a version bump and a tag.** Never push commits without also tagging. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state. Steps every time:
 1. Bump version in `src-tauri/tauri.conf.json`
 2. Commit the version bump
 3. Tag with `git tag vX.Y.Z`

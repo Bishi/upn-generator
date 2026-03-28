@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { ipc } from "@/lib/ipc";
 import type { BillingPeriod } from "@/lib/types";
 
@@ -10,6 +18,20 @@ type StoredSelection = {
   year: number | null;
   month: number | null;
 };
+
+type BillingPeriodSelectionValue = {
+  allPeriods: BillingPeriod[];
+  years: number[];
+  yearPeriods: BillingPeriod[];
+  selectedYear: number;
+  selected: BillingPeriod | null;
+  loadPeriods: () => Promise<BillingPeriod[]>;
+  setSelectedYear: (year: number) => void;
+  setSelected: (period: BillingPeriod | null) => void;
+};
+
+const BillingPeriodSelectionContext =
+  createContext<BillingPeriodSelectionValue | null>(null);
 
 function sortPeriods(periods: BillingPeriod[]) {
   return [...periods].sort((a, b) => {
@@ -59,7 +81,11 @@ export function resolveStoredBillingPeriod(periods: BillingPeriod[]) {
   return stored ?? ordered[0] ?? null;
 }
 
-export function useBillingPeriodSelection() {
+export function BillingPeriodSelectionProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const [allPeriods, setAllPeriods] = useState<BillingPeriod[]>([]);
   const [selectedYear, setSelectedYearState] = useState(new Date().getFullYear());
   const [selected, setSelectedState] = useState<BillingPeriod | null>(null);
@@ -77,14 +103,20 @@ export function useBillingPeriodSelection() {
   const loadPeriods = useCallback(async () => {
     const periods = await ipc.getBillingPeriods();
     setAllPeriods(periods);
-    const next = resolveStoredBillingPeriod(periods);
-    if (next) {
-      setSelectedState(next);
-      setSelectedYearState(next.year);
-      setStoredBillingPeriod(next);
-    } else {
-      setSelectedState(null);
-    }
+
+    setSelectedState((currentSelected) => {
+      const next =
+        (currentSelected
+          ? periods.find((period) => period.id === currentSelected.id) ?? null
+          : null) ?? resolveStoredBillingPeriod(periods);
+
+      if (next) {
+        setSelectedYearState(next.year);
+        setStoredBillingPeriod(next);
+      }
+      return next;
+    });
+
     return periods;
   }, []);
 
@@ -109,7 +141,9 @@ export function useBillingPeriodSelection() {
 
   useEffect(() => {
     const handleSelectionChange = () => {
-      const next = findStoredPeriod(allPeriods, readStoredSelection());
+      const next =
+        findStoredPeriod(allPeriods, readStoredSelection()) ??
+        resolveStoredBillingPeriod(allPeriods);
       if (next) {
         setSelectedState(next);
         setSelectedYearState(next.year);
@@ -131,14 +165,42 @@ export function useBillingPeriodSelection() {
     [allPeriods, selectedYear],
   );
 
-  return {
-    allPeriods,
-    years,
-    yearPeriods,
-    selectedYear,
-    selected,
-    loadPeriods,
-    setSelectedYear: selectYear,
-    setSelected: applySelection,
-  };
+  const value = useMemo(
+    () => ({
+      allPeriods,
+      years,
+      yearPeriods,
+      selectedYear,
+      selected,
+      loadPeriods,
+      setSelectedYear: selectYear,
+      setSelected: applySelection,
+    }),
+    [
+      allPeriods,
+      years,
+      yearPeriods,
+      selectedYear,
+      selected,
+      loadPeriods,
+      selectYear,
+      applySelection,
+    ],
+  );
+
+  return (
+    <BillingPeriodSelectionContext.Provider value={value}>
+      {children}
+    </BillingPeriodSelectionContext.Provider>
+  );
+}
+
+export function useBillingPeriodSelection() {
+  const context = useContext(BillingPeriodSelectionContext);
+  if (!context) {
+    throw new Error(
+      "useBillingPeriodSelection must be used inside BillingPeriodSelectionProvider.",
+    );
+  }
+  return context;
 }
