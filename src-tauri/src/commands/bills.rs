@@ -191,6 +191,41 @@ fn find_due_date(text: &str) -> String {
     String::new()
 }
 
+fn find_source_period_month_year(text: &str) -> Option<(i32, i32)> {
+    let compact = text.replace(' ', "");
+    let range_re =
+        Regex::new(r"(\d{2})\.(\d{2})\.(\d{4})[-–](\d{2})\.(\d{2})\.(\d{4})").ok()?;
+    if let Some(caps) = range_re.captures(&compact) {
+        let month = caps.get(2)?.as_str().parse::<i32>().ok()?;
+        let year = caps.get(3)?.as_str().parse::<i32>().ok()?;
+        return Some((month, year));
+    }
+
+    let month_word_re = Regex::new(
+        r"(?i)\b(JANUAR|FEBRUAR|MAREC|APRIL|MAJ|JUNIJ|JULIJ|AVGUST|SEPTEMBER|OKTOBER|NOVEMBER|DECEMBER)\s+(\d{4})\b",
+    )
+    .ok()?;
+    let caps = month_word_re.captures(text)?;
+    let month_name = caps.get(1)?.as_str().to_uppercase();
+    let year = caps.get(2)?.as_str().parse::<i32>().ok()?;
+    let month = match month_name.as_str() {
+        "JANUAR" => 1,
+        "FEBRUAR" => 2,
+        "MAREC" => 3,
+        "APRIL" => 4,
+        "MAJ" => 5,
+        "JUNIJ" => 6,
+        "JULIJ" => 7,
+        "AVGUST" => 8,
+        "SEPTEMBER" => 9,
+        "OKTOBER" => 10,
+        "NOVEMBER" => 11,
+        "DECEMBER" => 12,
+        _ => return None,
+    };
+    Some((month, year))
+}
+
 fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
     let mut stmt = match conn.prepare(
         "SELECT id, name, service_type, creditor_name, creditor_address, creditor_city,
@@ -487,6 +522,8 @@ pub fn import_bill(
         )
         .map_err(|e| e.to_string())?
     };
+    let (source_month, source_year) =
+        find_source_period_month_year(&raw_text).unwrap_or((month, year));
 
     // Try to match against providers
     let providers = {
@@ -528,7 +565,12 @@ pub fn import_bill(
         let invoice_number =
             first_capture(&p.invoice_number_pattern, &raw_text).unwrap_or_default();
         let purpose_text =
-            interpolate_template(&p.purpose_text_template, &invoice_number, month, year);
+            interpolate_template(
+                &p.purpose_text_template,
+                &invoice_number,
+                source_month,
+                source_year,
+            );
         (
             p.id,
             amount_cents,
@@ -734,6 +776,16 @@ fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .unwrap_or_default();
+    let invoice_number = if invoice_number.is_empty() {
+        Regex::new(r"(?i)ra\S*un\s+\S*tevilka:\s*([A-Z0-9-]+)")
+            .ok()
+            .and_then(|re| re.captures(text))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default()
+    } else {
+        invoice_number
+    };
 
     Some(ExtractedBill {
         iban_norm,
@@ -826,6 +878,8 @@ pub fn import_bills(
         )
         .map_err(|e| e.to_string())?
     };
+    let (source_month, source_year) =
+        find_source_period_month_year(&raw_text).unwrap_or((month, year));
 
     let providers = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -951,7 +1005,12 @@ pub fn import_bills(
         let purpose_text = if !eb.purpose_text.is_empty() {
             eb.purpose_text.clone()
         } else if let Some(p) = provider {
-            interpolate_template(&p.purpose_text_template, &eb.invoice_number, month, year)
+            interpolate_template(
+                &p.purpose_text_template,
+                &eb.invoice_number,
+                source_month,
+                source_year,
+            )
         } else {
             String::new()
         };
