@@ -38,24 +38,29 @@ jobs:
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "UPN Generator ${{ github.ref_name }}"
-          releaseBody: |
+          includeUpdaterJson: false
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "UPN Generator ${{ github.ref_name }}"
+          body: |
             ## UPN Generator ${{ github.ref_name }}
 
             Windows installer for the UPN Generator app.
 
             ### Installation
-            Download `upn-generator_*_x64_en-US.msi` and run it to install.
+            Download `UPN Generator_*_x64_en-US.msi` and run it to install.
 
             ### What's included
             - Automatic PDF bill parsing
             - Bill splitting by apartment occupancy
             - UPN payment slip generation (PDF)
             - Email delivery to tenants
-          releaseDraft: false
+          files: |
+            src-tauri/target/release/bundle/**/*.msi
+          fail_on_unmatched_files: true
+          draft: false
           prerelease: false
-          includeUpdaterJson: false
