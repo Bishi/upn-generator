@@ -74,6 +74,22 @@ fn extract_upn_purpose_from_context(
     stub_offset_in_context: usize,
     purpose_code_re: &Regex,
 ) -> Option<(String, String)> {
+    let normalized_context = normalize_spaces(context);
+    if let Ok(energetika_re) = Regex::new(
+        r"(?i)ra\S*un\s+\S*t\.?\s*([A-Z0-9-]+)\s+([0-9]{5,})(?:/\d{2}\.\d{2}\.\d{4})?",
+    ) {
+        if let Some(caps) = energetika_re.captures(&normalized_context) {
+            let invoice = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            let partner = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
+            if !invoice.is_empty() && !partner.is_empty() {
+                return Some((
+                    "ENRG".to_string(),
+                    format!("RAČUN ŠT. {} {}", invoice, partner),
+                ));
+            }
+        }
+    }
+
     let mut best: Option<(usize, String, String)> = None;
 
     for caps in purpose_code_re.captures_iter(context) {

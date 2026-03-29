@@ -1,7 +1,7 @@
 # Status
 
-- Current version: `0.2.18`
-- Current tag: `v0.2.18`
+- Current version: `0.2.19`
+- Current tag: `v0.2.19`
 - Release status: ready to be tagged and pushed to `origin`
 
 ## Latest Included Changes
@@ -15,3 +15,4 @@
 - Loading placeholders to prevent stale flashes between Bills, Splits, and UPN
 - Better purpose-text extraction from imported UPN bill text
 - Left receipt and right main-section purpose text now distinguish short vs full names
+- ENRG purpose text now uses the bill's invoice and partner number format

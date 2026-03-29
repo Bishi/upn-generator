@@ -78,21 +78,15 @@ fn normalize_spaces(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn receipt_purpose_text(full_purpose_text: &str) -> String {
+fn split_receipt_suffix(full_purpose_text: &str, purpose_code: &str) -> Option<(String, String)> {
     let normalized = normalize_spaces(full_purpose_text);
     if normalized.is_empty() {
-        return normalized;
-    }
-
-    let month_marker =
-        regex::Regex::new(r"\b\d{2}[-/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b").unwrap();
-    if !month_marker.is_match(&normalized) {
-        return normalized;
+        return None;
     }
 
     let mut parts: Vec<&str> = normalized.split_whitespace().collect();
     if parts.len() < 2 {
-        return normalized;
+        return None;
     }
 
     let last = parts.last().copied().unwrap_or_default();
@@ -101,10 +95,25 @@ fn receipt_purpose_text(full_purpose_text: &str) -> String {
         compact_last.len() >= 6 && compact_last.chars().all(|c| c.is_ascii_digit());
 
     if looks_like_trailing_document_number {
+        let month_marker =
+            regex::Regex::new(r"\b\d{2}[-/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b").unwrap();
+        let allow_split = purpose_code == "ENRG" || month_marker.is_match(&normalized);
+        if !allow_split {
+            return None;
+        }
         parts.pop();
-        return parts.join(" ");
+        return Some((parts.join(" "), compact_last));
     }
 
+    None
+}
+
+fn receipt_purpose_text(full_purpose_text: &str, purpose_code: &str) -> String {
+    if let Some((short_text, _suffix)) = split_receipt_suffix(full_purpose_text, purpose_code) {
+        return short_text;
+    }
+
+    let normalized = normalize_spaces(full_purpose_text);
     normalized
 }
 
@@ -739,11 +748,17 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     let (reference_model, reference_body) = split_reference(&data.creditor_reference);
     let purpose_line = truncate_chars(&normalize_spaces(&data.purpose_text), 42);
     let receipt_purpose_line =
-        truncate_chars(&receipt_purpose_text(&data.purpose_text), 42);
-    let receipt_detail = truncate_chars(
-        &format!("{}, {}", truncate_chars(&reference_body, 18), data.due_date),
-        34,
-    );
+        truncate_chars(&receipt_purpose_text(&data.purpose_text, &data.purpose_code), 42);
+    let receipt_detail = if let Some((_short_text, suffix)) =
+        split_receipt_suffix(&data.purpose_text, &data.purpose_code)
+    {
+        truncate_chars(&format!("{}/{}", suffix, data.due_date), 34)
+    } else {
+        truncate_chars(
+            &format!("{}, {}", truncate_chars(&reference_body, 18), data.due_date),
+            34,
+        )
+    };
     let amount_display = format_amount_display(data.amount_cents);
 
     draw_fitted_multi_line(
