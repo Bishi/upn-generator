@@ -960,6 +960,71 @@ fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
     })
 }
 
+/// Parse OCR'd Dimnikarstvo Energetski Servis bills.
+/// These image imports often lose the exact UPN stub formatting, so we match
+/// the provider-specific cues directly and fall back to the known provider IBAN.
+fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
+    let normalized = normalize_spaces(text);
+    let provider_re = Regex::new(r"(?i)dimnik[a-z0-9.:;,'` -]*energetsk[iy][a-z0-9.:;,'` -]*servis")
+        .ok()?;
+    if !provider_re.is_match(&normalized) {
+        return None;
+    }
+
+    let amount_cents = if let Some(caps) =
+        Regex::new(r"\*{2,}\s*(\d+[.,]\d{2})").ok()?.captures(text)
+    {
+        parse_amount_to_cents(caps.get(1)?.as_str())
+    } else {
+        let amount_re =
+            Regex::new(r"(?i)(?:skup[a-z]*\s+za\s+pla[a-z]*\s*(?:eur)?|eur\s+cost)\s*([0-9]+[.,][0-9]{2})")
+                .ok()?;
+        parse_amount_to_cents(amount_re.captures(&normalized)?.get(1)?.as_str())
+    };
+
+    let invoice_number = Regex::new(r"(\d{3,5}-\d{4})")
+        .ok()?
+        .captures(text)?
+        .get(1)?
+        .as_str()
+        .to_string();
+
+    let due_date = if let Some(caps) = Regex::new(r"(?i)rok[^0-9]{0,20}(\d{2}\.\d{2}\.\d{4})")
+        .ok()?
+        .captures(&normalized)
+    {
+        caps.get(1)?.as_str().to_string()
+    } else {
+        Regex::new(r"(\d{2}\.\d{2}\.\d{4})")
+            .ok()?
+            .captures_iter(text)
+            .nth(1)
+            .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+            .unwrap_or_default()
+    };
+
+    let reference_digits = Regex::new(r"(?i)(?:si0{1,2}\s*|sklic[^\d]{0,30})(0{2,}\d{6,})")
+        .ok()
+        .and_then(|re| re.captures(&normalized))
+        .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        .unwrap_or_else(|| format!("0000{}", invoice_number.replace('-', "")));
+    let reference = format!("SI00 {}", reference_digits);
+
+    let iban_raw = "SI56 6100 0000 5243 585".to_string();
+    let iban_norm = normalize_iban(&iban_raw);
+
+    Some(ExtractedBill {
+        iban_norm,
+        iban_raw,
+        amount_cents,
+        reference,
+        due_date,
+        purpose_code: "COST".to_string(),
+        purpose_text: String::new(),
+        invoice_number,
+    })
+}
+
 /// Import a bill file that may contain multiple bills.
 /// Uses smart parsing: finds UPN payment stubs (***amount), falls back to
 /// Elektro narrative format and ZLM format. Matches providers by IBAN.
@@ -1035,6 +1100,22 @@ pub fn import_bills(
     log.push_str(&format!("Phase 3 (ZLM): {}\n", if zlm.is_some() { "found" } else { "NOT FOUND" }));
     if let Some(bill) = zlm {
         log.push_str(&format!("  IBAN={} amount={} ref={} due={}\n", bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date));
+        if seen_ibans.insert(bill.iban_norm.clone()) {
+            extracted.push(bill);
+        }
+    }
+
+    // Phase 4: OCR-tolerant Dimnikar image format
+    let dimnikar = parse_dimnikar_style(&raw_text);
+    log.push_str(&format!(
+        "Phase 4 (Dimnikar OCR): {}\n",
+        if dimnikar.is_some() { "found" } else { "NOT FOUND" }
+    ));
+    if let Some(bill) = dimnikar {
+        log.push_str(&format!(
+            "  IBAN={} amount={} ref={} due={}\n",
+            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
+        ));
         if seen_ibans.insert(bill.iban_norm.clone()) {
             extracted.push(bill);
         }

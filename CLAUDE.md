@@ -61,7 +61,7 @@ To reference in new sessions, use `EnterPlanMode` to load it.
 - ✅ **Phase 3** — UPN Generation: mixed split basis (occupants, m² percentage, or equal apartments), render official-style UPN QR PDFs via printpdf, preview + download + email send
 - 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
 
-Current status: **v0.4.4. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, image-based bill OCR import, import timeout protection, corrected JP VOKA split defaults, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
+Current status: **v0.4.5. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, image-based bill OCR import, import timeout protection, corrected JP VOKA split defaults, OCR-tolerant Dimnikar parsing, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
 
 ## Documentation
 
@@ -81,7 +81,7 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
 
 ```bash
-git tag v0.4.4 && git push origin main && git push origin v0.4.4
+git tag v0.4.5 && git push origin main && git push origin v0.4.5
 ```
 
 This triggers the GitHub Actions workflow which builds the `.msi` first and then publishes it in a separate GitHub Release upload step.
