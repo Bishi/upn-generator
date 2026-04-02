@@ -132,7 +132,7 @@ const PROVIDER_SEEDS: [ProviderSeed<'static>; 6] = [
         "Rok pla.ila:\\s*(\\d{2}\\.\\s?\\d{2}\\.\\s?\\d{4})",
         "",
         "Komunalne stor. {invoice} ({month}-{year})",
-        "occupants",
+        "m2_percentage",
     ),
     (
         "Energetika Ljubljana d.o.o.",
@@ -183,7 +183,7 @@ const PROVIDER_SEEDS: [ProviderSeed<'static>; 6] = [
         "Rok pla.ila:\\s*(\\d{2}\\.\\s?\\d{2}\\.\\s?\\d{4})",
         "",
         "Komunalne stor. {invoice} ({month}-{year})",
-        "m2_percentage",
+        "occupants",
     ),
     (
         "Dimnikarstvo Energetski Servis d.o.o.",
@@ -390,8 +390,13 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             [],
         );
         let _ = conn.execute(
-            "UPDATE providers SET split_basis='occupants'
+            "UPDATE providers SET split_basis='m2_percentage'
              WHERE creditor_iban='SI56 0400 1004 9142 226'",
+            [],
+        );
+        let _ = conn.execute(
+            "UPDATE providers SET split_basis='occupants'
+             WHERE creditor_iban='SI56 2900 0000 3057 588'",
             [],
         );
         ensure_provider_seed(conn, PROVIDER_SEEDS[5])?;

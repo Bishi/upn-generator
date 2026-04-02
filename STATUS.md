@@ -1,7 +1,7 @@
 # Status
 
-- Current version: `0.4.3`
-- Current tag: `v0.4.3`
+- Current version: `0.4.4`
+- Current tag: `v0.4.4`
 - Release status: ready to be tagged and pushed to `origin`
 
 ## Latest Included Changes
@@ -13,3 +13,4 @@
 - Bills is now the primary landing page for the monthly workflow
 - Added bill image import support so JPG/PNG/TIFF scans can be OCR'd and parsed like PDFs
 - Prevented image import OCR from hanging the app indefinitely by running it with a timeout
+- Corrected JP VOKA split defaults and backfill: waste is by m2, water is by people
