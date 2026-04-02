@@ -2,6 +2,8 @@ use regex::Regex;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::mpsc;
+use std::time::Duration;
 use tauri::State;
 
 use super::config::{DbState, Provider};
@@ -102,41 +104,61 @@ fn extract_text_from_pdf(file_path: &str) -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 fn extract_text_from_image(file_path: &str) -> Result<String, String> {
-    let file = StorageFile::GetFileFromPathAsync(&file_path.into())
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    let stream = file
-        .OpenAsync(FileAccessMode::Read)
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    let decoder = BitmapDecoder::CreateAsync(&stream)
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    let bitmap = decoder
-        .GetSoftwareBitmapAsync()
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    let bitmap = SoftwareBitmap::Convert(
-        &bitmap,
-        windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
-    )
-    .map_err(|e| e.to_string())?;
-    let engine =
-        OcrEngine::TryCreateFromUserProfileLanguages().map_err(|e| e.to_string())?;
-    let result = engine
-        .RecognizeAsync(&bitmap)
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    let text = result
-        .Text()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy();
-    Ok(text.trim().to_string())
+    let path = file_path.to_string();
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = (|| -> Result<String, String> {
+            let file = StorageFile::GetFileFromPathAsync(&path.into())
+                .map_err(|e| e.to_string())?
+                .get()
+                .map_err(|e| e.to_string())?;
+            let stream = file
+                .OpenAsync(FileAccessMode::Read)
+                .map_err(|e| e.to_string())?
+                .get()
+                .map_err(|e| e.to_string())?;
+            let decoder = BitmapDecoder::CreateAsync(&stream)
+                .map_err(|e| e.to_string())?
+                .get()
+                .map_err(|e| e.to_string())?;
+            let bitmap = decoder
+                .GetSoftwareBitmapAsync()
+                .map_err(|e| e.to_string())?
+                .get()
+                .map_err(|e| e.to_string())?;
+            let bitmap = SoftwareBitmap::Convert(
+                &bitmap,
+                windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
+            )
+            .map_err(|e| e.to_string())?;
+            let engine =
+                OcrEngine::TryCreateFromUserProfileLanguages().map_err(|e| e.to_string())?;
+            let result = engine
+                .RecognizeAsync(&bitmap)
+                .map_err(|e| e.to_string())?
+                .get()
+                .map_err(|e| e.to_string())?;
+            let text = result
+                .Text()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy();
+            Ok(text.trim().to_string())
+        })();
+
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(Duration::from_secs(20)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(
+            "Image OCR timed out after 20 seconds. Try a smaller/clearer image or import a PDF."
+                .to_string(),
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("Image OCR worker stopped unexpectedly.".to_string())
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
