@@ -189,9 +189,15 @@ function BillsPage() {
   const addYear = async (year: number) => {
     await ipc.createYearPeriods(year);
     const periods = await loadPeriods();
-    const january = periods.find((period) => period.year === year && period.month === 1) ?? null;
-    if (january) {
-      setSelected(january);
+    const preferredMonth = selected?.month ?? 1;
+    const sameMonth =
+      periods.find(
+        (period) => period.year === year && period.month === preferredMonth,
+      ) ??
+      periods.find((period) => period.year === year && period.month === 1) ??
+      null;
+    if (sameMonth) {
+      setSelected(sameMonth);
     }
     notifyWorkflowStatusChanged();
   };

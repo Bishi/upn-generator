@@ -32,7 +32,7 @@ function RootLayout() {
           )}
         </div>
       </nav>
-      <main className="flex-1 overflow-auto p-6">
+      <main className="flex-1 overflow-y-scroll overflow-x-hidden p-6 [scrollbar-gutter:stable]">
         <BillingPeriodSelectionProvider>
           <WorkflowStatusBar />
           <Outlet />

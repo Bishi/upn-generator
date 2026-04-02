@@ -40,6 +40,26 @@ function sortPeriods(periods: BillingPeriod[]) {
   });
 }
 
+function findPreferredPeriodForYear(
+  periods: BillingPeriod[],
+  year: number,
+  preferredMonth: number | null,
+) {
+  const periodsInYear = [...periods]
+    .filter((period) => period.year === year)
+    .sort((a, b) => a.month - b.month);
+
+  if (periodsInYear.length === 0) return null;
+
+  if (preferredMonth != null) {
+    const sameMonth =
+      periodsInYear.find((period) => period.month === preferredMonth) ?? null;
+    if (sameMonth) return sameMonth;
+  }
+
+  return periodsInYear[0] ?? null;
+}
+
 function readStoredSelection(): StoredSelection | null {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -123,16 +143,18 @@ export function BillingPeriodSelectionProvider({
   const selectYear = useCallback(
     (year: number) => {
       setSelectedYearState(year);
-      const periodsInYear = sortPeriods(
-        allPeriods.filter((period) => period.year === year),
+      const next = findPreferredPeriodForYear(
+        allPeriods,
+        year,
+        selected?.month ?? null,
       );
-      if (periodsInYear.length > 0) {
-        applySelection(periodsInYear[0]);
+      if (next) {
+        applySelection(next);
       } else {
         setSelectedState(null);
       }
     },
-    [allPeriods, applySelection],
+    [allPeriods, applySelection, selected],
   );
 
   useEffect(() => {
@@ -154,7 +176,7 @@ export function BillingPeriodSelectionProvider({
   }, [allPeriods]);
 
   const years = useMemo(
-    () => [...new Set(allPeriods.map((period) => period.year))].sort((a, b) => b - a),
+    () => [...new Set(allPeriods.map((period) => period.year))].sort((a, b) => a - b),
     [allPeriods],
   );
   const yearPeriods = useMemo(
