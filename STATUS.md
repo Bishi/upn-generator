@@ -1,7 +1,7 @@
 # Status
 
-- Current version: `0.4.7`
-- Current tag: `v0.4.7`
+- Current version: `0.4.8`
+- Current tag: `v0.4.8`
 - Release status: ready to be tagged and pushed to `origin`
 
 ## Latest Included Changes
@@ -17,3 +17,4 @@
 - Added an OCR-tolerant Dimnikar parser so noisy image imports extract the chimney-service bill correctly
 - Hardened the Dimnikar OCR matcher against damaged text like corrupted bullets, dashes, and provider spelling
 - Preserved the selected month when switching years, sorted year buttons ascending, and stabilized scrollbar layout between tabs
+- Marked fallback-parsed and failed-parsed bills as needing review, with visible yellow warnings in Bills and Splits

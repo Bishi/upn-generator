@@ -44,6 +44,7 @@ pub struct Bill {
     pub purpose_code: String,
     pub purpose_text: String,
     pub invoice_number: String,
+    pub parse_note: String,
     pub status: String,
     pub source_filename: String,
     // Joined display fields (not stored)
@@ -508,7 +509,7 @@ pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>
             "SELECT b.id, b.billing_period_id, b.provider_id, b.raw_text, b.amount_cents,
              b.creditor_name, b.creditor_iban, b.creditor_address, b.creditor_city,
              b.creditor_postal_code, b.reference, b.due_date, b.purpose_code, b.purpose_text,
-             b.invoice_number, b.status, b.source_filename,
+             b.invoice_number, b.parse_note, b.status, b.source_filename,
              p.name as provider_name
              FROM bills b
              LEFT JOIN providers p ON b.provider_id = p.id
@@ -534,9 +535,10 @@ pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>
                 purpose_code: row.get(12)?,
                 purpose_text: row.get(13)?,
                 invoice_number: row.get(14)?,
-                status: row.get(15)?,
-                source_filename: row.get(16)?,
-                provider_name: row.get(17)?,
+                parse_note: row.get(15)?,
+                status: row.get(16)?,
+                source_filename: row.get(17)?,
+                provider_name: row.get(18)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -552,7 +554,7 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
                 "UPDATE bills SET amount_cents=?1, creditor_name=?2, creditor_iban=?3,
                  creditor_address=?4, creditor_city=?5, creditor_postal_code=?6,
                  reference=?7, due_date=?8, purpose_code=?9, purpose_text=?10,
-                 invoice_number=?11, status=?12 WHERE id=?13",
+                 invoice_number=?11, parse_note=?12, status=?13 WHERE id=?14",
                 params![
                     bill.amount_cents,
                     bill.creditor_name,
@@ -565,6 +567,7 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
                     bill.purpose_code,
                     bill.purpose_text,
                     bill.invoice_number,
+                    bill.parse_note,
                     bill.status,
                     id
                 ],
@@ -577,8 +580,8 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
                 "INSERT INTO bills
                  (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
                   creditor_address, creditor_city, creditor_postal_code, reference, due_date,
-                  purpose_code, purpose_text, invoice_number, status, source_filename)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                  purpose_code, purpose_text, invoice_number, parse_note, status, source_filename)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
                 params![
                     bill.billing_period_id,
                     bill.provider_id,
@@ -594,6 +597,7 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
                     bill.purpose_code,
                     bill.purpose_text,
                     bill.invoice_number,
+                    bill.parse_note,
                     bill.status,
                     bill.source_filename,
                 ],
@@ -714,8 +718,8 @@ pub fn import_bill(
         "INSERT INTO bills
          (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
           creditor_address, creditor_city, creditor_postal_code, reference, due_date,
-          purpose_code, purpose_text, invoice_number, status, source_filename)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'draft',?15)",
+          purpose_code, purpose_text, invoice_number, parse_note, status, source_filename)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'','draft',?15)",
         params![
             billing_period_id,
             provider_id,
@@ -755,6 +759,7 @@ pub fn import_bill(
         purpose_code,
         purpose_text,
         invoice_number,
+        parse_note: String::new(),
         status: "draft".to_string(),
         source_filename: filename,
         provider_name,
@@ -772,6 +777,7 @@ struct ExtractedBill {
     purpose_code: String,
     purpose_text: String,
     invoice_number: String,
+    parse_note: String,
 }
 
 /// Parse all UPN payment stubs (***amount sections) from PDF text.
@@ -866,6 +872,7 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             purpose_code,
             purpose_text,
             invoice_number: String::new(),
+            parse_note: String::new(),
         });
     }
     results
@@ -915,6 +922,7 @@ fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
         purpose_code: "ENRG".to_string(),
         purpose_text: String::new(), // will use template
         invoice_number,
+        parse_note: String::new(),
     })
 }
 
@@ -964,6 +972,7 @@ fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
         purpose_code: "OTHR".to_string(),
         purpose_text: String::new(), // will use template
         invoice_number,
+        parse_note: String::new(),
     })
 }
 
@@ -1016,12 +1025,20 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
             .unwrap_or_default()
     };
 
-    let reference_digits = Regex::new(r"(?i)(?:si0{1,2}\s*|sklic[^\d]{0,30})(0{2,}\d{6,})")
+    let reference_digits = Regex::new(r"0{4,}\d{7,}")
+        .ok()
+        .and_then(|re| {
+            re.find_iter(&normalized_ocr)
+                .map(|m| m.as_str().to_string())
+                .max_by_key(|candidate| candidate.len())
+        })
+        .unwrap_or_else(|| format!("0000{}", invoice_number.replace('-', "")));
+    let reference_model = Regex::new(r"(?i)SI\s*([01][0-9])")
         .ok()
         .and_then(|re| re.captures(&normalized))
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-        .unwrap_or_else(|| format!("0000{}", invoice_number.replace('-', "")));
-    let reference = format!("SI00 {}", reference_digits);
+        .unwrap_or_else(|| "12".to_string());
+    let reference = format!("SI{} {}", reference_model, reference_digits);
 
     let iban_raw = "SI56 6100 0000 5243 585".to_string();
     let iban_norm = normalize_iban(&iban_raw);
@@ -1035,6 +1052,8 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
         purpose_code: "COST".to_string(),
         purpose_text: String::new(),
         invoice_number,
+        parse_note: "Parsed via OCR fallback parser. Review the imported fields before calculating splits or sending UPNs."
+            .to_string(),
     })
 }
 
@@ -1145,8 +1164,10 @@ pub fn import_bills(
             "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
              creditor_name, creditor_iban, creditor_address, creditor_city,
              creditor_postal_code, reference, due_date, purpose_code, purpose_text,
-             invoice_number, status, source_filename)
-             VALUES (?1,NULL,?2,0,'','','','','','','','OTHR','','','draft',?3)",
+             invoice_number, parse_note, status, source_filename)
+             VALUES (?1,NULL,?2,0,'','','','','','','','OTHR','','',
+                     'No bill data could be parsed automatically. Review this import manually.',
+                     'needs_review',?3)",
             params![billing_period_id, raw_text, filename],
         )
         .map_err(|e| e.to_string())?;
@@ -1167,7 +1188,9 @@ pub fn import_bills(
             purpose_code: "OTHR".to_string(),
             purpose_text: String::new(),
             invoice_number: String::new(),
-            status: "draft".to_string(),
+            parse_note: "No bill data could be parsed automatically. Review this import manually."
+                .to_string(),
+            status: "needs_review".to_string(),
             source_filename: filename,
             provider_name: None,
         }]);
@@ -1179,6 +1202,11 @@ pub fn import_bills(
 
     for eb in extracted {
         let provider = provider_by_iban.get(&eb.iban_norm).copied();
+        let status = if eb.parse_note.is_empty() {
+            "draft".to_string()
+        } else {
+            "needs_review".to_string()
+        };
 
         // Determine creditor info from provider (if matched) or from extracted IBAN
         let (provider_id, creditor_name, creditor_iban, creditor_address,
@@ -1221,14 +1249,14 @@ pub fn import_bills(
             "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
              creditor_name, creditor_iban, creditor_address, creditor_city,
              creditor_postal_code, reference, due_date, purpose_code, purpose_text,
-             invoice_number, status, source_filename)
-             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'draft',?14)",
+             invoice_number, parse_note, status, source_filename)
+             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 billing_period_id, provider_id, eb.amount_cents,
                 creditor_name, creditor_iban, creditor_address,
                 creditor_city, creditor_postal_code,
                 eb.reference, eb.due_date, purpose_code, purpose_text,
-                eb.invoice_number, filename,
+                eb.invoice_number, eb.parse_note, status, filename,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1250,7 +1278,8 @@ pub fn import_bills(
             purpose_code,
             purpose_text,
             invoice_number: eb.invoice_number,
-            status: "draft".to_string(),
+            parse_note: eb.parse_note,
+            status,
             source_filename: filename.clone(),
             provider_name: provider.map(|p| p.name.clone()),
         });

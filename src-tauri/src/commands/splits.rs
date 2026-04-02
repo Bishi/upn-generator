@@ -26,6 +26,8 @@ pub struct SplitRow {
     pub occupant_count: i32,
     pub m2_percentage: f64,
     pub split_basis: String,
+    pub bill_status: String,
+    pub bill_parse_note: String,
 }
 
 #[derive(Clone)]
@@ -174,6 +176,8 @@ pub fn calculate_splits(
                 occupant_count: apt.occupant_count,
                 m2_percentage: apt.m2_percentage,
                 split_basis: normalized_basis.to_string(),
+                bill_status: "draft".to_string(),
+                bill_parse_note: String::new(),
             });
         }
     }
@@ -191,7 +195,8 @@ pub fn get_splits(
         .prepare(
             "SELECT bs.id, bs.bill_id, bs.apartment_id, a.label, a.unit_code,
              b.source_filename, p.name, b.amount_cents, bs.amount_cents,
-             a.occupant_count, a.m2_percentage, COALESCE(p.split_basis, 'm2_percentage')
+             a.occupant_count, a.m2_percentage, COALESCE(p.split_basis, 'm2_percentage'),
+             b.status, b.parse_note
              FROM bill_splits bs
              JOIN bills b ON bs.bill_id = b.id
              JOIN apartments a ON bs.apartment_id = a.id
@@ -215,6 +220,8 @@ pub fn get_splits(
                 occupant_count: r.get(9)?,
                 m2_percentage: r.get(10)?,
                 split_basis: normalize_split_basis(&r.get::<_, String>(11)?).to_string(),
+                bill_status: r.get(12)?,
+                bill_parse_note: r.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?;

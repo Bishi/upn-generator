@@ -305,6 +305,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             due_date TEXT NOT NULL DEFAULT '',
             purpose_code TEXT NOT NULL DEFAULT 'OTHR',
             purpose_text TEXT NOT NULL DEFAULT '',
+            parse_note TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'draft',
             source_filename TEXT NOT NULL DEFAULT ''
         );
@@ -361,6 +362,10 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     );
     let _ = conn.execute(
         "ALTER TABLE bills ADD COLUMN invoice_number TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN parse_note TEXT NOT NULL DEFAULT ''",
         [],
     );
 

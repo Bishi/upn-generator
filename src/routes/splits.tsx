@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw, Check, X } from "lucide-react";
+import { RefreshCw, Check, X, TriangleAlert } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -39,7 +39,14 @@ function splitBasisDetail(split: SplitRow) {
 function buildMatrix(splits: SplitRow[]) {
   const apartments = [...new Map(splits.map((s) => [s.apartment_id, { label: s.apartment_label, unitCode: s.apartment_unit_code }])).entries()]
     .sort((a, b) => a[1].label.localeCompare(b[1].label));
-  const bills = [...new Map(splits.map((s) => [s.bill_id, { filename: s.bill_source_filename, provider: s.provider_name, total: s.bill_amount_cents, splitBasis: s.split_basis }])).entries()];
+  const bills = [...new Map(splits.map((s) => [s.bill_id, {
+    filename: s.bill_source_filename,
+    provider: s.provider_name,
+    total: s.bill_amount_cents,
+    splitBasis: s.split_basis,
+    status: s.bill_status,
+    parseNote: s.bill_parse_note,
+  }])).entries()];
 
   const matrix: Map<number, Map<number, SplitRow>> = new Map();
   for (const s of splits) {
@@ -248,7 +255,14 @@ function SplitsPage() {
             </thead>
             <tbody>
               {bills.map(([billId, info]) => (
-                <tr key={billId} className="border-t border-border hover:bg-accent/10">
+                <tr
+                  key={billId}
+                  className={`border-t border-border ${
+                    info.status === "needs_review"
+                      ? "bg-amber-50/70 hover:bg-amber-100/80"
+                      : "hover:bg-accent/10"
+                  }`}
+                >
                   <td className="px-3 py-2">
                     <div className="font-medium truncate max-w-44">
                       {info.provider ?? info.filename}
@@ -256,6 +270,12 @@ function SplitsPage() {
                     <div className="text-xs text-muted-foreground truncate max-w-44">
                       {splitBasisLabel(info.splitBasis)}
                     </div>
+                    {info.parseNote && (
+                      <div className="mt-1 flex items-start gap-1 text-[11px] text-amber-700 max-w-56">
+                        <TriangleAlert className="mt-0.5 size-3 shrink-0" />
+                        <span>{info.parseNote}</span>
+                      </div>
+                    )}
                     {info.provider && (
                       <div className="text-xs text-muted-foreground truncate max-w-44">
                         {info.filename}

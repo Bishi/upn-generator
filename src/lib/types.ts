@@ -79,6 +79,7 @@ export interface Bill {
   purpose_code: string;
   purpose_text: string;
   invoice_number: string;
+  parse_note: string;
   status: string;
   source_filename: string;
   provider_name: string | null;
@@ -106,6 +107,8 @@ export interface SplitRow {
   occupant_count: number;
   m2_percentage: number;
   split_basis: "occupants" | "m2_percentage" | "equal_apartments";
+  bill_status: string;
+  bill_parse_note: string;
 }
 
 // ─── UPN ───────────────────────────────────────────────────────────────────
