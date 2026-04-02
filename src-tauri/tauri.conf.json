@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "UPN Generator",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "identifier": "si.upn-generator",
   "build": {
     "beforeDevCommand": "npm run dev",

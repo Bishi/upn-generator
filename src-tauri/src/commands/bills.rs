@@ -1250,7 +1250,7 @@ pub fn import_bills(
              creditor_name, creditor_iban, creditor_address, creditor_city,
              creditor_postal_code, reference, due_date, purpose_code, purpose_text,
              invoice_number, parse_note, status, source_filename)
-             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 billing_period_id, provider_id, eb.amount_cents,
                 creditor_name, creditor_iban, creditor_address,
