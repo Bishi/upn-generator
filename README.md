@@ -4,6 +4,8 @@ Desktop application for the **building manager at Kamniška ulica 36, Ljubljana*
 
 Each month: import the combined utility bill PDF, split costs across apartments, and generate UPN payment slips for each tenant.
 
+The app opens on the **Bills** page, which is now the main landing page for the monthly workflow.
+
 ---
 
 ## Installation
@@ -46,6 +48,7 @@ All 5 utility providers are pre-configured with the correct IBANs, payment purpo
 | JP VOKA SNAGA d.o.o. | Water | SI56 2900 0000 3057 588 |
 | Energetika Ljubljana d.o.o. | Gas | SI56 0292 4025 3764 022 |
 | ZLM d.o.o. | Cleaning | SI56 0201 1025 7890 131 |
+| Dimnikarstvo Energetski Servis d.o.o. | Chimney service | SI56 6100 0000 5243 585 |
 
 ### Settings → Email (SMTP)
 

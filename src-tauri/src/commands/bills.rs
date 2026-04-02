@@ -665,7 +665,7 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
         Ok(r) => r,
         Err(_) => return vec![],
     };
-    let purpose_code_re = Regex::new(r"\b(ENRG|SCVE|WTER|OTHR|RENT|SALA)\b").unwrap();
+    let purpose_code_re = Regex::new(r"\b(ENRG|SCVE|WTER|OTHR|RENT|SALA|COST)\b").unwrap();
     let mut results: Vec<ExtractedBill> = Vec::new();
     let mut seen_ibans: std::collections::HashSet<String> = std::collections::HashSet::new();
 

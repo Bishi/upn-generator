@@ -36,6 +36,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src/routes/bills.tsx` — Bills page (year/month UI, import, manual entry)
 - `src/routes/splits.tsx` — Splits matrix page
 - `src/routes/upn.tsx` — UPN preview + send page (system PDF opener with visible preview errors)
+- `/` redirects to Bills; the dashboard landing page has been removed from navigation
 
 ## Dev Commands
 
@@ -60,7 +61,7 @@ To reference in new sessions, use `EnterPlanMode` to load it.
 - ✅ **Phase 3** — UPN Generation: mixed split basis (occupants, m² percentage, or equal apartments), render official-style UPN QR PDFs via printpdf, preview + download + email send
 - 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
 
-Current status: **v0.4.0. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
+Current status: **v0.4.1. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
 
 ## Documentation
 

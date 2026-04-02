@@ -1,13 +1,13 @@
 # Status
 
-- Current version: `0.4.0`
-- Current tag: `v0.4.0`
+- Current version: `0.4.1`
+- Current tag: `v0.4.1`
 - Release status: ready to be tagged and pushed to `origin`
 
 ## Latest Included Changes
 
-- Providers now support three split modes: `People`, `m²`, and `Equal`
-- Bills can now be split equally across active apartments
-- Split-basis labels now use `m²` instead of `M2 %`
-- The Splits page shows mode-aware helper text for people, area share, and equal share
-- Existing provider split-basis values are normalized safely during migration
+- Added a default chimney-service provider based on `file-examples/dimnikar.jpg`
+- Added `COST` purpose-code support for provider config and bill parsing
+- Existing databases now backfill the chimney provider without requiring a reset
+- `/` now redirects to Bills, and the dashboard landing page is removed from navigation
+- Bills is now the primary landing page for the monthly workflow

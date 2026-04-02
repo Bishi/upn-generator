@@ -99,7 +99,7 @@ const APARTMENT_SEEDS: [ApartmentSeed<'static>; 6] = [
     ),
 ];
 
-const PROVIDER_SEEDS: [ProviderSeed<'static>; 5] = [
+const PROVIDER_SEEDS: [ProviderSeed<'static>; 6] = [
     (
         "Elektro energija d.o.o.",
         "Electricity",
@@ -185,7 +185,55 @@ const PROVIDER_SEEDS: [ProviderSeed<'static>; 5] = [
         "Komunalne stor. {invoice} ({month}-{year})",
         "m2_percentage",
     ),
+    (
+        "Dimnikarstvo Energetski Servis d.o.o.",
+        "Chimney Service",
+        "Dimnikarstvo Energetski Servis d.o.o.",
+        "Cesta Andreja Bitenca 068",
+        "Ljubljana",
+        "1000",
+        "SI56 6100 0000 5243 585",
+        "COST",
+        "(?i)dimnikarstvo|energetski servis|dimnikarske storitve",
+        "(?i)SKUPAJ\\s+ZA\\s+PLA.?ILO\\s+EUR\\s*([\\d.,]+)",
+        "(SI\\d{2}\\s*[\\d\\s]+)",
+        "(?i)Rok\\s+pla.?ila\\s*(\\d{2}\\.\\d{2}\\.\\d{4})",
+        "(?i)RA.?UN\\s*(\\d{4}-\\d{4})",
+        "Plačilo računa {invoice}",
+        "m2_percentage",
+    ),
 ];
+
+fn ensure_provider_seed(conn: &Connection, provider: ProviderSeed<'static>) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR IGNORE INTO providers (
+            name, service_type, creditor_name, creditor_address, creditor_city,
+            creditor_postal_code, creditor_iban, purpose_code, match_pattern,
+            amount_pattern, reference_pattern, due_date_pattern,
+            invoice_number_pattern, purpose_text_template, split_basis
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            provider.0,
+            provider.1,
+            provider.2,
+            provider.3,
+            provider.4,
+            provider.5,
+            provider.6,
+            provider.7,
+            provider.8,
+            provider.9,
+            provider.10,
+            provider.11,
+            provider.12,
+            provider.13,
+            provider.14,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
 
 pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
@@ -346,6 +394,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
              WHERE creditor_iban='SI56 0400 1004 9142 226'",
             [],
         );
+        ensure_provider_seed(conn, PROVIDER_SEEDS[5])?;
     }
 
     Ok(())
@@ -383,32 +432,7 @@ fn seed_defaults(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     for provider in PROVIDER_SEEDS {
-        conn.execute(
-            "INSERT INTO providers (
-                name, service_type, creditor_name, creditor_address, creditor_city,
-                creditor_postal_code, creditor_iban, purpose_code, match_pattern,
-                amount_pattern, reference_pattern, due_date_pattern,
-                invoice_number_pattern, purpose_text_template, split_basis
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            params![
-                provider.0,
-                provider.1,
-                provider.2,
-                provider.3,
-                provider.4,
-                provider.5,
-                provider.6,
-                provider.7,
-                provider.8,
-                provider.9,
-                provider.10,
-                provider.11,
-                provider.12,
-                provider.13,
-                provider.14,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+        ensure_provider_seed(conn, provider)?;
     }
 
     for apartment in APARTMENT_SEEDS {

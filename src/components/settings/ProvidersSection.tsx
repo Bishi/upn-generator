@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-const PURPOSE_CODES = ["OTHR", "ENRG", "WTER", "SCVE", "SALA", "RENT"];
+const PURPOSE_CODES = ["OTHR", "ENRG", "WTER", "SCVE", "SALA", "RENT", "COST"];
 
 const newProvider = (): Provider => ({
   id: null,

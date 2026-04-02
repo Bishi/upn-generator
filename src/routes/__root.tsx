@@ -1,7 +1,7 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { getVersion } from "@tauri-apps/api/app";
 import { type ReactNode, useEffect, useState } from "react";
-import { Building2, FileText, SplitSquareHorizontal, CreditCard, Settings } from "lucide-react";
+import { FileText, SplitSquareHorizontal, CreditCard, Settings } from "lucide-react";
 import { WorkflowStatusBar } from "@/components/WorkflowStatusBar";
 import { BillingPeriodSelectionProvider } from "@/lib/billing-period-selection";
 
@@ -20,7 +20,6 @@ function RootLayout() {
     <div className="flex h-screen bg-background text-foreground">
       <nav className="w-56 shrink-0 border-r border-border bg-card p-4 flex flex-col gap-1">
         <h1 className="text-lg font-bold px-3 py-2 mb-4">UPN Generator</h1>
-        <NavLink to="/" icon={<Building2 className="size-4" />} label="Dashboard" />
         <NavLink to="/bills" icon={<FileText className="size-4" />} label="Bills" />
         <NavLink to="/splits" icon={<SplitSquareHorizontal className="size-4" />} label="Splits" />
         <NavLink to="/upn" icon={<CreditCard className="size-4" />} label="UPN Preview" />
