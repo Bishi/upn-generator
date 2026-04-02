@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Save } from "lucide-react";
+import { Save, RotateCcw } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { setStoredBillingPeriod } from "@/lib/billing-period-selection";
 import type { Building } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,7 @@ export function BuildingSection() {
 
   const [form, setForm] = useState<Building>(emptyBuilding);
   const [saved, setSaved] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState("");
 
   useEffect(() => {
     if (building) setForm(building);
@@ -36,6 +38,24 @@ export function BuildingSection() {
       queryClient.setQueryData(["building"], updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: ipc.resetAllData,
+    onSuccess: async () => {
+      setStoredBillingPeriod(null);
+      setResetConfirm("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["building"] }),
+        queryClient.invalidateQueries({ queryKey: ["apartments"] }),
+        queryClient.invalidateQueries({ queryKey: ["providers"] }),
+        queryClient.invalidateQueries({ queryKey: ["smtp_config"] }),
+        queryClient.invalidateQueries({ queryKey: ["bills"] }),
+        queryClient.invalidateQueries({ queryKey: ["splits"] }),
+        queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
+      ]);
+      window.location.reload();
     },
   });
 
@@ -97,6 +117,34 @@ export function BuildingSection() {
             {saved ? "Saved!" : mutation.isPending ? "Saving..." : "Save"}
           </Button>
         </form>
+
+        <div className="mt-8 border-t pt-6 space-y-3">
+          <div>
+            <p className="text-sm font-medium text-destructive">Dev Factory Reset</p>
+            <p className="text-sm text-muted-foreground">
+              Resets building, apartments, providers, SMTP, billing periods, bills, and splits back to the seeded defaults.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="reset-confirm">Type RESET ALL DATA to confirm</Label>
+            <Input
+              id="reset-confirm"
+              value={resetConfirm}
+              onChange={(e) => setResetConfirm(e.target.value)}
+              placeholder="RESET ALL DATA"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            className="gap-2"
+            disabled={resetConfirm !== "RESET ALL DATA" || resetMutation.isPending}
+            onClick={() => resetMutation.mutate()}
+          >
+            <RotateCcw className="size-4" />
+            {resetMutation.isPending ? "Resetting..." : "Reset All Data"}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

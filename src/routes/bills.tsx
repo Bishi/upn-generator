@@ -1,15 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import {
-  FilePlus,
-  Trash2,
-  Pencil,
-  Check,
-  X,
-  Plus,
-  CalendarPlus,
-} from "lucide-react";
+import { FilePlus, Pencil, Check, X, Plus, CalendarPlus, Trash2 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import type { Bill, BillingPeriod } from "@/lib/types";
@@ -20,40 +12,6 @@ import { Input } from "@/components/ui/input";
 export const Route = createFileRoute("/bills")({
   component: BillsPage,
 });
-
-// ─── Confirm dialog ─────────────────────────────────────────────────────────
-
-function ConfirmDialog({
-  message,
-  onConfirm,
-  onCancel,
-}: {
-  message: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-card border border-border rounded-lg p-6 max-w-sm w-full space-y-4">
-        <p className="text-sm">{message}</p>
-        <div className="flex gap-2 justify-end">
-          <Button variant="outline" size="sm" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={onConfirm}
-          >
-            Delete
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Year selector ──────────────────────────────────────────────────────────
 
 function YearSelector({
   years,
@@ -122,18 +80,14 @@ function YearSelector({
   );
 }
 
-// ─── Month tabs ─────────────────────────────────────────────────────────────
-
 function MonthTabs({
   periods,
   selected,
   onSelect,
-  onDelete,
 }: {
   periods: BillingPeriod[];
   selected: BillingPeriod | null;
   onSelect: (p: BillingPeriod) => void;
-  onDelete: (id: number) => void;
 }) {
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -150,22 +104,9 @@ function MonthTabs({
           {MONTHS[p.month - 1]}
         </button>
       ))}
-
-      {selected && selected.id && (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-destructive hover:text-destructive ml-auto"
-          onClick={() => onDelete(selected.id!)}
-        >
-          <Trash2 className="size-3.5 mr-1" /> Delete Period
-        </Button>
-      )}
     </div>
   );
 }
-
-// ─── Bill edit row ─────────────────────────────────────────────────────────
 
 function BillRow({
   bill,
@@ -297,14 +238,11 @@ function BillRow({
   );
 }
 
-// ─── Main page ─────────────────────────────────────────────────────────────
-
 function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([]);
   const [loadingBills, setLoadingBills] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const loadRequestRef = useRef(0);
   const {
     years,
@@ -350,17 +288,6 @@ function BillsPage() {
     if (yp.length > 0) setSelected(yp[0]);
   };
 
-  const deletePeriod = async (id: number) => {
-    await ipc.deleteBillingPeriod(id);
-    setConfirmDeleteId(null);
-    const ps = await loadPeriods();
-    const yp = ps
-      .filter((p) => p.year === selectedYear)
-      .sort((a, b) => b.month - a.month);
-    setSelected(yp[0] ?? null);
-    setBills([]);
-  };
-
   const importFiles = async () => {
     if (!selected?.id) return;
     setError(null);
@@ -374,12 +301,12 @@ function BillsPage() {
       const pathArr = Array.isArray(paths) ? paths : [paths];
       for (const path of pathArr) {
         try {
-          await ipc.importBills(path, selected.id!);
+          await ipc.importBills(path, selected.id);
         } catch (e) {
           setError(`Failed to import ${path}: ${e}`);
         }
       }
-      await loadBills(selected.id!);
+      await loadBills(selected.id);
     } finally {
       setImporting(false);
     }
@@ -435,13 +362,12 @@ function BillsPage() {
             </Button>
             <Button onClick={importFiles} disabled={importing}>
               <FilePlus className="size-4 mr-2" />
-              {importing ? "Importing…" : "Import PDFs"}
+              {importing ? "Importing..." : "Import PDFs"}
             </Button>
           </div>
         )}
       </div>
 
-      {/* Year selector */}
       <YearSelector
         years={years}
         selectedYear={selectedYear}
@@ -449,7 +375,6 @@ function BillsPage() {
         onAddYear={addYear}
       />
 
-      {/* Month tabs for selected year */}
       {yearPeriods.length > 0 && (
         <MonthTabs
           periods={yearPeriods}
@@ -458,7 +383,6 @@ function BillsPage() {
             setSelected(p);
             setBills([]);
           }}
-          onDelete={(id) => setConfirmDeleteId(id)}
         />
       )}
 
@@ -545,15 +469,6 @@ function BillsPage() {
             Continue to Splits
           </Link>
         </div>
-      )}
-
-      {/* Delete confirmation modal */}
-      {confirmDeleteId !== null && (
-        <ConfirmDialog
-          message="Delete this billing period and all its bills? This cannot be undone."
-          onConfirm={() => deletePeriod(confirmDeleteId)}
-          onCancel={() => setConfirmDeleteId(null)}
-        />
       )}
     </div>
   );

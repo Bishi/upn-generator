@@ -12,12 +12,14 @@ export interface Apartment {
   id: number | null;
   building_id: number;
   label: string;
+  unit_code: string;
   occupant_count: number;
   contact_email: string;
   payer_name: string;
   payer_address: string;
   payer_city: string;
   payer_postal_code: string;
+  m2_percentage: number;
   is_active: boolean;
 }
 
@@ -37,6 +39,7 @@ export interface Provider {
   due_date_pattern: string;
   invoice_number_pattern: string;
   purpose_text_template: string;
+  split_basis: "occupants" | "m2_percentage";
 }
 
 export interface SmtpConfig {
@@ -95,11 +98,14 @@ export interface SplitRow {
   bill_id: number;
   apartment_id: number;
   apartment_label: string;
+  apartment_unit_code: string;
   bill_source_filename: string;
   provider_name: string | null;
   bill_amount_cents: number;
   split_amount_cents: number;
   occupant_count: number;
+  m2_percentage: number;
+  split_basis: "occupants" | "m2_percentage";
 }
 
 // ─── UPN ───────────────────────────────────────────────────────────────────

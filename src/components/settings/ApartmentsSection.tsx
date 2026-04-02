@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Plus, Pencil, Trash2, Users, X, Save } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, X, Save, Percent } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { Apartment } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -14,12 +14,14 @@ const newApartment = (): Apartment => ({
   id: null,
   building_id: 1,
   label: "",
+  unit_code: "",
   occupant_count: 1,
   contact_email: "",
   payer_name: "",
   payer_address: "",
   payer_city: "Ljubljana",
   payer_postal_code: "1000",
+  m2_percentage: 0,
   is_active: true,
 });
 
@@ -38,6 +40,7 @@ export function ApartmentsSection() {
   const [isNew, setIsNew] = useState(false);
 
   const totalOccupants = apartments.filter((a) => a.is_active).reduce((s, a) => s + a.occupant_count, 0);
+  const totalM2Percentage = apartments.filter((a) => a.is_active).reduce((s, a) => s + a.m2_percentage, 0);
 
   const saveMutation = useMutation({
     mutationFn: ipc.saveApartment,
@@ -80,7 +83,7 @@ export function ApartmentsSection() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">
-            {apartments.length} apartment{apartments.length !== 1 ? "s" : ""} · {totalOccupants} total occupants
+            {apartments.length} apartment{apartments.length !== 1 ? "s" : ""} · {totalOccupants} total occupants · {totalM2Percentage.toFixed(2)}% active m2 share
           </p>
         </div>
         <Button onClick={handleNew} size="sm" className="gap-2">
@@ -89,27 +92,35 @@ export function ApartmentsSection() {
         </Button>
       </div>
 
-      {/* Cards grid */}
       <div className="grid grid-cols-2 gap-4">
         {apartments.map((apt) => (
           <Card key={apt.id} className={cn(!apt.is_active && "opacity-60")}>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center justify-between">
-                <span>{apt.label || "Unnamed"}</span>
+              <CardTitle className="text-base flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate">{apt.label || "Unnamed"}</div>
+                  <div className="text-xs font-normal text-muted-foreground">
+                    {apt.unit_code || "No unit code"}
+                  </div>
+                </div>
                 <Badge variant={apt.is_active ? "default" : "secondary"}>
                   {apt.is_active ? "Active" : "Inactive"}
                 </Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-sm space-y-1 text-muted-foreground">
+            <CardContent className="text-sm space-y-2 text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <Users className="size-3.5" />
                 <span>{apt.occupant_count} occupant{apt.occupant_count !== 1 ? "s" : ""}</span>
                 {totalOccupants > 0 && apt.is_active && (
                   <span className="ml-auto text-xs">
-                    {((apt.occupant_count / totalOccupants) * 100).toFixed(1)}%
+                    {((apt.occupant_count / totalOccupants) * 100).toFixed(1)}% people
                   </span>
                 )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Percent className="size-3.5" />
+                <span>{apt.m2_percentage.toFixed(2)}% m2 share</span>
               </div>
               <div className="truncate">{apt.contact_email || "—"}</div>
               <div className="font-medium text-foreground">{apt.payer_name || "—"}</div>
@@ -134,7 +145,6 @@ export function ApartmentsSection() {
         ))}
       </div>
 
-      {/* Edit / New form modal */}
       {editing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <Card className="w-full max-w-md max-h-[90vh] flex flex-col">
@@ -145,14 +155,24 @@ export function ApartmentsSection() {
               <CardContent className="space-y-4 overflow-y-auto flex-1">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label>Label</Label>
+                    <Label>Apartment name</Label>
                     <Input
                       value={editing.label}
                       onChange={(e) => setEditing({ ...editing, label: e.target.value })}
-                      placeholder="Apt 1"
+                      placeholder="Andreja Vidonja"
                       required
                     />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>Unit code</Label>
+                    <Input
+                      value={editing.unit_code}
+                      onChange={(e) => setEditing({ ...editing, unit_code: e.target.value })}
+                      placeholder="1287/6"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Occupants</Label>
                     <Input
@@ -163,15 +183,28 @@ export function ApartmentsSection() {
                       required
                     />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>M2 percentage</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editing.m2_percentage}
+                      onChange={(e) => setEditing({ ...editing, m2_percentage: parseFloat(e.target.value) || 0 })}
+                      required
+                    />
+                  </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Contact email (receives UPNs)</Label>
+                  <Label>Contact email(s)</Label>
                   <Input
-                    type="email"
                     value={editing.contact_email}
                     onChange={(e) => setEditing({ ...editing, contact_email: e.target.value })}
-                    placeholder="tenant@example.com"
+                    placeholder="tenant@example.com, second@example.com"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Separate multiple recipients with commas. One combined apartment PDF will be sent to all of them.
+                  </p>
                 </div>
                 <div className="space-y-1.5 border-t pt-4">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Payer details (printed on UPN)</p>
@@ -189,7 +222,7 @@ export function ApartmentsSection() {
                   <Input
                     value={editing.payer_address}
                     onChange={(e) => setEditing({ ...editing, payer_address: e.target.value })}
-                    placeholder="Kamniška ulica 36/1"
+                    placeholder="Kamniska ulica 36/1"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">

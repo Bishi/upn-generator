@@ -27,6 +27,7 @@ const newProvider = (): Provider => ({
   due_date_pattern: "",
   invoice_number_pattern: "",
   purpose_text_template: "",
+  split_basis: "m2_percentage",
 });
 
 export function ProvidersSection() {
@@ -81,6 +82,9 @@ export function ProvidersSection() {
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-sm">{p.name}</span>
                   <Badge variant="outline" className="text-xs">{p.purpose_code}</Badge>
+                  <Badge variant="secondary" className="text-xs">
+                    {p.split_basis === "occupants" ? "People" : "M2 %"}
+                  </Badge>
                   {p.service_type && (
                     <span className="text-xs text-muted-foreground">{p.service_type}</span>
                   )}
@@ -140,6 +144,17 @@ export function ProvidersSection() {
                       placeholder="Electricity"
                     />
                   </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Split basis</Label>
+                  <select
+                    value={editing.split_basis}
+                    onChange={(e) => setEditing({ ...editing, split_basis: e.target.value as Provider["split_basis"] })}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="m2_percentage">M2 %</option>
+                    <option value="occupants">People</option>
+                  </select>
                 </div>
 
                 <div className="space-y-1.5 border-t pt-4">
@@ -202,7 +217,6 @@ export function ProvidersSection() {
                   </div>
                 </div>
 
-                {/* Parsing patterns — collapsible */}
                 <button
                   type="button"
                   onClick={() => setShowPatterns(!showPatterns)}
@@ -215,14 +229,14 @@ export function ProvidersSection() {
                 {showPatterns && (
                   <div className="space-y-3">
                     <p className="text-xs text-muted-foreground">
-                      Regex patterns to extract data from the bill's text. Use capture group 1 for the value.
+                      Regex patterns to extract data from the bill&apos;s text. Use capture group 1 for the value.
                     </p>
                     {[
                       { key: "match_pattern", label: "Match pattern (identifies this provider)", placeholder: "Elektro energija" },
-                      { key: "amount_pattern", label: "Amount pattern", placeholder: "ZA PLAČILO.*?([\\d,\\.]+)\\s*€" },
+                      { key: "amount_pattern", label: "Amount pattern", placeholder: "ZA PLACILO.*?([\\d,\\.]+)\\s*EUR" },
                       { key: "reference_pattern", label: "Reference pattern", placeholder: "SI\\d{2}\\s+[\\d\\s]+" },
-                      { key: "due_date_pattern", label: "Due date pattern", placeholder: "Rok plačila:\\s*([\\d\\.]+)" },
-                      { key: "invoice_number_pattern", label: "Invoice number pattern", placeholder: "Račun.*?([A-Z0-9\\-]+)" },
+                      { key: "due_date_pattern", label: "Due date pattern", placeholder: "Rok placila:\\s*([\\d\\.]+)" },
+                      { key: "invoice_number_pattern", label: "Invoice number pattern", placeholder: "Racun.*?([A-Z0-9\\-]+)" },
                       { key: "purpose_text_template", label: "Purpose text template", placeholder: "rn. {invoice} ({month}-{year})" },
                     ].map(({ key, label, placeholder }) => (
                       <div key={key} className="space-y-1.5">

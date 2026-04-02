@@ -16,6 +16,10 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - DB at `%APPDATA%\si.upn-generator\upn-generator.db`
 - `building` table: always exactly 1 row (id=1)
 - `smtp_config` table: always exactly 1 row (id=1)
+- Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
+- Apartment `contact_email` remains the persisted field name, but now supports comma-separated recipients
+- Provider split logic is configured per provider via `split_basis` (`occupants` or `m2_percentage`)
+- Factory reset should reseed building/apartments/providers/SMTP defaults and clear periods/bills/splits
 
 ## Key Files
 
@@ -53,10 +57,10 @@ To reference in new sessions, use `EnterPlanMode` to load it.
 - ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
 - ✅ **Phase 1.5** — UI polish: dark mode, seed data, bills page redesign, multi-bill PDF import
 - ✅ **Phase 2** — Bill Import: smart 3-phase PDF parser (UPN stubs + Elektro + ZLM), IBAN-based provider matching, manual entry, debug log
-- ✅ **Phase 3** — UPN Generation: split by occupant ratio, render official-style UPN QR PDFs via printpdf, preview + download + email send
+- ✅ **Phase 3** — UPN Generation: mixed split basis (occupants or m2 percentage), render official-style UPN QR PDFs via printpdf, preview + download + email send
 - 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
 
-Current status: **v0.2.9. Phases 2 + 3 largely complete. Phase 4 (email + keyring) next.**
+Current status: **v0.3.0. Phases 2 + 3 largely complete, including provider-based split rules and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
 
 ## Documentation
 
@@ -89,7 +93,7 @@ This triggers the GitHub Actions workflow which builds the `.msi` first and then
 
 ## Building Data
 
-- 5 apartments, 12 occupants, 4 utility providers (5 bills/month)
+- 6 apartments, 12 occupants, 5 utility providers (5 bills/month)
 - Pre-configured provider templates live in DB, testable against `file-examples/`
 
 | Provider | Service | IBAN |

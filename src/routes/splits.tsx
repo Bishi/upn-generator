@@ -12,8 +12,6 @@ export const Route = createFileRoute("/splits")({
   component: SplitsPage,
 });
 
-// ─── Year selector ────────────────────────────────────────────────────────
-
 function YearSelector({ years, selectedYear, onSelectYear }: { years: number[]; selectedYear: number; onSelectYear: (y: number) => void }) {
   return (
     <div className="flex gap-1 flex-wrap">
@@ -31,8 +29,6 @@ function YearSelector({ years, selectedYear, onSelectYear }: { years: number[]; 
     </div>
   );
 }
-
-// ─── Month tabs ───────────────────────────────────────────────────────────
 
 function MonthTabs({ periods, selected, onSelect }: { periods: BillingPeriod[]; selected: BillingPeriod | null; onSelect: (p: BillingPeriod) => void }) {
   return (
@@ -52,13 +48,10 @@ function MonthTabs({ periods, selected, onSelect }: { periods: BillingPeriod[]; 
   );
 }
 
-// ─── Split matrix ─────────────────────────────────────────────────────────
-
-/** Group splits into a matrix: rows = bills, cols = apartments */
 function buildMatrix(splits: SplitRow[]) {
-  const apartments = [...new Map(splits.map((s) => [s.apartment_id, s.apartment_label])).entries()]
-    .sort((a, b) => a[1].localeCompare(b[1]));
-  const bills = [...new Map(splits.map((s) => [s.bill_id, { filename: s.bill_source_filename, provider: s.provider_name, total: s.bill_amount_cents }])).entries()];
+  const apartments = [...new Map(splits.map((s) => [s.apartment_id, { label: s.apartment_label, unitCode: s.apartment_unit_code }])).entries()]
+    .sort((a, b) => a[1].label.localeCompare(b[1].label));
+  const bills = [...new Map(splits.map((s) => [s.bill_id, { filename: s.bill_source_filename, provider: s.provider_name, total: s.bill_amount_cents, splitBasis: s.split_basis }])).entries()];
 
   const matrix: Map<number, Map<number, SplitRow>> = new Map();
   for (const s of splits) {
@@ -117,8 +110,6 @@ function EditableCell({
     </span>
   );
 }
-
-// ─── Main page ─────────────────────────────────────────────────────────────
 
 function SplitsPage() {
   const [splits, setSplits] = useState<SplitRow[]>([]);
@@ -189,10 +180,15 @@ function SplitsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Splits</h2>
+        <div>
+          <h2 className="text-2xl font-bold">Splits</h2>
+          <p className="text-sm text-muted-foreground">
+            VO-KA communal services split by people; all other seeded providers split by m2 percentage.
+          </p>
+        </div>
         <Button onClick={recalculate} disabled={!selected || calculating}>
           <RefreshCw className={`size-4 mr-2 ${calculating ? "animate-spin" : ""}`} />
-          {calculating ? "Calculating…" : "Recalculate"}
+          {calculating ? "Calculating..." : "Recalculate"}
         </Button>
       </div>
 
@@ -252,9 +248,10 @@ function SplitsPage() {
               <tr className="bg-muted/50 text-xs font-medium text-muted-foreground">
                 <th className="px-3 py-2 text-left sticky left-0 bg-muted/50">Bill</th>
                 <th className="px-3 py-2 text-right">Total</th>
-                {apartments.map(([id, label]) => (
+                {apartments.map(([id, apt]) => (
                   <th key={id} className="px-3 py-2 text-right whitespace-nowrap">
-                    {label}
+                    <div>{apt.label}</div>
+                    <div className="text-[11px] font-normal text-muted-foreground">{apt.unitCode || "No code"}</div>
                   </th>
                 ))}
               </tr>
@@ -265,6 +262,9 @@ function SplitsPage() {
                   <td className="px-3 py-2 sticky left-0 bg-background">
                     <div className="font-medium truncate max-w-44">
                       {info.provider ?? info.filename}
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate max-w-44">
+                      {info.splitBasis === "occupants" ? "Split by people" : "Split by m2 %"}
                     </div>
                     {info.provider && (
                       <div className="text-xs text-muted-foreground truncate max-w-44">
@@ -280,7 +280,14 @@ function SplitsPage() {
                     return (
                       <td key={aptId} className="px-3 py-2 text-right">
                         {cell ? (
-                          <EditableCell split={cell} onSave={saveOverride} />
+                          <div>
+                            <EditableCell split={cell} onSave={saveOverride} />
+                            <div className="text-[11px] text-muted-foreground">
+                              {cell.split_basis === "occupants"
+                                ? `${cell.occupant_count} people`
+                                : `${cell.m2_percentage.toFixed(2)}%`}
+                            </div>
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -294,7 +301,7 @@ function SplitsPage() {
               <tr className="border-t border-border bg-muted/30 font-semibold">
                 <td className="px-3 py-2">Total per Apartment</td>
                 <td className="px-3 py-2 text-right font-mono">
-                  {formatEur(splits.reduce((s, r) => s + r.bill_amount_cents, 0) / apartments.length || 0)} EUR
+                  {formatEur(splits.reduce((sum, row) => sum + row.split_amount_cents, 0))}
                 </td>
                 {apartments.map(([aptId]) => (
                   <td key={aptId} className="px-3 py-2 text-right font-mono">

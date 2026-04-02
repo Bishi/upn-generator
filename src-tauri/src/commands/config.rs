@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
 
+use crate::db::migrations;
+
 pub struct DbState(pub Mutex<Connection>);
 
 // --- Building ---
@@ -58,12 +60,14 @@ pub struct Apartment {
     pub id: Option<i64>,
     pub building_id: i64,
     pub label: String,
+    pub unit_code: String,
     pub occupant_count: i32,
     pub contact_email: String,
     pub payer_name: String,
     pub payer_address: String,
     pub payer_city: String,
     pub payer_postal_code: String,
+    pub m2_percentage: f64,
     pub is_active: bool,
 }
 
@@ -72,8 +76,8 @@ pub fn get_apartments(db: State<DbState>) -> Result<Vec<Apartment>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, building_id, label, occupant_count, contact_email,
-             payer_name, payer_address, payer_city, payer_postal_code, is_active
+            "SELECT id, building_id, label, unit_code, occupant_count, contact_email,
+             payer_name, payer_address, payer_city, payer_postal_code, m2_percentage, is_active
              FROM apartments ORDER BY label",
         )
         .map_err(|e| e.to_string())?;
@@ -83,13 +87,15 @@ pub fn get_apartments(db: State<DbState>) -> Result<Vec<Apartment>, String> {
                 id: Some(row.get(0)?),
                 building_id: row.get(1)?,
                 label: row.get(2)?,
-                occupant_count: row.get(3)?,
-                contact_email: row.get(4)?,
-                payer_name: row.get(5)?,
-                payer_address: row.get(6)?,
-                payer_city: row.get(7)?,
-                payer_postal_code: row.get(8)?,
-                is_active: row.get::<_, i32>(9)? != 0,
+                unit_code: row.get(3)?,
+                occupant_count: row.get(4)?,
+                contact_email: row.get(5)?,
+                payer_name: row.get(6)?,
+                payer_address: row.get(7)?,
+                payer_city: row.get(8)?,
+                payer_postal_code: row.get(9)?,
+                m2_percentage: row.get(10)?,
+                is_active: row.get::<_, i32>(11)? != 0,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -103,17 +109,19 @@ pub fn save_apartment(db: State<DbState>, apartment: Apartment) -> Result<Apartm
     match apartment.id {
         Some(id) => {
             conn.execute(
-                "UPDATE apartments SET label=?1, occupant_count=?2, contact_email=?3,
-                 payer_name=?4, payer_address=?5, payer_city=?6, payer_postal_code=?7, is_active=?8
-                 WHERE id=?9",
+                "UPDATE apartments SET label=?1, unit_code=?2, occupant_count=?3, contact_email=?4,
+                 payer_name=?5, payer_address=?6, payer_city=?7, payer_postal_code=?8, m2_percentage=?9, is_active=?10
+                 WHERE id=?11",
                 rusqlite::params![
                     apartment.label,
+                    apartment.unit_code,
                     apartment.occupant_count,
                     apartment.contact_email,
                     apartment.payer_name,
                     apartment.payer_address,
                     apartment.payer_city,
                     apartment.payer_postal_code,
+                    apartment.m2_percentage,
                     active,
                     id
                 ],
@@ -124,17 +132,19 @@ pub fn save_apartment(db: State<DbState>, apartment: Apartment) -> Result<Apartm
         None => {
             conn.execute(
                 "INSERT INTO apartments
-                 (building_id, label, occupant_count, contact_email, payer_name, payer_address, payer_city, payer_postal_code, is_active)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                 (building_id, label, unit_code, occupant_count, contact_email, payer_name, payer_address, payer_city, payer_postal_code, m2_percentage, is_active)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
                 rusqlite::params![
                     apartment.building_id,
                     apartment.label,
+                    apartment.unit_code,
                     apartment.occupant_count,
                     apartment.contact_email,
                     apartment.payer_name,
                     apartment.payer_address,
                     apartment.payer_city,
                     apartment.payer_postal_code,
+                    apartment.m2_percentage,
                     active
                 ],
             )
@@ -172,6 +182,7 @@ pub struct Provider {
     pub due_date_pattern: String,
     pub invoice_number_pattern: String,
     pub purpose_text_template: String,
+    pub split_basis: String,
 }
 
 #[tauri::command]
@@ -181,7 +192,8 @@ pub fn get_providers(db: State<DbState>) -> Result<Vec<Provider>, String> {
         .prepare(
             "SELECT id, name, service_type, creditor_name, creditor_address, creditor_city,
              creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern,
-             reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template
+             reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template,
+             split_basis
              FROM providers ORDER BY name",
         )
         .map_err(|e| e.to_string())?;
@@ -203,6 +215,7 @@ pub fn get_providers(db: State<DbState>) -> Result<Vec<Provider>, String> {
                 due_date_pattern: row.get(12)?,
                 invoice_number_pattern: row.get(13)?,
                 purpose_text_template: row.get(14)?,
+                split_basis: row.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -218,13 +231,13 @@ pub fn save_provider(db: State<DbState>, provider: Provider) -> Result<Provider,
                 "UPDATE providers SET name=?1, service_type=?2, creditor_name=?3, creditor_address=?4,
                  creditor_city=?5, creditor_postal_code=?6, creditor_iban=?7, purpose_code=?8,
                  match_pattern=?9, amount_pattern=?10, reference_pattern=?11, due_date_pattern=?12,
-                 invoice_number_pattern=?13, purpose_text_template=?14 WHERE id=?15",
+                 invoice_number_pattern=?13, purpose_text_template=?14, split_basis=?15 WHERE id=?16",
                 rusqlite::params![
                     provider.name, provider.service_type, provider.creditor_name,
                     provider.creditor_address, provider.creditor_city, provider.creditor_postal_code,
                     provider.creditor_iban, provider.purpose_code, provider.match_pattern,
                     provider.amount_pattern, provider.reference_pattern, provider.due_date_pattern,
-                    provider.invoice_number_pattern, provider.purpose_text_template, id
+                    provider.invoice_number_pattern, provider.purpose_text_template, provider.split_basis, id
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -235,14 +248,14 @@ pub fn save_provider(db: State<DbState>, provider: Provider) -> Result<Provider,
                 "INSERT INTO providers
                  (name, service_type, creditor_name, creditor_address, creditor_city,
                   creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern,
-                  reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                  reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template, split_basis)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
                 rusqlite::params![
                     provider.name, provider.service_type, provider.creditor_name,
                     provider.creditor_address, provider.creditor_city, provider.creditor_postal_code,
                     provider.creditor_iban, provider.purpose_code, provider.match_pattern,
                     provider.amount_pattern, provider.reference_pattern, provider.due_date_pattern,
-                    provider.invoice_number_pattern, provider.purpose_text_template
+                    provider.invoice_number_pattern, provider.purpose_text_template, provider.split_basis
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -302,4 +315,10 @@ pub fn save_smtp_config(db: State<DbState>, config: SmtpConfig) -> Result<(), St
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn reset_all_data(db: State<DbState>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    migrations::reset_to_defaults(&conn)
 }

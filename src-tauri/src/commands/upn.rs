@@ -1,6 +1,6 @@
 use base64::Engine;
 use lettre::message::header::ContentType;
-use lettre::message::{Attachment, MultiPart, SinglePart};
+use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use ::lopdf::{Document as LoDocument, Object, ObjectId};
@@ -1121,6 +1121,14 @@ where
     Ok(rows)
 }
 
+fn parse_recipient_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect()
+}
+
 #[tauri::command]
 pub fn generate_upn_pdf(
     db: State<DbState>,
@@ -1273,8 +1281,22 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         )?
     };
 
+    let apartments: Vec<(i64, String, String, Vec<String>)> = apartments
+        .into_iter()
+        .filter_map(|(apt_id, apt_label, raw_email)| {
+            let recipients = parse_recipient_list(&raw_email);
+            if recipients.is_empty() {
+                None
+            } else {
+                Some((apt_id, apt_label, raw_email, recipients))
+            }
+        })
+        .collect();
+
     if apartments.is_empty() {
-        return Err("No apartments with email addresses have splits in this period.".to_string());
+        return Err(
+            "No apartments with email addresses have splits in this period.".to_string(),
+        );
     }
 
     let creds = Credentials::new(smtp_user, smtp_pass);
@@ -1294,7 +1316,7 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
 
     let mut results: Vec<EmailResult> = Vec::new();
 
-    for (apt_id, apt_label, apt_email) in &apartments {
+    for (apt_id, apt_label, raw_email, recipients) in &apartments {
         let attachment_bytes = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
             load_apartment_upn_data(&conn, billing_period_id, *apt_id)
@@ -1306,7 +1328,7 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
             Err(e) => {
                 results.push(EmailResult {
                     apartment_label: apt_label.clone(),
-                    email: apt_email.clone(),
+                    email: raw_email.clone(),
                     success: false,
                     error: Some(e),
                 });
@@ -1320,14 +1342,21 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
             month, year
         );
 
-        let from_result = smtp_from.parse();
-        let to_result = apt_email.parse();
-        let (from_addr, to_addr) = match (from_result, to_result) {
-            (Ok(f), Ok(t)) => (f, t),
-            _ => {
+        let from_result: Result<Mailbox, _> = smtp_from.parse();
+        let to_results: Result<Vec<Mailbox>, _> =
+            recipients.iter().map(|email| email.parse()).collect();
+        let from_addr = match from_result {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Err(e.to_string());
+            }
+        };
+        let to_addrs = match to_results {
+            Ok(addrs) => addrs,
+            Err(_) => {
                 results.push(EmailResult {
                     apartment_label: apt_label.clone(),
-                    email: apt_email.clone(),
+                    email: recipients.join(", "),
                     success: false,
                     error: Some("Invalid email address".to_string()),
                 });
@@ -1350,29 +1379,29 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
                 ),
             );
 
-        match Message::builder()
-            .from(from_addr)
-            .to(to_addr)
-            .subject(&subject)
-            .multipart(mp)
-        {
+        let builder = to_addrs.iter().cloned().fold(
+            Message::builder().from(from_addr).subject(&subject),
+            |builder, to_addr| builder.to(to_addr),
+        );
+
+        match builder.multipart(mp) {
             Ok(msg) => match mailer.send(&msg) {
                 Ok(_) => results.push(EmailResult {
                     apartment_label: apt_label.clone(),
-                    email: apt_email.clone(),
+                    email: recipients.join(", "),
                     success: true,
                     error: None,
                 }),
                 Err(e) => results.push(EmailResult {
                     apartment_label: apt_label.clone(),
-                    email: apt_email.clone(),
+                    email: recipients.join(", "),
                     success: false,
                     error: Some(e.to_string()),
                 }),
             },
             Err(e) => results.push(EmailResult {
                 apartment_label: apt_label.clone(),
-                email: apt_email.clone(),
+                email: recipients.join(", "),
                 success: false,
                 error: Some(e.to_string()),
             }),

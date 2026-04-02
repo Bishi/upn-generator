@@ -29,6 +29,7 @@ export const ipc = {
   getSmtpConfig: () => invoke<SmtpConfig>("get_smtp_config"),
   saveSmtpConfig: (config: SmtpConfig) =>
     invoke<void>("save_smtp_config", { config }),
+  resetAllData: () => invoke<void>("reset_all_data"),
 
   // ─── Billing Periods ─────────────────────────────────────────────────
   getBillingPeriods: () => invoke<BillingPeriod[]>("get_billing_periods"),
@@ -36,8 +37,6 @@ export const ipc = {
     invoke<BillingPeriod>("create_billing_period", { month, year }),
   createYearPeriods: (year: number) =>
     invoke<BillingPeriod[]>("create_year_periods", { year }),
-  deleteBillingPeriod: (id: number) =>
-    invoke<void>("delete_billing_period", { id }),
 
   // ─── Bills ───────────────────────────────────────────────────────────
   getBills: (billingPeriodId: number) =>

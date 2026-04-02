@@ -1,20 +1,15 @@
 # Status
 
-- Current version: `0.2.21`
-- Current tag: `v0.2.21`
+- Current version: `0.3.0`
+- Current tag: `v0.3.0`
 - Release status: ready to be tagged and pushed to `origin`
 
 ## Latest Included Changes
 
-- Shared billing-period selection across Bills, Splits, and UPN
-- Visible app version badge in the sidebar
-- Workflow status bar and improved cross-page UX
-- Combined apartment UPN preview/email handling
-- Stable workflow chip placement in the header card
-- Non-jumping Bills empty state with toolbar-only actions
-- Loading placeholders to prevent stale flashes between Bills, Splits, and UPN
-- Better purpose-text extraction from imported UPN bill text
-- Left receipt and right main-section purpose text now distinguish short vs full names
-- ENRG purpose text now uses the bill's invoice and partner number format
-- GitHub release workflow now publishes the MSI in a separate upload step after the Tauri build
-- Elektro and ZLM fallback purpose text now use the bill's own source period instead of the selected import month
+- Apartments now support unit codes, m2 percentages, and comma-separated email recipients
+- Providers now choose whether bills split by occupants or m2 percentage
+- VO-KA communal-services bills split by people, while the other seeded providers split by m2 share
+- The apartment seed data now matches the latest client table
+- Billing-period deletion was removed from the Bills page
+- A dev-only factory reset now restores seeded defaults and clears operational data
+- Combined apartment UPN emails now send one message to all configured recipients

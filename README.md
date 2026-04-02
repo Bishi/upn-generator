@@ -30,12 +30,14 @@ All 5 apartments are pre-configured. For each apartment, verify:
 |-------|-------------|
 | **Payer name** | Tenant or owner name as it will appear on the UPN slip |
 | **Address / postal code / city** | Payer address on the UPN slip (defaults to Kamniška ulica 36) |
-| **Email address** | Where the UPN slip is sent each month |
-| **Number of occupants** | Used to calculate each apartment's share of the bills |
+| **Email address(es)** | One or more recipients, separated by commas, for the combined apartment PDF |
+| **Number of occupants** | Used for providers that split by people |
+| **M2 percentage** | Used for providers that split by apartment square-meter share |
+| **Unit code** | Extra apartment identifier such as `1287/6` |
 
 ### Settings → Providers
 
-All 5 utility providers are pre-configured with the correct IBANs and payment purpose templates. You normally do not need to change these.
+All 5 utility providers are pre-configured with the correct IBANs, payment purpose templates, and split basis. You normally do not need to change these.
 
 | Provider | Service | IBAN |
 |----------|---------|------|
@@ -105,7 +107,7 @@ The **total** of all bills for the month is shown at the bottom.
 
 Go to the **Splits** page and click **Recalculate**.
 
-The app divides each bill across apartments proportionally by **number of occupants**. The matrix shows each apartment's share of each bill.
+The app divides each bill using the provider's configured split basis. By default, **VO-KA komunalne storitve** splits by **number of occupants** and all other seeded providers split by **m2 percentage**.
 
 Individual amounts can be manually adjusted by clicking a cell.
 
@@ -119,7 +121,7 @@ Each apartment card shows its line items and the total amount due.
 |--------|-------------|
 | **Eye icon (👁)** | Generates the UPN PDF and opens it in your default PDF viewer. If Windows refuses to launch it, the UPN page shows the error. |
 | **Download All PDFs** | Saves all UPN slips to a folder of your choice |
-| **Send Emails** | Sends UPN slips to all tenants at their configured email addresses |
+| **Send Emails** | Sends one combined apartment PDF to all configured recipient addresses for that apartment |
 
 ---
 
@@ -142,8 +144,8 @@ Generate and distribute UPN payment slips. Each apartment card shows the total a
 Four tabs for configuring the application:
 
 - **Building** — Building address and contact details
-- **Apartments** — List of apartments with tenant names and email addresses
-- **Providers** — Utility providers with IBANs and purpose text templates
+- **Apartments** — List of apartments with names, unit codes, occupants, m2 percentages, and comma-separated email recipients
+- **Providers** — Utility providers with IBANs, purpose text templates, and split basis rules
 - **Email** — SMTP settings for sending emails
 
 ---

@@ -230,7 +230,8 @@ fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
     let mut stmt = match conn.prepare(
         "SELECT id, name, service_type, creditor_name, creditor_address, creditor_city,
          creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern,
-         reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template
+         reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template,
+         split_basis
          FROM providers ORDER BY name",
     ) {
         Ok(s) => s,
@@ -253,6 +254,7 @@ fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
             due_date_pattern: row.get(12)?,
             invoice_number_pattern: row.get(13)?,
             purpose_text_template: row.get(14)?,
+            split_basis: row.get(15)?,
         })
     })
     .map(|rows| rows.filter_map(|r| r.ok()).collect())
