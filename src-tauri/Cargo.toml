@@ -28,6 +28,13 @@ base64 = "0.22"
 chrono = "0.4"
 qrcodegen = "1.8"
 lopdf = "0.34"
+windows = { version = "0.61", features = [
+  "Foundation",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Storage",
+  "Storage_Streams",
+] }
 
 [profile.release]
 opt-level = 2        # slightly less optimization, noticeably faster compile

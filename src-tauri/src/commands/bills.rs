@@ -1,9 +1,17 @@
 use regex::Regex;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tauri::State;
 
 use super::config::{DbState, Provider};
+
+#[cfg(target_os = "windows")]
+use windows::{
+    Graphics::Imaging::{BitmapDecoder, SoftwareBitmap},
+    Media::Ocr::OcrEngine,
+    Storage::{FileAccessMode, StorageFile},
+};
 
 // ─── Structs ───────────────────────────────────────────────────────────────
 
@@ -67,6 +75,91 @@ fn first_capture(pattern: &str, text: &str) -> Option<String> {
 
 fn normalize_spaces(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn supported_image_extensions() -> &'static [&'static str] {
+    &["jpg", "jpeg", "png", "bmp", "tif", "tiff"]
+}
+
+fn is_supported_image_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            supported_image_extensions()
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(ext))
+        })
+        .unwrap_or(false)
+}
+
+fn extract_text_from_pdf(file_path: &str) -> Result<String, String> {
+    let pdf_bytes = std::fs::read(file_path).map_err(|e| e.to_string())?;
+    Ok(pdf_extract::extract_text_from_mem(&pdf_bytes)
+        .unwrap_or_default()
+        .trim()
+        .to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn extract_text_from_image(file_path: &str) -> Result<String, String> {
+    let file = StorageFile::GetFileFromPathAsync(&file_path.into())
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    let stream = file
+        .OpenAsync(FileAccessMode::Read)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    let decoder = BitmapDecoder::CreateAsync(&stream)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    let bitmap = decoder
+        .GetSoftwareBitmapAsync()
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    let bitmap = SoftwareBitmap::Convert(
+        &bitmap,
+        windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
+    )
+    .map_err(|e| e.to_string())?;
+    let engine =
+        OcrEngine::TryCreateFromUserProfileLanguages().map_err(|e| e.to_string())?;
+    let result = engine
+        .RecognizeAsync(&bitmap)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    let text = result
+        .Text()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy();
+    Ok(text.trim().to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn extract_text_from_image(_file_path: &str) -> Result<String, String> {
+    Err("Image bill import is only supported on Windows builds.".to_string())
+}
+
+fn extract_text_from_file(file_path: &str) -> Result<String, String> {
+    let path = Path::new(file_path);
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    match extension.as_str() {
+        "pdf" => extract_text_from_pdf(file_path),
+        _ if is_supported_image_file(path) => extract_text_from_image(file_path),
+        _ => Err(format!(
+            "Unsupported bill file type: {}. Supported files: PDF, JPG, JPEG, PNG, BMP, TIF, TIFF.",
+            extension
+        )),
+    }
 }
 
 fn extract_upn_purpose_from_context(
@@ -493,7 +586,7 @@ pub fn delete_bill(db: State<DbState>, id: i64) -> Result<(), String> {
     Ok(())
 }
 
-/// Parse a PDF file and try to match it against configured providers.
+/// Parse a bill file and try to match it against configured providers.
 /// Returns a partially-filled Bill that the user can review before saving.
 #[tauri::command]
 pub fn import_bill(
@@ -501,12 +594,7 @@ pub fn import_bill(
     file_path: String,
     billing_period_id: i64,
 ) -> Result<Bill, String> {
-    // Extract text from PDF
-    let pdf_bytes = std::fs::read(&file_path).map_err(|e| e.to_string())?;
-    let raw_text = pdf_extract::extract_text_from_mem(&pdf_bytes)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let raw_text = extract_text_from_file(&file_path)?;
 
     let filename = std::path::Path::new(&file_path)
         .file_name()
@@ -850,7 +938,7 @@ fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
     })
 }
 
-/// Import a PDF that may contain multiple bills.
+/// Import a bill file that may contain multiple bills.
 /// Uses smart parsing: finds UPN payment stubs (***amount), falls back to
 /// Elektro narrative format and ZLM format. Matches providers by IBAN.
 #[tauri::command]
@@ -859,11 +947,7 @@ pub fn import_bills(
     file_path: String,
     billing_period_id: i64,
 ) -> Result<Vec<Bill>, String> {
-    let pdf_bytes = std::fs::read(&file_path).map_err(|e| e.to_string())?;
-    let raw_text = pdf_extract::extract_text_from_mem(&pdf_bytes)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let raw_text = extract_text_from_file(&file_path)?;
 
     let filename = std::path::Path::new(&file_path)
         .file_name()

@@ -203,7 +203,12 @@ function BillsPage() {
     try {
       const paths = await open({
         multiple: true,
-        filters: [{ name: "PDF Files", extensions: ["pdf"] }],
+        filters: [
+          {
+            name: "Bills (PDF or image)",
+            extensions: ["pdf", "jpg", "jpeg", "png", "bmp", "tif", "tiff"],
+          },
+        ],
       });
       if (!paths) return;
       const pathArr = Array.isArray(paths) ? paths : [paths];
@@ -285,7 +290,7 @@ function BillsPage() {
             </Button>
             <Button onClick={importFiles} disabled={importing}>
               <FilePlus className="size-4 mr-2" />
-              {importing ? "Importing..." : "Import PDFs"}
+              {importing ? "Importing..." : "Import Bills"}
             </Button>
           </>
         ) : (
@@ -323,7 +328,7 @@ function BillsPage() {
               <div className="max-w-md space-y-2">
                 <div className="text-sm font-medium">No bills yet for this period</div>
                 <div className="text-sm text-muted-foreground">
-                  Use the buttons above to import PDF invoices or add a bill manually.
+                  Use the buttons above to import PDF or image invoices, or add a bill manually.
                 </div>
               </div>
             </div>

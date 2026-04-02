@@ -2,7 +2,7 @@
 
 Desktop application for the **building manager at Kamniška ulica 36, Ljubljana**.
 
-Each month: import the combined utility bill PDF, split costs across apartments, and generate UPN payment slips for each tenant.
+Each month: import the combined utility bill PDF or a photographed/scanned image, split costs across apartments, and generate UPN payment slips for each tenant.
 
 The app opens on the **Bills** page, which is now the main landing page for the monthly workflow.
 
@@ -77,9 +77,9 @@ Go to the **Bills** page.
 
 ### Step 2 — Import bills
 
-Select the month and click **Import PDF**.
+Select the month and click **Import Bills**.
 
-The app supports importing a **single combined PDF** (e.g. `Racuni_02_2026.pdf`) containing all bills together. It automatically detects and splits them by provider:
+The app supports importing a **single combined PDF** (e.g. `Racuni_02_2026.pdf`) or a supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`). PDFs can contain all bills together; image imports are OCR'd on Windows before the same provider-detection pipeline runs.
 
 | Provider | Service | Detection method |
 |----------|---------|-----------------|
@@ -132,7 +132,7 @@ Each apartment card shows its line items and the total amount due.
 
 ### Bills
 
-Overview of all imported bills by year and month. Import PDFs, add manual entries, edit or delete rows.
+Overview of all imported bills by year and month. Import PDFs or image scans, add manual entries, edit or delete rows.
 
 ### Splits
 
@@ -167,13 +167,13 @@ Nothing is sent to the cloud. Emails are sent directly via the SMTP server confi
 
 ## Troubleshooting
 
-**PDF import doesn't find all bills**
+**Bill import doesn't find all bills**
 
 A parse log is written on every import:
 ```
 %APPDATA%\si.upn-generator\import_debug.log
 ```
-Open it to see the raw extracted PDF text and what each detection phase found or missed.
+Open it to see the raw extracted text and what each detection phase found or missed. For image imports, this log shows the OCR text that was parsed.
 
 **UPN preview doesn't open**
 

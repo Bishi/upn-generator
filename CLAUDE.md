@@ -30,7 +30,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src/lib/ipc.ts` — typed `invoke()` wrappers for all IPC commands
 - `src/routes/settings.tsx` — Settings page (4 tabs)
 - `src/components/settings/` — per-tab setting components
-- `src-tauri/src/commands/bills.rs` — bill import, PDF parsing, billing period commands
+- `src-tauri/src/commands/bills.rs` — bill import, PDF/image text extraction + parsing, billing period commands
 - `src-tauri/src/commands/splits.rs` — split calculation logic
 - `src-tauri/src/commands/upn.rs` — UPN QR form rendering (official ZBS layout), email sending
 - `src/routes/bills.tsx` — Bills page (year/month UI, import, manual entry)
@@ -57,11 +57,11 @@ To reference in new sessions, use `EnterPlanMode` to load it.
 
 - ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
 - ✅ **Phase 1.5** — UI polish: dark mode, seed data, bills page redesign, multi-bill PDF import
-- ✅ **Phase 2** — Bill Import: smart 3-phase PDF parser (UPN stubs + Elektro + ZLM), IBAN-based provider matching, manual entry, debug log
+- ✅ **Phase 2** — Bill Import: smart 3-phase parser (UPN stubs + Elektro + ZLM), IBAN-based provider matching, PDF/image OCR import, manual entry, debug log
 - ✅ **Phase 3** — UPN Generation: mixed split basis (occupants, m² percentage, or equal apartments), render official-style UPN QR PDFs via printpdf, preview + download + email send
 - 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
 
-Current status: **v0.4.1. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
+Current status: **v0.4.2. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, image-based bill OCR import, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
 
 ## Documentation
 
@@ -81,7 +81,7 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
 
 ```bash
-git tag v0.2.9 && git push origin main && git push origin v0.2.9
+git tag v0.4.2 && git push origin main && git push origin v0.4.2
 ```
 
 This triggers the GitHub Actions workflow which builds the `.msi` first and then publishes it in a separate GitHub Release upload step.
