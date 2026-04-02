@@ -1,112 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { FilePlus, Pencil, Check, X, Plus, CalendarPlus, Trash2 } from "lucide-react";
+import { FilePlus, Pencil, Check, X, Plus, Trash2 } from "lucide-react";
+import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import type { Bill, BillingPeriod } from "@/lib/types";
-import { formatEur, MONTHS } from "@/lib/types";
+import type { Bill } from "@/lib/types";
+import { formatEur } from "@/lib/types";
+import { BillingPageShell } from "@/components/BillingPageShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/bills")({
   component: BillsPage,
 });
-
-function YearSelector({
-  years,
-  selectedYear,
-  onSelectYear,
-  onAddYear,
-}: {
-  years: number[];
-  selectedYear: number;
-  onSelectYear: (y: number) => void;
-  onAddYear: (y: number) => void;
-}) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [newYear, setNewYear] = useState(new Date().getFullYear());
-
-  return (
-    <div className="flex items-center gap-2">
-      {years.map((y) => (
-        <button
-          key={y}
-          onClick={() => onSelectYear(y)}
-          className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
-            selectedYear === y
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border hover:bg-accent"
-          }`}
-        >
-          {y}
-        </button>
-      ))}
-      {showAdd ? (
-        <div className="flex items-center gap-2 border rounded-md px-3 py-1.5 bg-card">
-          <Input
-            type="number"
-            className="w-20 h-6 text-sm"
-            value={newYear}
-            onChange={(e) => setNewYear(Number(e.target.value))}
-          />
-          <button
-            className="text-green-600 hover:text-green-700"
-            onClick={() => {
-              onAddYear(newYear);
-              setShowAdd(false);
-            }}
-          >
-            <Check className="size-4" />
-          </button>
-          <button
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => setShowAdd(false)}
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      ) : (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setShowAdd(true)}
-          className="gap-1"
-        >
-          <CalendarPlus className="size-3.5" /> Add Year
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function MonthTabs({
-  periods,
-  selected,
-  onSelect,
-}: {
-  periods: BillingPeriod[];
-  selected: BillingPeriod | null;
-  onSelect: (p: BillingPeriod) => void;
-}) {
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      {periods.map((p) => (
-        <button
-          key={p.id}
-          onClick={() => onSelect(p)}
-          className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-            selected?.id === p.id
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border hover:bg-accent"
-          }`}
-        >
-          {MONTHS[p.month - 1]}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function BillRow({
   bill,
@@ -281,11 +188,12 @@ function BillsPage() {
 
   const addYear = async (year: number) => {
     await ipc.createYearPeriods(year);
-    const ps = await loadPeriods();
-    const yp = ps
-      .filter((p) => p.year === year)
-      .sort((a, b) => b.month - a.month);
-    if (yp.length > 0) setSelected(yp[0]);
+    const periods = await loadPeriods();
+    const january = periods.find((period) => period.year === year && period.month === 1) ?? null;
+    if (january) {
+      setSelected(january);
+    }
+    notifyWorkflowStatusChanged();
   };
 
   const importFiles = async () => {
@@ -307,6 +215,7 @@ function BillsPage() {
         }
       }
       await loadBills(selected.id);
+      notifyWorkflowStatusChanged();
     } finally {
       setImporting(false);
     }
@@ -336,26 +245,40 @@ function BillsPage() {
     };
     await ipc.saveBill(blank);
     await loadBills(selected.id);
+    notifyWorkflowStatusChanged();
   };
 
   const saveBill = async (bill: Bill) => {
     await ipc.saveBill(bill);
     if (selected?.id) await loadBills(selected.id);
+    notifyWorkflowStatusChanged();
   };
 
   const deleteBill = async (id: number) => {
     await ipc.deleteBill(id);
     if (selected?.id) await loadBills(selected.id);
+    notifyWorkflowStatusChanged();
   };
 
   const totalCents = bills.reduce((s, b) => s + b.amount_cents, 0);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Bills</h2>
-        {selected && (
-          <div className="flex gap-2">
+    <BillingPageShell
+      title="Bills"
+      subtitle={null}
+      years={years}
+      selectedYear={selectedYear}
+      onSelectYear={setSelectedYear}
+      yearPeriods={yearPeriods}
+      selected={selected}
+      onSelectPeriod={(period) => {
+        setSelected(period);
+        setBills([]);
+      }}
+      onAddYear={addYear}
+      actions={
+        selected ? (
+          <>
             <Button variant="outline" onClick={addBlankBill}>
               <Plus className="size-4 mr-2" />
               Add Bill
@@ -364,28 +287,14 @@ function BillsPage() {
               <FilePlus className="size-4 mr-2" />
               {importing ? "Importing..." : "Import PDFs"}
             </Button>
-          </div>
-        )}
-      </div>
-
-      <YearSelector
-        years={years}
-        selectedYear={selectedYear}
-        onSelectYear={setSelectedYear}
-        onAddYear={addYear}
-      />
-
-      {yearPeriods.length > 0 && (
-        <MonthTabs
-          periods={yearPeriods}
-          selected={selected}
-          onSelect={(p) => {
-            setSelected(p);
-            setBills([]);
-          }}
-        />
-      )}
-
+          </>
+        ) : (
+          <Button disabled variant="outline">
+            Select Period
+          </Button>
+        )
+      }
+    >
       {years.length === 0 && (
         <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
           No billing periods yet. Add a year to get started.
@@ -470,6 +379,6 @@ function BillsPage() {
           </Link>
         </div>
       )}
-    </div>
+    </BillingPageShell>
   );
 }

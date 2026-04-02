@@ -1,52 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Check, X } from "lucide-react";
+import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import type { BillingPeriod, SplitRow } from "@/lib/types";
-import { formatEur, MONTHS } from "@/lib/types";
+import type { SplitRow } from "@/lib/types";
+import { formatEur } from "@/lib/types";
+import { BillingPageShell } from "@/components/BillingPageShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/splits")({
   component: SplitsPage,
 });
-
-function YearSelector({ years, selectedYear, onSelectYear }: { years: number[]; selectedYear: number; onSelectYear: (y: number) => void }) {
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {years.map((y) => (
-        <button
-          key={y}
-          onClick={() => onSelectYear(y)}
-          className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
-            selectedYear === y ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
-          }`}
-        >
-          {y}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function MonthTabs({ periods, selected, onSelect }: { periods: BillingPeriod[]; selected: BillingPeriod | null; onSelect: (p: BillingPeriod) => void }) {
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {periods.map((p) => (
-        <button
-          key={p.id}
-          onClick={() => onSelect(p)}
-          className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-            selected?.id === p.id ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
-          }`}
-        >
-          {MONTHS[p.month - 1]}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function buildMatrix(splits: SplitRow[]) {
   const apartments = [...new Map(splits.map((s) => [s.apartment_id, { label: s.apartment_label, unitCode: s.apartment_unit_code }])).entries()]
@@ -158,6 +124,7 @@ function SplitsPage() {
     try {
       const rows = await ipc.calculateSplits(selected.id);
       setSplits(rows);
+      notifyWorkflowStatusChanged();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -168,6 +135,7 @@ function SplitsPage() {
   const saveOverride = async (splitId: number, cents: number) => {
     await ipc.saveSplit({ id: splitId, bill_id: 0, apartment_id: 0, amount_cents: cents });
     if (selected?.id) await loadSplits(selected.id);
+    notifyWorkflowStatusChanged();
   };
 
   const { apartments, bills, matrix } = buildMatrix(splits);
@@ -178,25 +146,25 @@ function SplitsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Splits</h2>
-          <p className="text-sm text-muted-foreground">
-            VO-KA communal services split by people; all other seeded providers split by m2 percentage.
-          </p>
-        </div>
+    <BillingPageShell
+      title="Splits"
+      subtitle={null}
+      years={years}
+      selectedYear={selectedYear}
+      onSelectYear={setSelectedYear}
+      yearPeriods={yearPeriods}
+      selected={selected}
+      onSelectPeriod={(period) => {
+        setSelected(period);
+        setSplits([]);
+      }}
+      actions={
         <Button onClick={recalculate} disabled={!selected || calculating}>
           <RefreshCw className={`size-4 mr-2 ${calculating ? "animate-spin" : ""}`} />
           {calculating ? "Calculating..." : "Recalculate"}
         </Button>
-      </div>
-
-      <YearSelector years={years} selectedYear={selectedYear} onSelectYear={setSelectedYear} />
-      {yearPeriods.length > 0 && (
-        <MonthTabs periods={yearPeriods} selected={selected} onSelect={(p) => { setSelected(p); setSplits([]); }} />
-      )}
-
+      }
+    >
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
           {error}
@@ -242,11 +210,11 @@ function SplitsPage() {
       )}
 
       {!loadingSplits && splits.length > 0 && (
-        <div className="overflow-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="bg-muted/50 text-xs font-medium text-muted-foreground">
-                <th className="px-3 py-2 text-left sticky left-0 bg-muted/50">Bill</th>
+                <th className="px-3 py-2 text-left">Bill</th>
                 <th className="px-3 py-2 text-right">Total</th>
                 {apartments.map(([id, apt]) => (
                   <th key={id} className="px-3 py-2 text-right whitespace-nowrap">
@@ -259,7 +227,7 @@ function SplitsPage() {
             <tbody>
               {bills.map(([billId, info]) => (
                 <tr key={billId} className="border-t border-border hover:bg-accent/10">
-                  <td className="px-3 py-2 sticky left-0 bg-background">
+                  <td className="px-3 py-2">
                     <div className="font-medium truncate max-w-44">
                       {info.provider ?? info.filename}
                     </div>
@@ -324,6 +292,6 @@ function SplitsPage() {
           </Link>
         </div>
       )}
-    </div>
+    </BillingPageShell>
   );
 }

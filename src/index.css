@@ -30,3 +30,31 @@ option {
   background-color: var(--color-card);
   color: var(--color-card-foreground);
 }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #52525b #18181b;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #18181b;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #52525b;
+  border-radius: 999px;
+  border: 2px solid #18181b;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+
+*::-webkit-scrollbar-corner {
+  background: #18181b;
+}

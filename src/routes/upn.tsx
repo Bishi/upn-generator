@@ -4,56 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2, Files } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import type { BillingPeriod, EmailResult, SplitRow } from "@/lib/types";
-import { formatEur, MONTHS } from "@/lib/types";
+import type { EmailResult, SplitRow } from "@/lib/types";
+import { formatEur } from "@/lib/types";
+import { BillingPageShell } from "@/components/BillingPageShell";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/upn")({
   component: UpnPage,
 });
-
-// ─── Year selector ────────────────────────────────────────────────────────
-
-function YearSelector({ years, selectedYear, onSelectYear }: { years: number[]; selectedYear: number; onSelectYear: (y: number) => void }) {
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {years.map((y) => (
-        <button
-          key={y}
-          onClick={() => onSelectYear(y)}
-          className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
-            selectedYear === y ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
-          }`}
-        >
-          {y}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ─── Month tabs ───────────────────────────────────────────────────────────
-
-function MonthTabs({ periods, selected, onSelect }: { periods: BillingPeriod[]; selected: BillingPeriod | null; onSelect: (p: BillingPeriod) => void }) {
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {periods.map((p) => (
-        <button
-          key={p.id}
-          onClick={() => onSelect(p)}
-          className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-            selected?.id === p.id ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"
-          }`}
-        >
-          {MONTHS[p.month - 1]}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-
-// ─── Apartment card ───────────────────────────────────────────────────────
 
 function ApartmentCard({
   billingPeriodId,
@@ -187,8 +145,6 @@ function ApartmentCard({
   );
 }
 
-// ─── Main page ─────────────────────────────────────────────────────────────
-
 function UpnPage() {
   const [splits, setSplits] = useState<SplitRow[]>([]);
   const [loadingSplits, setLoadingSplits] = useState(false);
@@ -255,7 +211,6 @@ function UpnPage() {
     }
   };
 
-  // Group splits by apartment
   const byApartment = new Map<number, { label: string; splits: SplitRow[] }>();
   for (const s of splits) {
     if (!byApartment.has(s.apartment_id)) {
@@ -268,10 +223,21 @@ function UpnPage() {
   );
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl font-bold">UPN Preview</h2>
-        <div className="flex gap-2">
+    <BillingPageShell
+      title="UPN Preview"
+      subtitle={null}
+      years={years}
+      selectedYear={selectedYear}
+      onSelectYear={setSelectedYear}
+      yearPeriods={yearPeriods}
+      selected={selected}
+      onSelectPeriod={(period) => {
+        setSelected(period);
+        setSplits([]);
+        setEmailResults([]);
+      }}
+      actions={
+        <>
           <Button
             variant="outline"
             onClick={downloadAll}
@@ -287,18 +253,9 @@ function UpnPage() {
             <Mail className="size-4 mr-2" />
             {sending ? "Sending..." : "Send All Emails"}
           </Button>
-        </div>
-      </div>
-
-      <YearSelector years={years} selectedYear={selectedYear} onSelectYear={setSelectedYear} />
-      {yearPeriods.length > 0 && (
-        <MonthTabs periods={yearPeriods} selected={selected} onSelect={(p) => { setSelected(p); setSplits([]); setEmailResults([]); }} />
-      )}
-
-      <p className="text-sm text-muted-foreground">
-        Each apartment email now sends one combined PDF attachment with all UPN pages for the selected period.
-      </p>
-
+        </>
+      }
+    >
       {pageMessage && (
         <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
           {pageMessage}
@@ -371,6 +328,6 @@ function UpnPage() {
           </div>
         </div>
       )}
-    </div>
+    </BillingPageShell>
   );
 }
