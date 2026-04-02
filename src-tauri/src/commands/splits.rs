@@ -37,23 +37,35 @@ struct ApartmentWeight {
     m2_percentage: f64,
 }
 
+fn normalize_split_basis(split_basis: &str) -> &str {
+    match split_basis {
+        "occupants" => "occupants",
+        "equal_apartments" => "equal_apartments",
+        _ => "m2_percentage",
+    }
+}
+
 fn calculate_weighted_shares(
     bill_amount: i64,
     apartments: &[ApartmentWeight],
     split_basis: &str,
 ) -> Result<Vec<(i64, i64)>, String> {
+    let normalized_basis = normalize_split_basis(split_basis);
+
     let weights: Vec<f64> = apartments
         .iter()
-        .map(|apt| match split_basis {
+        .map(|apt| match normalized_basis {
             "occupants" => apt.occupant_count as f64,
+            "equal_apartments" => 1.0,
             _ => apt.m2_percentage,
         })
         .collect();
 
     let total_weight: f64 = weights.iter().sum();
     if total_weight <= 0.0 {
-        return Err(match split_basis {
+        return Err(match normalized_basis {
             "occupants" => "Total occupant count is zero.".to_string(),
+            "equal_apartments" => "No active apartments available for equal split.".to_string(),
             _ => "Total active apartment m2 percentage must be greater than zero.".to_string(),
         });
     }
@@ -136,11 +148,7 @@ pub fn calculate_splits(
         conn.execute("DELETE FROM bill_splits WHERE bill_id=?1", [bill_id])
             .map_err(|e| e.to_string())?;
 
-        let normalized_basis = if split_basis == "occupants" {
-            "occupants"
-        } else {
-            "m2_percentage"
-        };
+        let normalized_basis = normalize_split_basis(split_basis);
         let splits = calculate_weighted_shares(*bill_amount, &apartments, normalized_basis)?;
 
         for (apt_id, share) in &splits {
@@ -206,7 +214,7 @@ pub fn get_splits(
                 split_amount_cents: r.get(8)?,
                 occupant_count: r.get(9)?,
                 m2_percentage: r.get(10)?,
-                split_basis: r.get(11)?,
+                split_basis: normalize_split_basis(&r.get::<_, String>(11)?).to_string(),
             })
         })
         .map_err(|e| e.to_string())?;

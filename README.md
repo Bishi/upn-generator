@@ -32,7 +32,7 @@ All 5 apartments are pre-configured. For each apartment, verify:
 | **Address / postal code / city** | Payer address on the UPN slip (defaults to Kamniška ulica 36) |
 | **Email address(es)** | One or more recipients, separated by commas, for the combined apartment PDF |
 | **Number of occupants** | Used for providers that split by people |
-| **M2 percentage** | Used for providers that split by apartment square-meter share |
+| **m² percentage** | Used for providers that split by apartment square-meter share |
 | **Unit code** | Extra apartment identifier such as `1287/6` |
 
 ### Settings → Providers
@@ -107,7 +107,7 @@ The **total** of all bills for the month is shown at the bottom.
 
 Go to the **Splits** page and click **Recalculate**.
 
-The app divides each bill using the provider's configured split basis. By default, **VO-KA komunalne storitve** splits by **number of occupants** and all other seeded providers split by **m2 percentage**.
+The app divides each bill using the provider's configured split basis. Providers can split by **number of occupants**, **m² share**, or **equally across active apartments**. By default, **VO-KA komunalne storitve** splits by **number of occupants** and all other seeded providers split by **m²**.
 
 Individual amounts can be manually adjusted by clicking a cell.
 
@@ -144,8 +144,8 @@ Generate and distribute UPN payment slips. Each apartment card shows the total a
 Four tabs for configuring the application:
 
 - **Building** — Building address and contact details
-- **Apartments** — List of apartments with names, unit codes, occupants, m2 percentages, and comma-separated email recipients
-- **Providers** — Utility providers with IBANs, purpose text templates, and split basis rules
+- **Apartments** — List of apartments with names, unit codes, occupants, m² percentages, and comma-separated email recipients
+- **Providers** — Utility providers with IBANs, purpose text templates, and split basis rules (`People`, `m²`, or `Equal`)
 - **Email** — SMTP settings for sending emails
 
 ---

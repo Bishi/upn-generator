@@ -337,6 +337,11 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             [],
         );
         let _ = conn.execute(
+            "UPDATE providers SET split_basis='m2_percentage'
+             WHERE split_basis NOT IN ('m2_percentage', 'occupants', 'equal_apartments')",
+            [],
+        );
+        let _ = conn.execute(
             "UPDATE providers SET split_basis='occupants'
              WHERE creditor_iban='SI56 0400 1004 9142 226'",
             [],

@@ -39,7 +39,7 @@ export interface Provider {
   due_date_pattern: string;
   invoice_number_pattern: string;
   purpose_text_template: string;
-  split_basis: "occupants" | "m2_percentage";
+  split_basis: "occupants" | "m2_percentage" | "equal_apartments";
 }
 
 export interface SmtpConfig {
@@ -105,7 +105,7 @@ export interface SplitRow {
   split_amount_cents: number;
   occupant_count: number;
   m2_percentage: number;
-  split_basis: "occupants" | "m2_percentage";
+  split_basis: "occupants" | "m2_percentage" | "equal_apartments";
 }
 
 // ─── UPN ───────────────────────────────────────────────────────────────────

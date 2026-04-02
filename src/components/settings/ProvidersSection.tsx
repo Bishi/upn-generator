@@ -30,6 +30,17 @@ const newProvider = (): Provider => ({
   split_basis: "m2_percentage",
 });
 
+function splitBasisLabel(splitBasis: Provider["split_basis"]) {
+  switch (splitBasis) {
+    case "occupants":
+      return "People";
+    case "equal_apartments":
+      return "Equal";
+    default:
+      return "m\u00B2";
+  }
+}
+
 export function ProvidersSection() {
   const queryClient = useQueryClient();
   const { data: providers = [], isLoading } = useQuery({
@@ -83,7 +94,7 @@ export function ProvidersSection() {
                   <span className="font-medium text-sm">{p.name}</span>
                   <Badge variant="outline" className="text-xs">{p.purpose_code}</Badge>
                   <Badge variant="secondary" className="text-xs">
-                    {p.split_basis === "occupants" ? "People" : "M2 %"}
+                    {splitBasisLabel(p.split_basis)}
                   </Badge>
                   {p.service_type && (
                     <span className="text-xs text-muted-foreground">{p.service_type}</span>
@@ -152,8 +163,9 @@ export function ProvidersSection() {
                     onChange={(e) => setEditing({ ...editing, split_basis: e.target.value as Provider["split_basis"] })}
                     className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
-                    <option value="m2_percentage">M2 %</option>
+                    <option value="m2_percentage">{"m\u00B2"}</option>
                     <option value="occupants">People</option>
+                    <option value="equal_apartments">Equal</option>
                   </select>
                 </div>
 

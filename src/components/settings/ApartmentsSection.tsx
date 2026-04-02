@@ -83,7 +83,7 @@ export function ApartmentsSection() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">
-            {apartments.length} apartment{apartments.length !== 1 ? "s" : ""} · {totalOccupants} total occupants · {totalM2Percentage.toFixed(2)}% active m2 share
+            {apartments.length} apartment{apartments.length !== 1 ? "s" : ""} · {totalOccupants} total occupants · {totalM2Percentage.toFixed(2)}% active m² share
           </p>
         </div>
         <Button onClick={handleNew} size="sm" className="gap-2">
@@ -120,7 +120,7 @@ export function ApartmentsSection() {
               </div>
               <div className="flex items-center gap-1.5">
                 <Percent className="size-3.5" />
-                <span>{apt.m2_percentage.toFixed(2)}% m2 share</span>
+                <span>{apt.m2_percentage.toFixed(2)}% m² share</span>
               </div>
               <div className="truncate">{apt.contact_email || "—"}</div>
               <div className="font-medium text-foreground">{apt.payer_name || "—"}</div>
@@ -184,7 +184,7 @@ export function ApartmentsSection() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>M2 percentage</Label>
+                    <Label>m² percentage</Label>
                     <Input
                       type="number"
                       min={0}

@@ -14,6 +14,28 @@ export const Route = createFileRoute("/splits")({
   component: SplitsPage,
 });
 
+function splitBasisLabel(splitBasis: SplitRow["split_basis"]) {
+  switch (splitBasis) {
+    case "occupants":
+      return "Split by people";
+    case "equal_apartments":
+      return "Split equally";
+    default:
+      return "Split by m\u00B2";
+  }
+}
+
+function splitBasisDetail(split: SplitRow) {
+  switch (split.split_basis) {
+    case "occupants":
+      return `${split.occupant_count} people`;
+    case "equal_apartments":
+      return "Equal share";
+    default:
+      return `${split.m2_percentage.toFixed(2)}%`;
+  }
+}
+
 function buildMatrix(splits: SplitRow[]) {
   const apartments = [...new Map(splits.map((s) => [s.apartment_id, { label: s.apartment_label, unitCode: s.apartment_unit_code }])).entries()]
     .sort((a, b) => a[1].label.localeCompare(b[1].label));
@@ -232,7 +254,7 @@ function SplitsPage() {
                       {info.provider ?? info.filename}
                     </div>
                     <div className="text-xs text-muted-foreground truncate max-w-44">
-                      {info.splitBasis === "occupants" ? "Split by people" : "Split by m2 %"}
+                      {splitBasisLabel(info.splitBasis)}
                     </div>
                     {info.provider && (
                       <div className="text-xs text-muted-foreground truncate max-w-44">
@@ -251,9 +273,7 @@ function SplitsPage() {
                           <div>
                             <EditableCell split={cell} onSave={saveOverride} />
                             <div className="text-[11px] text-muted-foreground">
-                              {cell.split_basis === "occupants"
-                                ? `${cell.occupant_count} people`
-                                : `${cell.m2_percentage.toFixed(2)}%`}
+                              {splitBasisDetail(cell)}
                             </div>
                           </div>
                         ) : (

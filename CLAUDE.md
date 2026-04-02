@@ -18,7 +18,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `smtp_config` table: always exactly 1 row (id=1)
 - Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
 - Apartment `contact_email` remains the persisted field name, but now supports comma-separated recipients
-- Provider split logic is configured per provider via `split_basis` (`occupants` or `m2_percentage`)
+- Provider split logic is configured per provider via `split_basis` (`occupants`, `m2_percentage`, or `equal_apartments`)
 - Factory reset should reseed building/apartments/providers/SMTP defaults and clear periods/bills/splits
 
 ## Key Files
@@ -57,10 +57,10 @@ To reference in new sessions, use `EnterPlanMode` to load it.
 - ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
 - ✅ **Phase 1.5** — UI polish: dark mode, seed data, bills page redesign, multi-bill PDF import
 - ✅ **Phase 2** — Bill Import: smart 3-phase PDF parser (UPN stubs + Elektro + ZLM), IBAN-based provider matching, manual entry, debug log
-- ✅ **Phase 3** — UPN Generation: mixed split basis (occupants or m2 percentage), render official-style UPN QR PDFs via printpdf, preview + download + email send
+- ✅ **Phase 3** — UPN Generation: mixed split basis (occupants, m² percentage, or equal apartments), render official-style UPN QR PDFs via printpdf, preview + download + email send
 - 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
 
-Current status: **v0.3.0. Phases 2 + 3 largely complete, including provider-based split rules and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
+Current status: **v0.4.0. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
 
 ## Documentation
 
