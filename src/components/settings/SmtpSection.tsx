@@ -32,9 +32,10 @@ export function SmtpSection() {
     if (data) setForm(data);
   }, [data]);
 
-  // Load existing password on mount
   useEffect(() => {
-    ipc.getSmtpPassword().then((p) => { if (p) setPassword(p); }).catch(() => {});
+    ipc.getSmtpPassword().then((p) => {
+      if (p) setPassword(p);
+    }).catch(() => {});
   }, []);
 
   const mutation = useMutation({
@@ -54,14 +55,15 @@ export function SmtpSection() {
     mutation.mutate(form);
   };
 
-  if (isLoading) return <div className="text-muted-foreground text-sm">Loading...</div>;
+  if (isLoading) return <div className="text-sm text-muted-foreground">Loading...</div>;
 
   return (
     <Card className="max-w-lg">
       <CardHeader>
         <CardTitle>Email (SMTP) Settings</CardTitle>
         <CardDescription>
-          Used to send UPN PDFs to apartment tenants. The password is stored in Windows Credential Manager.
+          Used to send UPN PDFs to apartment tenants. The password is stored in the local app
+          database and is excluded from manual backups.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -82,7 +84,7 @@ export function SmtpSection() {
                 id="port"
                 type="number"
                 value={form.port}
-                onChange={(e) => setForm({ ...form, port: parseInt(e.target.value) || 587 })}
+                onChange={(e) => setForm({ ...form, port: parseInt(e.target.value, 10) || 587 })}
               />
             </div>
           </div>

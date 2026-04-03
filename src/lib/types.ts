@@ -1,4 +1,4 @@
-// ─── Settings ─────────────────────────────────────────────────────────────
+// Settings
 
 export interface Building {
   id: number | null;
@@ -50,7 +50,11 @@ export interface SmtpConfig {
   use_tls: boolean;
 }
 
-// ─── Billing Periods ───────────────────────────────────────────────────────
+export interface BackupFileInfo {
+  path: string;
+}
+
+// Billing periods
 
 export interface BillingPeriod {
   id: number | null;
@@ -61,7 +65,7 @@ export interface BillingPeriod {
   created_at: string;
 }
 
-// ─── Bills ─────────────────────────────────────────────────────────────────
+// Bills
 
 export interface Bill {
   id: number | null;
@@ -85,7 +89,7 @@ export interface Bill {
   provider_name: string | null;
 }
 
-// ─── Splits ────────────────────────────────────────────────────────────────
+// Splits
 
 export interface BillSplit {
   id: number | null;
@@ -111,7 +115,7 @@ export interface SplitRow {
   bill_parse_note: string;
 }
 
-// ─── UPN ───────────────────────────────────────────────────────────────────
+// UPN
 
 export interface EmailResult {
   apartment_label: string;
@@ -120,9 +124,8 @@ export interface EmailResult {
   error: string | null;
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// Helpers
 
-/** Format cents as "12,34" Slovenian-style. */
 export function formatEur(cents: number): string {
   const euros = Math.floor(Math.abs(cents) / 100);
   const c = Math.abs(cents) % 100;

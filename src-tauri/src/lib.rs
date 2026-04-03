@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 
+use commands::backup::{create_db_backup, restore_db_backup};
 use commands::bills::{
     create_billing_period, create_year_periods, delete_bill, delete_billing_period,
     get_billing_periods, get_bills, import_bill, import_bills, save_bill,
@@ -35,6 +36,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(DbState(Mutex::new(conn)))
         .invoke_handler(tauri::generate_handler![
+            // Backup
+            create_db_backup,
+            restore_db_backup,
             // Config
             get_building,
             save_building,

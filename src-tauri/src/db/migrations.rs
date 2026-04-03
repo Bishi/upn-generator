@@ -5,7 +5,18 @@ const DEFAULT_BUILDING_ADDRESS: &str = "Kamniska ulica 36";
 const DEFAULT_BUILDING_CITY: &str = "Ljubljana";
 const DEFAULT_BUILDING_POSTAL_CODE: &str = "1000";
 
-type ApartmentSeed<'a> = (&'a str, &'a str, i32, &'a str, &'a str, &'a str, &'a str, &'a str, f64, bool);
+type ApartmentSeed<'a> = (
+    &'a str,
+    &'a str,
+    i32,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    f64,
+    bool,
+);
 type ProviderSeed<'a> = (
     &'a str,
     &'a str,

@@ -150,7 +150,10 @@ pub fn save_apartment(db: State<DbState>, apartment: Apartment) -> Result<Apartm
             )
             .map_err(|e| e.to_string())?;
             let id = conn.last_insert_rowid();
-            Ok(Apartment { id: Some(id), ..apartment })
+            Ok(Apartment {
+                id: Some(id),
+                ..apartment
+            })
         }
     }
 }
@@ -260,7 +263,10 @@ pub fn save_provider(db: State<DbState>, provider: Provider) -> Result<Provider,
             )
             .map_err(|e| e.to_string())?;
             let id = conn.last_insert_rowid();
-            Ok(Provider { id: Some(id), ..provider })
+            Ok(Provider {
+                id: Some(id),
+                ..provider
+            })
         }
     }
 }

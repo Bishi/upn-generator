@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Apartment,
+  BackupFileInfo,
   Bill,
   BillingPeriod,
   BillSplit,
@@ -12,7 +13,12 @@ import type {
 } from "./types";
 
 export const ipc = {
-  // ─── Config ───────────────────────────────────────────────────────────
+  createDbBackup: (outputPath: string) =>
+    invoke<BackupFileInfo>("create_db_backup", { outputPath }),
+  restoreDbBackup: (inputPath: string) =>
+    invoke<void>("restore_db_backup", { inputPath }),
+
+  // Config
   getBuilding: () => invoke<Building>("get_building"),
   saveBuilding: (building: Building) => invoke<Building>("save_building", { building }),
 
@@ -31,14 +37,14 @@ export const ipc = {
     invoke<void>("save_smtp_config", { config }),
   resetAllData: () => invoke<void>("reset_all_data"),
 
-  // ─── Billing Periods ─────────────────────────────────────────────────
+  // Billing periods
   getBillingPeriods: () => invoke<BillingPeriod[]>("get_billing_periods"),
   createBillingPeriod: (month: number, year: number) =>
     invoke<BillingPeriod>("create_billing_period", { month, year }),
   createYearPeriods: (year: number) =>
     invoke<BillingPeriod[]>("create_year_periods", { year }),
 
-  // ─── Bills ───────────────────────────────────────────────────────────
+  // Bills
   getBills: (billingPeriodId: number) =>
     invoke<Bill[]>("get_bills", { billingPeriodId }),
   importBill: (filePath: string, billingPeriodId: number) =>
@@ -48,14 +54,14 @@ export const ipc = {
   saveBill: (bill: Bill) => invoke<Bill>("save_bill", { bill }),
   deleteBill: (id: number) => invoke<void>("delete_bill", { id }),
 
-  // ─── Splits ──────────────────────────────────────────────────────────
+  // Splits
   calculateSplits: (billingPeriodId: number) =>
     invoke<SplitRow[]>("calculate_splits", { billingPeriodId }),
   getSplits: (billingPeriodId: number) =>
     invoke<SplitRow[]>("get_splits", { billingPeriodId }),
   saveSplit: (split: BillSplit) => invoke<BillSplit>("save_split", { split }),
 
-  // ─── UPN ─────────────────────────────────────────────────────────────
+  // UPN
   generateUpnPdf: (billId: number, apartmentId: number) =>
     invoke<string>("generate_upn_pdf", { billId, apartmentId }),
   previewUpn: (billId: number, apartmentId: number) =>

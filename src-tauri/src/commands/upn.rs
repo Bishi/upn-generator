@@ -1,9 +1,9 @@
+use ::lopdf::{Document as LoDocument, Object, ObjectId};
 use base64::Engine;
 use lettre::message::header::ContentType;
 use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
-use ::lopdf::{Document as LoDocument, Object, ObjectId};
 use printpdf::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -229,7 +229,12 @@ fn mono_text_width_mm(text: &str, size_pt: f32) -> f32 {
     text.chars().count() as f32 * pt_to_mm(size_pt * MONO_WIDTH_FACTOR)
 }
 
-fn fit_mono_text_to_width(text: &str, width_mm: f32, preferred_pt: f32, min_pt: f32) -> (String, f32) {
+fn fit_mono_text_to_width(
+    text: &str,
+    width_mm: f32,
+    preferred_pt: f32,
+    min_pt: f32,
+) -> (String, f32) {
     let compact = normalize_spaces(text);
     if compact.is_empty() {
         return (compact, preferred_pt);
@@ -265,7 +270,14 @@ fn draw_fitted_single_line(
     let (fitted, size_pt) = fit_mono_text_to_width(text, available_width, preferred_pt, min_pt);
     let text_height_mm = pt_to_mm(size_pt) * 0.92;
     let top = rect.y1 + ((available_height - text_height_mm).max(0.0) / 2.0);
-    text_top(layer, &fitted, size_pt, rect.x1 + horizontal_padding, top, font);
+    text_top(
+        layer,
+        &fitted,
+        size_pt,
+        rect.x1 + horizontal_padding,
+        top,
+        font,
+    );
 }
 
 fn draw_fitted_multi_line(
@@ -643,8 +655,21 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     stroke_rect_top(&layer, qr_box.x1, qr_box.y1, qr_box.x2, qr_box.y2);
     draw_grid_field(&layer, 106.5, 14.0, 121.5, 19.0, Some(3.75));
     draw_grid_field(&layer, 123.5, 14.0, 206.0, 19.0, Some(3.75));
-    draw_three_line_box(&layer, main_payer_box.x1, main_payer_box.y1, main_payer_box.x2, main_payer_box.y2);
-    draw_grid_field(&layer, amount_box.x1, amount_box.y1, amount_box.x2, amount_box.y2, Some(3.75));
+    draw_three_line_box(
+        &layer,
+        main_payer_box.x1,
+        main_payer_box.y1,
+        main_payer_box.x2,
+        main_payer_box.y2,
+    );
+    draw_grid_field(
+        &layer,
+        amount_box.x1,
+        amount_box.y1,
+        amount_box.x2,
+        amount_box.y2,
+        Some(3.75),
+    );
     draw_grid_field(&layer, 161.2, 40.5, 191.2, 45.5, Some(3.75));
     draw_grid_field(&layer, 196.5, 41.0, 200.5, 45.0, None);
     draw_grid_field(
@@ -655,8 +680,22 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         purpose_code_box.y2,
         Some(3.75),
     );
-    draw_grid_field(&layer, purpose_box.x1, purpose_box.y1, purpose_box.x2, purpose_box.y2, Some(3.75));
-    draw_grid_field(&layer, date_box.x1, date_box.y1, date_box.x2, date_box.y2, Some(3.72));
+    draw_grid_field(
+        &layer,
+        purpose_box.x1,
+        purpose_box.y1,
+        purpose_box.x2,
+        purpose_box.y2,
+        Some(3.75),
+    );
+    draw_grid_field(
+        &layer,
+        date_box.x1,
+        date_box.y1,
+        date_box.x2,
+        date_box.y2,
+        Some(3.72),
+    );
     draw_grid_field(
         &layer,
         creditor_iban_box.x1,
@@ -681,7 +720,13 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         creditor_reference_body_box.y2,
         Some(3.75),
     );
-    draw_three_line_box(&layer, creditor_box.x1, creditor_box.y1, creditor_box.x2, creditor_box.y2);
+    draw_three_line_box(
+        &layer,
+        creditor_box.x1,
+        creditor_box.y1,
+        creditor_box.x2,
+        creditor_box.y2,
+    );
     stroke_rect_top(&layer, 168.6, 71.0, 203.3, 89.0);
     line_top(&layer, 172.0, 85.6, 200.0, 85.6);
 
@@ -695,7 +740,14 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "UPN QR - potrdilo", 10.0, 28.0, 2.0, &label_font);
     text_top(&layer, "Namen in rok plačila", 7.0, 4.0, 20.0, &label_font);
     text_top(&layer, "Znesek", 7.0, 16.5, 32.0, &label_font);
-    text_top(&layer, "IBAN in referenca prejemnika", 7.0, 4.0, 40.0, &label_font);
+    text_top(
+        &layer,
+        "IBAN in referenca prejemnika",
+        7.0,
+        4.0,
+        40.0,
+        &label_font,
+    );
     text_top(&layer, "Ime prejemnika", 7.0, 4.0, 56.5, &label_font);
     text_top(
         &layer,
@@ -710,7 +762,14 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "Polog", 7.0, 184.3, 3.5, &label_font);
     text_top(&layer, "Dvig", 7.0, 196.1, 3.5, &label_font);
     text_top(&layer, "Referenca plačnika", 7.0, 106.5, 11.0, &label_font);
-    text_top(&layer, "Ime, ulica in kraj plačnika", 7.0, 106.5, 19.5, &label_font);
+    text_top(
+        &layer,
+        "Ime, ulica in kraj plačnika",
+        7.0,
+        106.5,
+        19.5,
+        &label_font,
+    );
     text_top(&layer, "EUR", 11.0, 7.8, 35.6, &label_font);
     text_top(&layer, "EUR", 11.0, 104.5, 41.6, &label_font);
     text_top(&layer, "Znesek", 7.0, 114.2, 38.0, &label_font);
@@ -722,7 +781,14 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     text_top(&layer, "IBAN prejemnika", 7.0, 63.5, 55.5, &label_font);
     text_top(&layer, "UPN QR", 10.0, 194.3, 59.1, &label_font);
     text_top(&layer, "Referenca prejemnika", 7.0, 63.5, 63.5, &label_font);
-    text_top(&layer, "Ime, ulica in kraj prejemnika", 7.0, 63.5, 71.5, &label_font);
+    text_top(
+        &layer,
+        "Ime, ulica in kraj prejemnika",
+        7.0,
+        63.5,
+        71.5,
+        &label_font,
+    );
     text_top(
         &layer,
         "Podpis plačnika (neobvezno žig)",
@@ -747,8 +813,10 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     let creditor_iban = format_iban(&data.creditor_iban);
     let (reference_model, reference_body) = split_reference(&data.creditor_reference);
     let purpose_line = truncate_chars(&normalize_spaces(&data.purpose_text), 42);
-    let receipt_purpose_line =
-        truncate_chars(&receipt_purpose_text(&data.purpose_text, &data.purpose_code), 42);
+    let receipt_purpose_line = truncate_chars(
+        &receipt_purpose_text(&data.purpose_text, &data.purpose_code),
+        42,
+    );
     let receipt_detail = if let Some((_short_text, suffix)) =
         split_receipt_suffix(&data.purpose_text, &data.purpose_code)
     {
@@ -781,10 +849,20 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         7.8,
         &mono_font,
     );
-    draw_fitted_single_line(&layer, &amount_display, receipt_amount_box, 11.5, 9.0, &mono_font);
+    draw_fitted_single_line(
+        &layer,
+        &amount_display,
+        receipt_amount_box,
+        11.5,
+        9.0,
+        &mono_font,
+    );
     draw_fitted_multi_line(
         &layer,
-        &[creditor_iban.clone(), format!("{} {}", reference_model, reference_body)],
+        &[
+            creditor_iban.clone(),
+            format!("{} {}", reference_model, reference_body),
+        ],
         receipt_iban_ref_box,
         10.0,
         7.8,
@@ -850,7 +928,14 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     );
     draw_fitted_single_line(&layer, &purpose_line, purpose_box, 10.0, 7.8, &mono_font);
     draw_fitted_single_line(&layer, &data.due_date, date_box, 11.0, 8.5, &mono_font);
-    draw_fitted_single_line(&layer, &creditor_iban, creditor_iban_box, 10.4, 8.0, &mono_font);
+    draw_fitted_single_line(
+        &layer,
+        &creditor_iban,
+        creditor_iban_box,
+        10.4,
+        8.0,
+        &mono_font,
+    );
     draw_fitted_single_line(
         &layer,
         &reference_model,
@@ -956,7 +1041,9 @@ fn merge_pdf_documents(documents: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
         if let Ok(dictionary) = object.as_dict() {
             let mut dictionary = dictionary.clone();
             dictionary.set("Parent", pages_id);
-            merged.objects.insert(*object_id, Object::Dictionary(dictionary));
+            merged
+                .objects
+                .insert(*object_id, Object::Dictionary(dictionary));
         }
     }
 
@@ -971,14 +1058,18 @@ fn merge_pdf_documents(documents: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
                 .map(Object::Reference)
                 .collect::<Vec<_>>(),
         );
-        merged.objects.insert(pages_id, Object::Dictionary(dictionary));
+        merged
+            .objects
+            .insert(pages_id, Object::Dictionary(dictionary));
     }
 
     if let Ok(dictionary) = catalog_root.as_dict() {
         let mut dictionary = dictionary.clone();
         dictionary.set("Pages", pages_id);
         dictionary.remove(b"Outlines");
-        merged.objects.insert(catalog_id, Object::Dictionary(dictionary));
+        merged
+            .objects
+            .insert(catalog_id, Object::Dictionary(dictionary));
     }
 
     merged.trailer.set("Root", catalog_id);
@@ -1159,8 +1250,10 @@ fn write_batch_preview_pdf(
     apartment_id: i64,
 ) -> Result<String, String> {
     let pdf_bytes = render_upn_pdf_batch(items)?;
-    let temp_path =
-        std::env::temp_dir().join(format!("upn_batch_{}_{}.pdf", billing_period_id, apartment_id));
+    let temp_path = std::env::temp_dir().join(format!(
+        "upn_batch_{}_{}.pdf",
+        billing_period_id, apartment_id
+    ));
     std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
     temp_path
         .to_str()
@@ -1294,9 +1387,7 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         .collect();
 
     if apartments.is_empty() {
-        return Err(
-            "No apartments with email addresses have splits in this period.".to_string(),
-        );
+        return Err("No apartments with email addresses have splits in this period.".to_string());
     }
 
     let creds = Credentials::new(smtp_user, smtp_pass);
@@ -1372,12 +1463,10 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         );
         let mp = MultiPart::mixed()
             .singlepart(SinglePart::plain(body))
-            .singlepart(
-                Attachment::new(filename).body(
-                    attachment_bytes,
-                    ContentType::parse("application/pdf").unwrap(),
-                ),
-            );
+            .singlepart(Attachment::new(filename).body(
+                attachment_bytes,
+                ContentType::parse("application/pdf").unwrap(),
+            ));
 
         let builder = to_addrs.iter().cloned().fold(
             Message::builder().from(from_addr).subject(&subject),

@@ -57,7 +57,7 @@ pub struct Bill {
 /// Handles "1.234,56" → 123456, "123,45" → 12345, "123.45" → 12345
 fn parse_amount_to_cents(s: &str) -> i64 {
     let trimmed = s.trim().replace('\u{a0}', ""); // remove nbsp
-    // Detect if comma is decimal separator (Slovenian: "123,45" or "1.234,56")
+                                                  // Detect if comma is decimal separator (Slovenian: "123,45" or "1.234,56")
     let normalized = if trimmed.contains(',') {
         trimmed.replace('.', "").replace(',', ".")
     } else {
@@ -147,10 +147,7 @@ fn extract_text_from_image(file_path: &str) -> Result<String, String> {
                 .map_err(|e| e.to_string())?
                 .get()
                 .map_err(|e| e.to_string())?;
-            let text = result
-                .Text()
-                .map_err(|e| e.to_string())?
-                .to_string_lossy();
+            let text = result.Text().map_err(|e| e.to_string())?.to_string_lossy();
             Ok(text.trim().to_string())
         })();
 
@@ -198,9 +195,9 @@ fn extract_upn_purpose_from_context(
     purpose_code_re: &Regex,
 ) -> Option<(String, String)> {
     let normalized_context = normalize_spaces(context);
-    if let Ok(energetika_re) = Regex::new(
-        r"(?i)ra\S*un\s+\S*t\.?\s*([A-Z0-9-]+)\s+([0-9]{5,})(?:/\d{2}\.\d{2}\.\d{4})?",
-    ) {
+    if let Ok(energetika_re) =
+        Regex::new(r"(?i)ra\S*un\s+\S*t\.?\s*([A-Z0-9-]+)\s+([0-9]{5,})(?:/\d{2}\.\d{2}\.\d{4})?")
+    {
         if let Some(caps) = energetika_re.captures(&normalized_context) {
             let invoice = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
             let partner = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
@@ -316,8 +313,7 @@ fn find_due_date(text: &str) -> String {
 
 fn find_source_period_month_year(text: &str) -> Option<(i32, i32)> {
     let compact = text.replace(' ', "");
-    let range_re =
-        Regex::new(r"(\d{2})\.(\d{2})\.(\d{4})[-–](\d{2})\.(\d{2})\.(\d{4})").ok()?;
+    let range_re = Regex::new(r"(\d{2})\.(\d{2})\.(\d{4})[-–](\d{2})\.(\d{2})\.(\d{4})").ok()?;
     if let Some(caps) = range_re.captures(&compact) {
         let month = caps.get(2)?.as_str().parse::<i32>().ok()?;
         let year = caps.get(3)?.as_str().parse::<i32>().ok()?;
@@ -604,7 +600,10 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
             )
             .map_err(|e| e.to_string())?;
             let id = conn.last_insert_rowid();
-            Ok(Bill { id: Some(id), ..bill })
+            Ok(Bill {
+                id: Some(id),
+                ..bill
+            })
         }
     }
 }
@@ -687,13 +686,12 @@ pub fn import_bill(
         let due_date = first_capture(&p.due_date_pattern, &raw_text).unwrap_or_default();
         let invoice_number =
             first_capture(&p.invoice_number_pattern, &raw_text).unwrap_or_default();
-        let purpose_text =
-            interpolate_template(
-                &p.purpose_text_template,
-                &invoice_number,
-                source_month,
-                source_year,
-            );
+        let purpose_text = interpolate_template(
+            &p.purpose_text_template,
+            &invoice_number,
+            source_month,
+            source_year,
+        );
         (
             p.id,
             amount_cents,
@@ -709,7 +707,20 @@ pub fn import_bill(
             p.creditor_postal_code.clone(),
         )
     } else {
-        (None, 0, String::new(), String::new(), String::new(), "OTHR".to_string(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new())
+        (
+            None,
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            "OTHR".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
     };
 
     // Insert into DB
@@ -812,15 +823,22 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
         let reference = find_payment_reference(after);
         let stub_line_end = after.find('\n').unwrap_or(after.len());
         let search_area = &after[..stub_line_end.min(after.len())];
-        let search_area2 = &after[..after.find('\n').and_then(|i| after[i+1..].find('\n').map(|j| i+1+j)).unwrap_or(after.len()).min(after.len())];
+        let search_area2 = &after[..after
+            .find('\n')
+            .and_then(|i| after[i + 1..].find('\n').map(|j| i + 1 + j))
+            .unwrap_or(after.len())
+            .min(after.len())];
 
-        let (purpose_code, purpose_text) = if let Some(caps) = purpose_code_re.captures(search_area) {
+        let (purpose_code, purpose_text) = if let Some(caps) = purpose_code_re.captures(search_area)
+        {
             let code = caps.get(1).unwrap().as_str().to_string();
             let rest = search_area[caps.get(1).unwrap().end()..].trim().to_string();
             (code, rest)
         } else if let Some(caps) = purpose_code_re.captures(search_area2) {
             let code = caps.get(1).unwrap().as_str().to_string();
-            let rest = search_area2[caps.get(1).unwrap().end()..].trim().to_string();
+            let rest = search_area2[caps.get(1).unwrap().end()..]
+                .trim()
+                .to_string();
             (code, rest)
         } else {
             ("OTHR".to_string(), String::new())
@@ -860,8 +878,8 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             continue;
         }
 
-        let (purpose_code, purpose_text) = parsed_from_context
-            .unwrap_or((purpose_code, purpose_text));
+        let (purpose_code, purpose_text) =
+            parsed_from_context.unwrap_or((purpose_code, purpose_text));
 
         results.push(ExtractedBill {
             iban_norm,
@@ -898,7 +916,8 @@ fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
 
     // Invoice number from "Račun številka: IR..." (diacritics preserved)
     let inv_re = Regex::new(r"R[ae][čc]un [šs]tevilka:\s*(\S+)").ok()?;
-    let invoice_number = inv_re.captures(text)
+    let invoice_number = inv_re
+        .captures(text)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .unwrap_or_default();
@@ -945,7 +964,11 @@ fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
     let ref_re = Regex::new(r"Referenca:\s+(SI\d\s+\d[\s\d]*)").ok()?;
     let ref_dirty = ref_re.captures(text)?.get(1)?.as_str();
     let ref_dirty_line = ref_dirty.lines().next().unwrap_or(ref_dirty);
-    let ref_norm: String = ref_dirty_line.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase();
+    let ref_norm: String = ref_dirty_line
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_uppercase();
     // Format as "SI00 202685"
     let reference = if ref_norm.len() > 4 {
         format!("{} {}", &ref_norm[..4], &ref_norm[4..])
@@ -958,7 +981,8 @@ fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
 
     // Invoice from "Številka: 2026-85"
     let inv_re = Regex::new(r"[ŠS]tevilka:\s*(\d{4}-\d+)").ok()?;
-    let invoice_number = inv_re.captures(text)
+    let invoice_number = inv_re
+        .captures(text)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .unwrap_or_default();
@@ -983,7 +1007,8 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
     let normalized = normalize_spaces(text);
     let normalized_ocr = normalize_ocr_alnum(&normalized);
     let looks_like_dimnikar = normalized_ocr.contains("DIMNIK")
-        && (normalized_ocr.contains("SERVIS") || normalized_ocr.contains("SERV")
+        && (normalized_ocr.contains("SERVIS")
+            || normalized_ocr.contains("SERV")
             || normalized_ocr.contains("SERVQS"))
         && (normalized_ocr.contains("11042026")
             || normalized_ocr.contains("5243585")
@@ -992,8 +1017,9 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
         return None;
     }
 
-    let amount_cents = if let Some(caps) =
-        Regex::new(r"[*•·]{2,}\s*(\d+[.,]\d{2})").ok()?.captures(text)
+    let amount_cents = if let Some(caps) = Regex::new(r"[*•·]{2,}\s*(\d+[.,]\d{2})")
+        .ok()?
+        .captures(text)
     {
         parse_amount_to_cents(caps.get(1)?.as_str())
     } else {
@@ -1040,16 +1066,18 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
                 .min_by_key(|candidate| candidate.len())
                 .cloned()
                 .or_else(|| {
-                    normalized_ocr
-                        .rfind("UPNQR")
-                        .and_then(|idx| {
-                            let after_marker = &normalized_ocr[idx..];
-                            re.find_iter(after_marker)
-                                .map(|m| m.as_str().to_string())
-                                .min_by_key(|candidate| candidate.len())
-                        })
+                    normalized_ocr.rfind("UPNQR").and_then(|idx| {
+                        let after_marker = &normalized_ocr[idx..];
+                        re.find_iter(after_marker)
+                            .map(|m| m.as_str().to_string())
+                            .min_by_key(|candidate| candidate.len())
+                    })
                 })
-                .or_else(|| candidates.into_iter().min_by_key(|candidate| candidate.len()))
+                .or_else(|| {
+                    candidates
+                        .into_iter()
+                        .min_by_key(|candidate| candidate.len())
+                })
         })
         .unwrap_or_else(|| format!("0000{}", invoice_digits));
     let reference_model = Regex::new(r"(?i)SI\s*([01][0-9])")
@@ -1058,6 +1086,14 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
         .unwrap_or_else(|| "12".to_string());
     let reference = format!("SI{} {}", reference_model, reference_digits);
+    let high_confidence_reference =
+        reference_model == "12" && reference_digits == format!("0000{}", invoice_digits);
+    let parse_note = if amount_cents > 0 && !due_date.is_empty() && high_confidence_reference {
+        String::new()
+    } else {
+        "Parsed via OCR fallback parser. Review the imported fields before calculating splits or sending UPNs."
+            .to_string()
+    };
 
     let iban_raw = "SI56 6100 0000 5243 585".to_string();
     let iban_norm = normalize_iban(&iban_raw);
@@ -1071,8 +1107,7 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
         purpose_code: "COST".to_string(),
         purpose_text: String::new(),
         invoice_number,
-        parse_note: "Parsed via OCR fallback parser. Review the imported fields before calculating splits or sending UPNs."
-            .to_string(),
+        parse_note,
     })
 }
 
@@ -1118,9 +1153,12 @@ pub fn import_bills(
         .collect();
 
     // Write debug log: raw extracted text + parse results
-    let log_path = dirs_next::data_dir()
-        .map(|d| d.join("si.upn-generator").join("import_debug.log"));
-    let mut log = format!("=== import_bills: {} ===\n\n--- RAW TEXT ---\n{}\n\n--- PARSE RESULTS ---\n", filename, raw_text);
+    let log_path =
+        dirs_next::data_dir().map(|d| d.join("si.upn-generator").join("import_debug.log"));
+    let mut log = format!(
+        "=== import_bills: {} ===\n\n--- RAW TEXT ---\n{}\n\n--- PARSE RESULTS ---\n",
+        filename, raw_text
+    );
 
     // --- Collect extracted bills ---
     let mut extracted: Vec<ExtractedBill> = Vec::new();
@@ -1130,7 +1168,10 @@ pub fn import_bills(
     let stubs = parse_upn_stubs(&raw_text);
     log.push_str(&format!("Phase 1 (UPN stubs): {} found\n", stubs.len()));
     for bill in stubs {
-        log.push_str(&format!("  IBAN={} amount={} ref={} due={}\n", bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date));
+        log.push_str(&format!(
+            "  IBAN={} amount={} ref={} due={}\n",
+            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
+        ));
         if seen_ibans.insert(bill.iban_norm.clone()) {
             extracted.push(bill);
         }
@@ -1138,9 +1179,19 @@ pub fn import_bills(
 
     // Phase 2: Elektro narrative format (ZA PLACILO Z DDV:)
     let elektro = parse_elektro_style(&raw_text);
-    log.push_str(&format!("Phase 2 (Elektro): {}\n", if elektro.is_some() { "found" } else { "NOT FOUND" }));
+    log.push_str(&format!(
+        "Phase 2 (Elektro): {}\n",
+        if elektro.is_some() {
+            "found"
+        } else {
+            "NOT FOUND"
+        }
+    ));
     if let Some(bill) = elektro {
-        log.push_str(&format!("  IBAN={} amount={} ref={} due={}\n", bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date));
+        log.push_str(&format!(
+            "  IBAN={} amount={} ref={} due={}\n",
+            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
+        ));
         if seen_ibans.insert(bill.iban_norm.clone()) {
             extracted.push(bill);
         }
@@ -1148,9 +1199,15 @@ pub fn import_bills(
 
     // Phase 3: ZLM format (Za placilo EUR: + TRR:)
     let zlm = parse_zlm_style(&raw_text);
-    log.push_str(&format!("Phase 3 (ZLM): {}\n", if zlm.is_some() { "found" } else { "NOT FOUND" }));
+    log.push_str(&format!(
+        "Phase 3 (ZLM): {}\n",
+        if zlm.is_some() { "found" } else { "NOT FOUND" }
+    ));
     if let Some(bill) = zlm {
-        log.push_str(&format!("  IBAN={} amount={} ref={} due={}\n", bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date));
+        log.push_str(&format!(
+            "  IBAN={} amount={} ref={} due={}\n",
+            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
+        ));
         if seen_ibans.insert(bill.iban_norm.clone()) {
             extracted.push(bill);
         }
@@ -1160,7 +1217,11 @@ pub fn import_bills(
     let dimnikar = parse_dimnikar_style(&raw_text);
     log.push_str(&format!(
         "Phase 4 (Dimnikar OCR): {}\n",
-        if dimnikar.is_some() { "found" } else { "NOT FOUND" }
+        if dimnikar.is_some() {
+            "found"
+        } else {
+            "NOT FOUND"
+        }
     ));
     if let Some(bill) = dimnikar {
         log.push_str(&format!(
@@ -1228,8 +1289,15 @@ pub fn import_bills(
         };
 
         // Determine creditor info from provider (if matched) or from extracted IBAN
-        let (provider_id, creditor_name, creditor_iban, creditor_address,
-             creditor_city, creditor_postal_code, purpose_code) = match provider {
+        let (
+            provider_id,
+            creditor_name,
+            creditor_iban,
+            creditor_address,
+            creditor_city,
+            creditor_postal_code,
+            purpose_code,
+        ) = match provider {
             Some(p) => (
                 p.id,
                 p.creditor_name.clone(),
@@ -1237,7 +1305,11 @@ pub fn import_bills(
                 p.creditor_address.clone(),
                 p.creditor_city.clone(),
                 p.creditor_postal_code.clone(),
-                if eb.purpose_code != "OTHR" { eb.purpose_code.clone() } else { p.purpose_code.clone() },
+                if eb.purpose_code != "OTHR" {
+                    eb.purpose_code.clone()
+                } else {
+                    p.purpose_code.clone()
+                },
             ),
             None => (
                 None,
@@ -1271,11 +1343,22 @@ pub fn import_bills(
              invoice_number, parse_note, status, source_filename)
              VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
-                billing_period_id, provider_id, eb.amount_cents,
-                creditor_name, creditor_iban, creditor_address,
-                creditor_city, creditor_postal_code,
-                eb.reference, eb.due_date, purpose_code, purpose_text,
-                eb.invoice_number, eb.parse_note, status, filename,
+                billing_period_id,
+                provider_id,
+                eb.amount_cents,
+                creditor_name,
+                creditor_iban,
+                creditor_address,
+                creditor_city,
+                creditor_postal_code,
+                eb.reference,
+                eb.due_date,
+                purpose_code,
+                purpose_text,
+                eb.invoice_number,
+                eb.parse_note,
+                status,
+                filename,
             ],
         )
         .map_err(|e| e.to_string())?;

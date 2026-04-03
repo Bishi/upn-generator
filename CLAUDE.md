@@ -1,6 +1,6 @@
 # UPN Generator
 
-Tauri desktop app (Windows) for splitting apartment utility bills and generating UPN payment slips. Replaces manual Minimax workflow for building accountant at Kamniška ulica 36, Ljubljana.
+Tauri desktop app (Windows) for splitting apartment utility bills and generating UPN payment slips. Replaces manual Minimax workflow for the building accountant at Kamniska ulica 36, Ljubljana.
 
 ## Tech Stack
 
@@ -10,83 +10,86 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 
 ## Key Architecture Decisions
 
-- `rusqlite` (bundled) used directly — no `tauri-plugin-sql`
-- TanStack Router route tree auto-generated at `src/routeTree.gen.ts` — do not edit manually
-- No `tailwind.config.js` — Tailwind v4 config is inline via CSS
-- DB at `%APPDATA%\si.upn-generator\upn-generator.db`
-- `building` table: always exactly 1 row (id=1)
-- `smtp_config` table: always exactly 1 row (id=1)
+- `rusqlite` (bundled) is used directly - no `tauri-plugin-sql`
+- TanStack Router route tree is auto-generated at `src/routeTree.gen.ts` - do not edit manually
+- No `tailwind.config.js` - Tailwind v4 config is inline via CSS
+- Main DB lives at `%APPDATA%\si.upn-generator\upn-generator.db`
+- Manual backups are user-chosen `.sqlite3` SQLite snapshots created from the live DB
+- Manual backups intentionally blank `smtp_config.password`
+- `building` table always has exactly 1 row (`id=1`)
+- `smtp_config` table always has exactly 1 row (`id=1`)
 - Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
-- Apartment `contact_email` remains the persisted field name, but now supports comma-separated recipients
+- Apartment `contact_email` remains the persisted field name and supports comma-separated recipients
 - Provider split logic is configured per provider via `split_basis` (`occupants`, `m2_percentage`, or `equal_apartments`)
-- Factory reset should reseed building/apartments/providers/SMTP defaults and clear periods/bills/splits
+- Factory reset reseeds building/apartments/providers/SMTP defaults and clears periods/bills/splits
 
 ## Key Files
 
-- `src-tauri/src/lib.rs` — Tauri setup, DB init, command registration
-- `src-tauri/src/db/migrations.rs` — all CREATE TABLE statements
-- `src-tauri/src/commands/config.rs` — all CRUD IPC commands + `DbState`
-- `src/lib/types.ts` — TypeScript types mirroring Rust structs
-- `src/lib/ipc.ts` — typed `invoke()` wrappers for all IPC commands
-- `src/routes/settings.tsx` — Settings page (4 tabs)
-- `src/components/settings/` — per-tab setting components
-- `src-tauri/src/commands/bills.rs` — bill import, PDF/image text extraction + parsing, billing period commands
-- `src-tauri/src/commands/splits.rs` — split calculation logic
-- `src-tauri/src/commands/upn.rs` — UPN QR form rendering (official ZBS layout), email sending
-- `src/routes/bills.tsx` — Bills page (year/month UI, import, manual entry)
-- `src/routes/splits.tsx` — Splits matrix page
-- `src/routes/upn.tsx` — UPN preview + send page (system PDF opener with visible preview errors)
-- `/` redirects to Bills; the dashboard landing page has been removed from navigation
+- `src-tauri/src/lib.rs` - Tauri setup, DB init, command registration
+- `src-tauri/src/db/migrations.rs` - all `CREATE TABLE` statements
+- `src-tauri/src/commands/config.rs` - CRUD IPC commands plus `DbState`
+- `src-tauri/src/commands/backup.rs` - manual DB backup and restore commands
+- `src/lib/types.ts` - TypeScript types mirroring Rust structs
+- `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
+- `src/routes/settings.tsx` - Settings page (5 tabs, including Data backup/restore)
+- `src/components/settings/` - per-tab setting components
+- `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
+- `src-tauri/src/commands/splits.rs` - split calculation logic
+- `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, and email sending
+- `src/routes/bills.tsx` - Bills page
+- `src/routes/splits.tsx` - Splits matrix page
+- `src/routes/upn.tsx` - UPN preview and send page
 
 ## Dev Commands
 
 ```bash
-npm run tauri dev      # dev with hot reload
-npm run tauri build    # production build
-npm run dev            # frontend only (no Tauri)
+npm run tauri dev
+npm run tauri build
+npm run dev
 ```
 
 ## UPN Forms
 
-UPN output must follow the official ZBS UPN QR technical standard: 210 mm × 99 mm form size, the standard two-part layout, official field geometry, and Courier New-style machine print. Reference examples in `file-examples/` (1.PNG, 2.PNG, 3.PNG) and the ZBS technical standard / IzpisUPNQR documentation when adjusting layout.
+UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 mm form size, the standard two-part layout, official field geometry, and Courier New-style machine print. Use the examples in `file-examples/` as the visual reference.
 
-## Plan Status — "UPN Generator - Apartment Bill Splitting App"
+## Plan Status - "UPN Generator - Apartment Bill Splitting App"
 
-**→ CANONICAL PLAN:** `~/.claude/plans/linked-sprouting-reddy.md`
-To reference in new sessions, use `EnterPlanMode` to load it.
+**Canonical plan:** `~/.claude/plans/linked-sprouting-reddy.md`
 
-- ✅ **Phase 1** — Scaffold + Settings UI (Tauri, DB, apartments/providers/SMTP config)
-- ✅ **Phase 1.5** — UI polish: dark mode, seed data, bills page redesign, multi-bill PDF import
-- ✅ **Phase 2** — Bill Import: smart 3-phase parser (UPN stubs + Elektro + ZLM), IBAN-based provider matching, PDF/image OCR import, manual entry, debug log
-- ✅ **Phase 3** — UPN Generation: mixed split basis (occupants, m² percentage, or equal apartments), render official-style UPN QR PDFs via printpdf, preview + download + email send
-- 🔲 **Phase 4** — Email Delivery + Security (SMTP send working; keyring for password storage pending)
+- Phase 1 complete - Scaffold + Settings UI
+- Phase 1.5 complete - UI polish, seed data, bills page redesign, multi-bill PDF import
+- Phase 2 complete - Bill import with parser pipeline, OCR image import, manual entry, debug log
+- Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
+- Phase 4 next - Email delivery + security hardening (SMTP send works; keyring for password storage is still pending)
 
-Current status: **v0.4.11. Phases 2 + 3 largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, image-based bill OCR import, import timeout protection, corrected JP VOKA split defaults, OCR-tolerant Dimnikar parsing, stronger OCR normalization, review-state warnings for fallback parses, lighter hover-only review indicators, improved year/month navigation, multi-bill PDF import stability fixes, corrected Dimnikar OCR reference extraction, and multi-recipient apartment emails. Phase 4 (email + keyring) next.**
+Current status: **v0.4.12. Phases 2 and 3 are largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, multi-recipient apartment emails, and a manual SQLite backup/restore workflow.**
 
 ## Documentation
 
-After implementing a feature or completing a plan, always update documentation as needed:
-- `CLAUDE.md` — update phase status, current version in tag example, any new key files or architecture decisions
-- `README.md` — add completed phases, update feature list
-- `STATUS.md` — update the current released version/tag and short release snapshot
+After implementing a feature or completing a plan, update docs as needed:
+
+- `CLAUDE.md` - phase status, architecture decisions, key files
+- `README.md` - user-facing features and workflows
+- `STATUS.md` - current released version/tag and release snapshot when preparing a release
 
 ## Versioning & Releases
 
 Use semantic versioning `MAJOR.MINOR.PATCH`:
 
-- **Patch** `0.1.0 → 0.1.1` — bug fixes, small tweaks, copy changes
-- **Minor** `0.1.x → 0.2.0` — new feature or considerable improvement
-- **Major** `0.x.0 → 1.0.0` — breaking change or full milestone release
+- Patch: bug fixes, small tweaks, copy changes
+- Minor: new feature or considerable improvement
+- Major: breaking change or full milestone release
 
 To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
 
 ```bash
-git tag v0.4.11 && git push origin main && git push origin v0.4.11
+git tag v0.4.12 && git push origin main && git push origin v0.4.12
 ```
 
-This triggers the GitHub Actions workflow which builds the `.msi` first and then publishes it in a separate GitHub Release upload step.
+Every push to `main` must be accompanied by a version bump and a tag. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state.
 
-**IMPORTANT: Every push to `main` must be accompanied by a version bump and a tag.** Never push commits without also tagging. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state. Steps every time:
+Release steps every time:
+
 1. Bump version in `src-tauri/tauri.conf.json`
 2. Commit the version bump
 3. Tag with `git tag vX.Y.Z`
@@ -94,8 +97,10 @@ This triggers the GitHub Actions workflow which builds the `.msi` first and then
 
 ## Building Data
 
-- 6 apartments, 12 occupants, 5 utility providers (5 bills/month)
-- Pre-configured provider templates live in DB, testable against `file-examples/`
+- 6 apartments
+- 12 occupants
+- 5 recurring utility providers per month
+- Pre-configured provider templates live in the DB and are testable against `file-examples/`
 
 | Provider | Service | IBAN |
 |---|---|---|
