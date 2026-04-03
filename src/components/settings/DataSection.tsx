@@ -1,10 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
 import { DatabaseBackup, RotateCcw } from "lucide-react";
+import { useState } from "react";
 import { ipc } from "@/lib/ipc";
 import { setStoredBillingPeriod } from "@/lib/billing-period-selection";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 function backupFilename() {
   const now = new Date();
@@ -23,6 +26,7 @@ function backupFilename() {
 
 export function DataSection() {
   const queryClient = useQueryClient();
+  const [resetConfirm, setResetConfirm] = useState("");
 
   const backupMutation = useMutation({
     mutationFn: ipc.createDbBackup,
@@ -54,6 +58,24 @@ export function DataSection() {
           kind: "info",
         }
       );
+      window.location.reload();
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: ipc.resetAllData,
+    onSuccess: async () => {
+      setStoredBillingPeriod(null);
+      setResetConfirm("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["building"] }),
+        queryClient.invalidateQueries({ queryKey: ["apartments"] }),
+        queryClient.invalidateQueries({ queryKey: ["providers"] }),
+        queryClient.invalidateQueries({ queryKey: ["smtp_config"] }),
+        queryClient.invalidateQueries({ queryKey: ["bills"] }),
+        queryClient.invalidateQueries({ queryKey: ["splits"] }),
+        queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
+      ]);
       window.location.reload();
     },
   });
@@ -134,9 +156,45 @@ export function DataSection() {
           <p>After restore, re-enter the SMTP password before sending emails.</p>
         </div>
 
-        {(backupMutation.error || restoreMutation.error) && (
+        <div className="space-y-3 border-t pt-6">
+          <div>
+            <p className="text-sm font-medium text-destructive">Dev Factory Reset</p>
+            <p className="text-sm text-muted-foreground">
+              Resets building, apartments, providers, SMTP, billing periods, bills, and splits
+              back to the seeded defaults.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="reset-confirm">Type RESET ALL DATA to confirm</Label>
+            <Input
+              id="reset-confirm"
+              value={resetConfirm}
+              onChange={(e) => setResetConfirm(e.target.value)}
+              placeholder="RESET ALL DATA"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            className="gap-2"
+            disabled={
+              resetConfirm !== "RESET ALL DATA" ||
+              backupMutation.isPending ||
+              restoreMutation.isPending ||
+              resetMutation.isPending
+            }
+            onClick={() => resetMutation.mutate()}
+          >
+            <RotateCcw className="size-4" />
+            {resetMutation.isPending ? "Resetting..." : "Reset All Data"}
+          </Button>
+        </div>
+
+        {(backupMutation.error || restoreMutation.error || resetMutation.error) && (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-            {backupMutation.error?.message ?? restoreMutation.error?.message}
+            {backupMutation.error?.message ??
+              restoreMutation.error?.message ??
+              resetMutation.error?.message}
           </div>
         )}
       </CardContent>
