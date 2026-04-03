@@ -1025,14 +1025,33 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
             .unwrap_or_default()
     };
 
+    let invoice_digits = invoice_number.replace('-', "");
     let reference_digits = Regex::new(r"0{4,}\d{7,}")
         .ok()
         .and_then(|re| {
-            re.find_iter(&normalized_ocr)
+            let candidates: Vec<String> = re
+                .find_iter(&normalized_ocr)
                 .map(|m| m.as_str().to_string())
-                .max_by_key(|candidate| candidate.len())
+                .collect();
+
+            candidates
+                .iter()
+                .filter(|candidate| candidate.contains(&invoice_digits))
+                .min_by_key(|candidate| candidate.len())
+                .cloned()
+                .or_else(|| {
+                    normalized_ocr
+                        .rfind("UPNQR")
+                        .and_then(|idx| {
+                            let after_marker = &normalized_ocr[idx..];
+                            re.find_iter(after_marker)
+                                .map(|m| m.as_str().to_string())
+                                .min_by_key(|candidate| candidate.len())
+                        })
+                })
+                .or_else(|| candidates.into_iter().min_by_key(|candidate| candidate.len()))
         })
-        .unwrap_or_else(|| format!("0000{}", invoice_number.replace('-', "")));
+        .unwrap_or_else(|| format!("0000{}", invoice_digits));
     let reference_model = Regex::new(r"(?i)SI\s*([01][0-9])")
         .ok()
         .and_then(|re| re.captures(&normalized))
