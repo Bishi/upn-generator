@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { FilePlus, Pencil, Check, X, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { FilePlus, Pencil, Check, X, Plus, Trash2 } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -14,6 +14,16 @@ import { Input } from "@/components/ui/input";
 export const Route = createFileRoute("/bills")({
   component: BillsPage,
 });
+
+function ReviewIndicator({ note }: { note: string }) {
+  return (
+    <span
+      className="mt-0.5 inline-flex size-2.5 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-500/60 cursor-help"
+      title={note}
+      aria-label={note}
+    />
+  );
+}
 
 function BillRow({
   bill,
@@ -39,7 +49,7 @@ function BillRow({
 
   if (editing) {
     return (
-      <tr className={bill.status === "needs_review" ? "bg-amber-50" : "bg-accent/30"}>
+      <tr className="bg-accent/30">
         <td className="px-3 py-2 text-xs text-muted-foreground">
           {bill.source_filename}
         </td>
@@ -109,24 +119,17 @@ function BillRow({
   }
 
   return (
-    <tr
-      className={`border-b border-border transition-colors ${
-        bill.status === "needs_review"
-          ? "bg-amber-50/80 hover:bg-amber-100/80"
-          : "hover:bg-accent/20"
-      }`}
-    >
+    <tr className="border-b border-border transition-colors hover:bg-accent/20">
       <td className="px-3 py-2 text-xs text-muted-foreground max-w-56">
-        {bill.source_filename}
-        {bill.provider_name && (
-          <span className="ml-1 text-primary">· {bill.provider_name}</span>
-        )}
-        {bill.parse_note && (
-          <div className="mt-1 flex items-start gap-1 text-[11px] text-amber-700 whitespace-normal">
-            <TriangleAlert className="mt-0.5 size-3 shrink-0" />
-            <span>{bill.parse_note}</span>
+        <div className="flex items-start gap-2">
+          {bill.parse_note && <ReviewIndicator note={bill.parse_note} />}
+          <div>
+            <span>{bill.source_filename}</span>
+            {bill.provider_name && (
+              <span className="ml-1 text-primary"> - {bill.provider_name}</span>
+            )}
           </div>
-        )}
+        </div>
       </td>
       <td className="px-3 py-2 text-sm">{bill.creditor_name}</td>
       <td className="px-3 py-2 text-sm font-mono font-medium">

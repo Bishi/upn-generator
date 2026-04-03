@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw, Check, X, TriangleAlert } from "lucide-react";
+import { RefreshCw, Check, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -14,6 +14,16 @@ export const Route = createFileRoute("/splits")({
   component: SplitsPage,
 });
 
+function ReviewIndicator({ note }: { note: string }) {
+  return (
+    <span
+      className="mt-0.5 inline-flex size-2.5 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-500/60 cursor-help"
+      title={note}
+      aria-label={note}
+    />
+  );
+}
+
 function splitBasisLabel(splitBasis: SplitRow["split_basis"]) {
   switch (splitBasis) {
     case "occupants":
@@ -21,7 +31,7 @@ function splitBasisLabel(splitBasis: SplitRow["split_basis"]) {
     case "equal_apartments":
       return "Split equally";
     default:
-      return "Split by m\u00B2";
+      return "Split by m2";
   }
 }
 
@@ -37,16 +47,28 @@ function splitBasisDetail(split: SplitRow) {
 }
 
 function buildMatrix(splits: SplitRow[]) {
-  const apartments = [...new Map(splits.map((s) => [s.apartment_id, { label: s.apartment_label, unitCode: s.apartment_unit_code }])).entries()]
-    .sort((a, b) => a[1].label.localeCompare(b[1].label));
-  const bills = [...new Map(splits.map((s) => [s.bill_id, {
-    filename: s.bill_source_filename,
-    provider: s.provider_name,
-    total: s.bill_amount_cents,
-    splitBasis: s.split_basis,
-    status: s.bill_status,
-    parseNote: s.bill_parse_note,
-  }])).entries()];
+  const apartments = [
+    ...new Map(
+      splits.map((s) => [
+        s.apartment_id,
+        { label: s.apartment_label, unitCode: s.apartment_unit_code },
+      ]),
+    ).entries(),
+  ].sort((a, b) => a[1].label.localeCompare(b[1].label));
+  const bills = [
+    ...new Map(
+      splits.map((s) => [
+        s.bill_id,
+        {
+          filename: s.bill_source_filename,
+          provider: s.provider_name,
+          total: s.bill_amount_cents,
+          splitBasis: s.split_basis,
+          parseNote: s.bill_parse_note,
+        },
+      ]),
+    ).entries(),
+  ];
 
   const matrix: Map<number, Map<number, SplitRow>> = new Map();
   for (const s of splits) {
@@ -88,7 +110,10 @@ function EditableCell({
         </button>
         <button
           className="text-muted-foreground hover:text-foreground"
-          onClick={() => { setValue(String(split.split_amount_cents / 100)); setEditing(false); }}
+          onClick={() => {
+            setValue(String(split.split_amount_cents / 100));
+            setEditing(false);
+          }}
         >
           <X className="size-3" />
         </button>
@@ -171,7 +196,10 @@ function SplitsPage() {
 
   const apartmentTotals = new Map<number, number>();
   for (const s of splits) {
-    apartmentTotals.set(s.apartment_id, (apartmentTotals.get(s.apartment_id) ?? 0) + s.split_amount_cents);
+    apartmentTotals.set(
+      s.apartment_id,
+      (apartmentTotals.get(s.apartment_id) ?? 0) + s.split_amount_cents,
+    );
   }
 
   return (
@@ -248,39 +276,33 @@ function SplitsPage() {
                 {apartments.map(([id, apt]) => (
                   <th key={id} className="px-3 py-2 text-right whitespace-nowrap">
                     <div>{apt.label}</div>
-                    <div className="text-[11px] font-normal text-muted-foreground">{apt.unitCode || "No code"}</div>
+                    <div className="text-[11px] font-normal text-muted-foreground">
+                      {apt.unitCode || "No code"}
+                    </div>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {bills.map(([billId, info]) => (
-                <tr
-                  key={billId}
-                  className={`border-t border-border ${
-                    info.status === "needs_review"
-                      ? "bg-amber-50/70 hover:bg-amber-100/80"
-                      : "hover:bg-accent/10"
-                  }`}
-                >
+                <tr key={billId} className="border-t border-border hover:bg-accent/10">
                   <td className="px-3 py-2">
-                    <div className="font-medium truncate max-w-44">
-                      {info.provider ?? info.filename}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate max-w-44">
-                      {splitBasisLabel(info.splitBasis)}
-                    </div>
-                    {info.parseNote && (
-                      <div className="mt-1 flex items-start gap-1 text-[11px] text-amber-700 max-w-56">
-                        <TriangleAlert className="mt-0.5 size-3 shrink-0" />
-                        <span>{info.parseNote}</span>
+                    <div className="flex items-start gap-2 max-w-56">
+                      {info.parseNote && <ReviewIndicator note={info.parseNote} />}
+                      <div className="min-w-0">
+                        <div className="font-medium truncate max-w-44">
+                          {info.provider ?? info.filename}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate max-w-44">
+                          {splitBasisLabel(info.splitBasis)}
+                        </div>
+                        {info.provider && (
+                          <div className="text-xs text-muted-foreground truncate max-w-44">
+                            {info.filename}
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {info.provider && (
-                      <div className="text-xs text-muted-foreground truncate max-w-44">
-                        {info.filename}
-                      </div>
-                    )}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-right font-mono font-medium">
                     {formatEur(info.total)} EUR
@@ -297,7 +319,7 @@ function SplitsPage() {
                             </div>
                           </div>
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          <span className="text-muted-foreground">-</span>
                         )}
                       </td>
                     );
@@ -309,7 +331,9 @@ function SplitsPage() {
               <tr className="border-t border-border bg-muted/30 font-semibold">
                 <td className="px-3 py-2">Total per Apartment</td>
                 <td className="px-3 py-2 text-right font-mono">
-                  {formatEur(splits.reduce((sum, row) => sum + row.split_amount_cents, 0))}
+                  {formatEur(
+                    splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
+                  )}
                 </td>
                 {apartments.map(([aptId]) => (
                   <td key={aptId} className="px-3 py-2 text-right font-mono">

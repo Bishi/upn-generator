@@ -1,7 +1,7 @@
 # Status
 
-- Current version: `0.4.9`
-- Current tag: `v0.4.9`
+- Current version: `0.4.10`
+- Current tag: `v0.4.10`
 - Release status: ready to be tagged and pushed to `origin`
 
 ## Latest Included Changes
@@ -19,3 +19,4 @@
 - Preserved the selected month when switching years, sorted year buttons ascending, and stabilized scrollbar layout between tabs
 - Marked fallback-parsed and failed-parsed bills as needing review, with visible yellow warnings in Bills and Splits
 - Fixed a multi-bill import SQL placeholder mismatch that broke combined PDF imports
+- Replaced the intrusive review warning rows with a small hoverable yellow indicator in Bills and Splits
