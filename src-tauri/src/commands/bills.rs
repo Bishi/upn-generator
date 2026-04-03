@@ -1086,8 +1086,10 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
         .unwrap_or_else(|| "12".to_string());
     let reference = format!("SI{} {}", reference_model, reference_digits);
-    let high_confidence_reference =
-        reference_model == "12" && reference_digits == format!("0000{}", invoice_digits);
+    let expected_reference_prefix = format!("0000{}", invoice_digits);
+    let high_confidence_reference = reference_model == "12"
+        && reference_digits.starts_with(&expected_reference_prefix)
+        && reference_digits.len() <= expected_reference_prefix.len() + 2;
     let parse_note = if amount_cents > 0 && !due_date.is_empty() && high_confidence_reference {
         String::new()
     } else {
@@ -1233,10 +1235,6 @@ pub fn import_bills(
         }
     }
 
-    if let Some(ref path) = log_path {
-        let _ = std::fs::write(path, &log);
-    }
-
     // Fallback: nothing found — create one blank bill
     if extracted.is_empty() {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -1252,6 +1250,13 @@ pub fn import_bills(
         )
         .map_err(|e| e.to_string())?;
         let id = conn.last_insert_rowid();
+        log.push_str("--- SAVED BILLS ---\n");
+        log.push_str(
+            "  status=needs_review parse_note=No bill data could be parsed automatically. Review this import manually.\n",
+        );
+        if let Some(ref path) = log_path {
+            let _ = std::fs::write(path, &log);
+        }
         return Ok(vec![Bill {
             id: Some(id),
             billing_period_id,
@@ -1279,6 +1284,7 @@ pub fn import_bills(
     // --- Match to providers and insert ---
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut results: Vec<Bill> = Vec::new();
+    log.push_str("--- SAVED BILLS ---\n");
 
     for eb in extracted {
         let provider = provider_by_iban.get(&eb.iban_norm).copied();
@@ -1364,6 +1370,20 @@ pub fn import_bills(
         .map_err(|e| e.to_string())?;
 
         let id = conn.last_insert_rowid();
+        log.push_str(&format!(
+            "  provider={} amount={} ref={} status={} parse_note={}\n",
+            provider
+                .map(|p| p.name.as_str())
+                .unwrap_or("(unmatched)"),
+            eb.amount_cents,
+            eb.reference,
+            status,
+            if eb.parse_note.is_empty() {
+                "(empty)"
+            } else {
+                eb.parse_note.as_str()
+            }
+        ));
         results.push(Bill {
             id: Some(id),
             billing_period_id,
@@ -1385,6 +1405,10 @@ pub fn import_bills(
             source_filename: filename.clone(),
             provider_name: provider.map(|p| p.name.clone()),
         });
+    }
+
+    if let Some(ref path) = log_path {
+        let _ = std::fs::write(path, &log);
     }
 
     Ok(results)
