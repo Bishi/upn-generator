@@ -13,13 +13,16 @@ const THEME_SWATCHES: Record<ThemeId, [string, string, string]> = {
   refined: ["#3d7558", "#dff0e8", "#f6ead4"],
   crisp: ["#2f5bea", "#e9eefe", "#fbefdc"],
   official: ["#da3a52", "#fbe6ea", "#f7ead3"],
+  "dark-crisp": ["#4a7aef", "#171e2c", "#1a2a50"],
+  "dark-mono": ["#ffffff", "#1a1a1a", "#333333"],
+  "dark-shadow": ["#f5f5fa", "#111118", "#222230"],
 };
 
 export function AppearanceSection() {
   const { theme, setTheme } = useTheme();
 
   return (
-    <Card className="max-w-3xl">
+    <Card className="max-w-4xl">
       <CardHeader>
         <CardTitle>Appearance</CardTitle>
         <CardDescription>
@@ -28,7 +31,7 @@ export function AppearanceSection() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {THEMES.map((item) => (
             <ThemeOption
               key={item.id}

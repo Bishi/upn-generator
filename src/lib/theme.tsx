@@ -26,6 +26,21 @@ export const THEMES = [
     name: "Official",
     description: "UPN-slip inspired red for document-forward testing.",
   },
+  {
+    id: "dark-crisp",
+    name: "Dark Crisp",
+    description: "Dark navy with banking-blue accents from the refined mock.",
+  },
+  {
+    id: "dark-mono",
+    name: "Dark Mono",
+    description: "High-contrast grayscale for a quieter night-mode pass.",
+  },
+  {
+    id: "dark-shadow",
+    name: "Dark Shadow",
+    description: "Near-black, low-glow theme inspired by the new mock.",
+  },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
@@ -38,7 +53,7 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function isThemeId(value: string | null): value is ThemeId {
-  return value === "refined" || value === "crisp" || value === "official";
+  return THEMES.some((theme) => theme.id === value);
 }
 
 export function applyTheme(theme: ThemeId) {

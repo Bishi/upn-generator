@@ -42,7 +42,7 @@ function SettingsPage() {
         </p>
       </section>
 
-      <div className="flex gap-1 overflow-x-auto border-b border-border">
+      <div className="scrollbar-none flex gap-1 overflow-x-auto border-b border-border">
         {tabs.map((tab) => (
           <button
             key={tab.id}

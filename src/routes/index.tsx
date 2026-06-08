@@ -33,7 +33,10 @@ export const Route = createFileRoute("/")({
 });
 
 type PeriodTotal = {
-  period: BillingPeriod;
+  periodId: number | null;
+  month: number;
+  year: number;
+  isAnchor: boolean;
   totalCents: number;
 };
 
@@ -60,22 +63,34 @@ function DashboardPage() {
       const anchorYear = selected?.year ?? now.getFullYear();
       const anchorMonth = selected?.month ?? now.getMonth() + 1;
       const anchorValue = anchorYear * 12 + anchorMonth;
+      const periodsByMonth = new Map<number, BillingPeriod & { id: number }>();
 
-      return [...allPeriods]
+      allPeriods
         .filter((period): period is BillingPeriod & { id: number } => {
           if (period.id == null) return false;
           const periodValue = period.year * 12 + period.month;
           return periodValue <= anchorValue;
         })
-        .sort((a, b) => {
-          if (a.year !== b.year) return a.year - b.year;
-          return a.month - b.month;
-        })
-        .slice(-6)
-        .map((period) => ({
-          period,
-          totalCents: snapshot.periodStatuses.get(period.id)?.totalCents ?? 0,
-        }));
+        .forEach((period) => {
+          periodsByMonth.set(period.year * 12 + period.month, period);
+        });
+
+      return Array.from({ length: 6 }, (_, index) => {
+        const monthValue = anchorValue - 5 + index;
+        const year = Math.floor((monthValue - 1) / 12);
+        const month = ((monthValue - 1) % 12) + 1;
+        const period = periodsByMonth.get(monthValue);
+
+        return {
+          periodId: period?.id ?? null,
+          month,
+          year,
+          isAnchor: monthValue === anchorValue,
+          totalCents: period
+            ? snapshot.periodStatuses.get(period.id)?.totalCents ?? 0
+            : 0,
+        };
+      });
     },
     [allPeriods, selected, snapshot.periodStatuses],
   );
@@ -94,7 +109,9 @@ function DashboardPage() {
   const splitsReady = splits.length > 0;
   const upnsReady = billsReady && splitsReady;
   const maxHistory = Math.max(1, ...history.map((entry) => entry.totalCents));
-  const selectedHistoryIndex = history.findIndex((entry) => entry.period.id === selected?.id);
+  const selectedHistoryIndex = history.findIndex((entry) =>
+    selected?.id != null ? entry.periodId === selected.id : entry.isAnchor,
+  );
   const previousHistory =
     selectedHistoryIndex > 0 ? history[selectedHistoryIndex - 1] : null;
   const monthlyDelta =
@@ -106,7 +123,7 @@ function DashboardPage() {
       ? "No bills imported yet"
       : monthlyDelta != null
         ? `${monthlyDelta >= 0 ? "+" : ""}${monthlyDelta.toFixed(1)}% vs ${
-            MONTHS[previousHistory!.period.month - 1]
+            MONTHS[previousHistory!.month - 1]
           }`
         : `${bills.length} source bill${bills.length === 1 ? "" : "s"}`;
   const expectedBillCount = providers.length || bills.length;
@@ -378,13 +395,14 @@ function DashboardPage() {
                 </div>
               ) : (
                 history.map((entry) => {
-                  const monthLabel = `${MONTHS[entry.period.month - 1]} ${entry.period.year}`;
+                  const monthLabel = `${MONTHS[entry.month - 1]} ${entry.year}`;
                   const totalLabel = `${formatEur(entry.totalCents)} EUR`;
-                  const isSelected = entry.period.id === selected?.id;
+                  const isSelected =
+                    selected?.id != null ? entry.periodId === selected.id : entry.isAnchor;
 
                   return (
                     <div
-                      key={entry.period.id}
+                      key={`${entry.year}-${entry.month}`}
                       tabIndex={0}
                       role="img"
                       aria-label={`${monthLabel}: ${totalLabel}`}
@@ -410,7 +428,7 @@ function DashboardPage() {
                         }}
                       />
                       <span className="text-center text-[10px] text-muted-foreground">
-                        {MONTHS[entry.period.month - 1].slice(0, 3)}
+                        {MONTHS[entry.month - 1].slice(0, 3)}
                       </span>
                     </div>
                   );
