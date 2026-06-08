@@ -70,8 +70,8 @@ function SettingsPage() {
           <ProvidersSection />
         </div>
         <div hidden={activeTab !== "delivery"} className="space-y-4">
-          <SmtpSection />
           <InboxSection />
+          <SmtpSection />
         </div>
         <div hidden={activeTab !== "app"} className="space-y-4">
           <AppearanceSection />

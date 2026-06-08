@@ -9,7 +9,8 @@ use tauri::State;
 use tempfile::Builder as TempFileBuilder;
 
 use super::bills::{
-    load_bill_import_context, prepare_multi_bill_import_from_path, save_prepared_multi_bill_import,
+    bill_content_hash, load_bill_import_context, prepare_multi_bill_import_from_path,
+    retain_expected_provider_bills, retain_new_bill_hashes, save_prepared_multi_bill_import,
 };
 use super::config::DbState;
 
@@ -308,7 +309,7 @@ fn insert_import_record(
     bill_ids: &[i64],
     status: &str,
     error_text: &str,
-) -> Result<(), String> {
+) -> Result<i64, String> {
     let bill_ids_json = serde_json::to_string(bill_ids).map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO inbox_imports (
@@ -333,7 +334,7 @@ fn insert_import_record(
         ],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(conn.last_insert_rowid())
 }
 
 fn has_imported_hash(
@@ -351,6 +352,92 @@ fn has_imported_hash(
     .optional()
     .map_err(|e| e.to_string())
     .map(|row| row.is_some())
+}
+
+fn missing_provider_ids(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+    context: &super::bills::BillImportContext,
+) -> Result<HashSet<i64>, String> {
+    let mut expected: HashSet<i64> = context
+        .providers
+        .iter()
+        .filter_map(|provider| provider.id)
+        .collect();
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT provider_id FROM bills
+             WHERE billing_period_id=?1 AND provider_id IS NOT NULL",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![billing_period_id], |row| row.get::<_, i64>(0))
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        expected.remove(&row.map_err(|e| e.to_string())?);
+    }
+    Ok(expected)
+}
+
+fn existing_bill_hashes(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+) -> Result<HashSet<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT bill_hash FROM inbox_bill_hashes
+             WHERE billing_period_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![billing_period_id], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut hashes = HashSet::new();
+    for row in rows {
+        hashes.insert(row.map_err(|e| e.to_string())?);
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT provider_id, creditor_iban, amount_cents, reference, due_date, invoice_number
+             FROM bills
+             WHERE billing_period_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![billing_period_id], |row| {
+            Ok(bill_content_hash(
+                row.get::<_, Option<i64>>(0)?,
+                &row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                &row.get::<_, String>(3)?,
+                &row.get::<_, String>(4)?,
+                &row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        hashes.insert(row.map_err(|e| e.to_string())?);
+    }
+    Ok(hashes)
+}
+
+fn insert_bill_hashes(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+    import_id: i64,
+    bill_ids: &[i64],
+    bill_hashes: &[String],
+) -> Result<(), String> {
+    for (bill_id, bill_hash) in bill_ids.iter().zip(bill_hashes.iter()) {
+        conn.execute(
+            "INSERT OR IGNORE INTO inbox_bill_hashes (
+                billing_period_id, inbox_import_id, bill_id, bill_hash
+             ) VALUES (?1,?2,?3,?4)",
+            params![billing_period_id, import_id, bill_id, bill_hash],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn validate_attachment(attachment: &MailAttachment) -> Result<String, String> {
@@ -405,7 +492,7 @@ fn import_attachment(
     context: &super::bills::BillImportContext,
     message: &MessageContext,
     attachment: MailAttachment,
-) -> InboxImportResult {
+) -> Vec<InboxImportResult> {
     let safe_filename = sanitize_filename(&attachment.filename);
     let ext = match validate_attachment(&attachment) {
         Ok(ext) => ext,
@@ -423,7 +510,7 @@ fn import_attachment(
                     &error,
                 );
             }
-            return failure_result(message, &safe_filename, error);
+            return vec![failure_result(message, &safe_filename, error)];
         }
     };
     let hash = sha256_hex(&attachment.bytes);
@@ -431,7 +518,7 @@ fn import_attachment(
     {
         let conn = match db.0.lock() {
             Ok(conn) => conn,
-            Err(e) => return failure_result(message, &safe_filename, e.to_string()),
+            Err(e) => return vec![failure_result(message, &safe_filename, e.to_string())],
         };
         match has_imported_hash(&conn, billing_period_id, &hash) {
             Ok(true) => {
@@ -445,15 +532,15 @@ fn import_attachment(
                     "skipped_duplicate",
                     "Attachment hash was already imported for this billing period.",
                 );
-                return skipped_result(
+                return vec![skipped_result(
                     message,
                     &safe_filename,
                     "skipped_duplicate",
                     "Attachment hash was already imported for this billing period.",
-                );
+                )];
             }
             Ok(false) => {}
-            Err(error) => return failure_result(message, &safe_filename, error),
+            Err(error) => return vec![failure_result(message, &safe_filename, error)],
         }
     }
 
@@ -463,14 +550,14 @@ fn import_attachment(
         .tempfile()
     {
         Ok(file) => file,
-        Err(e) => return failure_result(message, &safe_filename, e.to_string()),
+        Err(e) => return vec![failure_result(message, &safe_filename, e.to_string())],
     };
     if let Err(e) = temp_file.write_all(&attachment.bytes) {
-        return failure_result(message, &safe_filename, e.to_string());
+        return vec![failure_result(message, &safe_filename, e.to_string())];
     }
     let temp_path = temp_file.path().to_string_lossy().to_string();
     let source_label = format!("email: {} / {}", message.sender, safe_filename);
-    let prepared =
+    let mut prepared =
         match prepare_multi_bill_import_from_path(&temp_path, source_label, context, false) {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -486,7 +573,7 @@ fn import_attachment(
                         &error,
                     );
                 }
-                return failure_result(message, &safe_filename, error);
+                return vec![failure_result(message, &safe_filename, error)];
             }
         };
     let period_mismatch = match prepared.detected_source_period() {
@@ -523,71 +610,173 @@ fn import_attachment(
                 &reason,
             );
         }
-        return skipped_result(message, &safe_filename, status, &reason);
+        return vec![skipped_result(message, &safe_filename, status, &reason)];
     }
 
     let conn = match db.0.lock() {
         Ok(conn) => conn,
-        Err(e) => return failure_result(message, &safe_filename, e.to_string()),
+        Err(e) => return vec![failure_result(message, &safe_filename, e.to_string())],
     };
     let tx = match conn.unchecked_transaction() {
         Ok(tx) => tx,
-        Err(e) => return failure_result(message, &safe_filename, e.to_string()),
+        Err(e) => return vec![failure_result(message, &safe_filename, e.to_string())],
     };
-    let saved = match save_prepared_multi_bill_import(
-        &tx,
-        billing_period_id,
-        prepared,
-        &context.providers,
-        false,
-    ) {
-        Ok(saved) => saved,
+    let missing_provider_ids = match missing_provider_ids(&tx, billing_period_id, context) {
+        Ok(ids) => ids,
         Err(error) => {
             let _ = tx.rollback();
-            drop(conn);
-            if let Ok(conn) = db.0.lock() {
-                let _ = insert_import_record(
-                    &conn,
-                    billing_period_id,
-                    message,
-                    &safe_filename,
-                    &hash,
-                    &[],
-                    "failed",
-                    &error,
-                );
-            }
-            return failure_result(message, &safe_filename, error);
+            return vec![failure_result(message, &safe_filename, error)];
         }
     };
-    let bill_ids: Vec<i64> = saved.iter().filter_map(|bill| bill.id).collect();
-    if let Err(error) = insert_import_record(
-        &tx,
-        billing_period_id,
+    let filter_result =
+        retain_expected_provider_bills(&mut prepared, &context.providers, &missing_provider_ids);
+    let mut skipped_results = Vec::new();
+    if let (Some(status), Some(reason)) = (
+        filter_result.skipped_status,
+        filter_result.skipped_reason.as_deref(),
+    ) {
+        if let Err(error) = insert_import_record(
+            &tx,
+            billing_period_id,
+            message,
+            &safe_filename,
+            &hash,
+            &[],
+            status,
+            reason,
+        ) {
+            let _ = tx.rollback();
+            return vec![failure_result(message, &safe_filename, error)];
+        }
+        skipped_results.push(skipped_result(message, &safe_filename, status, reason));
+    }
+    if prepared.has_extracted_bills() {
+        let existing_hashes = match existing_bill_hashes(&tx, billing_period_id) {
+            Ok(hashes) => hashes,
+            Err(error) => {
+                let _ = tx.rollback();
+                return vec![failure_result(message, &safe_filename, error)];
+            }
+        };
+        let hash_filter =
+            retain_new_bill_hashes(&mut prepared, &context.providers, &existing_hashes);
+        if hash_filter.skipped_duplicate_count > 0 {
+            let reason = if hash_filter.skipped_duplicate_count == 1 {
+                "Parsed bill content was already imported for this billing period.".to_string()
+            } else {
+                format!(
+                    "{} parsed bills were already imported for this billing period.",
+                    hash_filter.skipped_duplicate_count
+                )
+            };
+            if let Err(error) = insert_import_record(
+                &tx,
+                billing_period_id,
+                message,
+                &safe_filename,
+                &hash,
+                &[],
+                "skipped_duplicate_bill",
+                &reason,
+            ) {
+                let _ = tx.rollback();
+                return vec![failure_result(message, &safe_filename, error)];
+            }
+            skipped_results.push(skipped_result(
+                message,
+                &safe_filename,
+                "skipped_duplicate_bill",
+                &reason,
+            ));
+        }
+        let kept_bill_hashes = hash_filter.kept_hashes;
+        if !prepared.has_extracted_bills() {
+            if let Err(error) = tx.commit() {
+                return vec![failure_result(message, &safe_filename, error.to_string())];
+            }
+            return skipped_results;
+        }
+        let saved = match save_prepared_multi_bill_import(
+            &tx,
+            billing_period_id,
+            prepared,
+            &context.providers,
+            false,
+        ) {
+            Ok(saved) => saved,
+            Err(error) => {
+                let _ = tx.rollback();
+                drop(conn);
+                if let Ok(conn) = db.0.lock() {
+                    let _ = insert_import_record(
+                        &conn,
+                        billing_period_id,
+                        message,
+                        &safe_filename,
+                        &hash,
+                        &[],
+                        "failed",
+                        &error,
+                    );
+                }
+                return vec![failure_result(message, &safe_filename, error)];
+            }
+        };
+        let bill_ids: Vec<i64> = saved.iter().filter_map(|bill| bill.id).collect();
+        let import_id = match insert_import_record(
+            &tx,
+            billing_period_id,
+            message,
+            &safe_filename,
+            &hash,
+            &bill_ids,
+            "imported",
+            "",
+        ) {
+            Ok(id) => id,
+            Err(error) => {
+                let _ = tx.rollback();
+                return vec![failure_result(message, &safe_filename, error)];
+            }
+        };
+        if let Err(error) = insert_bill_hashes(
+            &tx,
+            billing_period_id,
+            import_id,
+            &bill_ids,
+            &kept_bill_hashes,
+        ) {
+            let _ = tx.rollback();
+            return vec![failure_result(message, &safe_filename, error)];
+        }
+        if let Err(error) = tx.commit() {
+            return vec![failure_result(message, &safe_filename, error.to_string())];
+        }
+
+        let mut results = vec![InboxImportResult {
+            sender: message.sender.clone(),
+            subject: message.subject.clone(),
+            attachment_filename: safe_filename,
+            status: "imported".to_string(),
+            bill_ids,
+            bill_count: saved.len() as i32,
+            skipped_reason: None,
+            error: None,
+        }];
+        results.extend(skipped_results);
+        return results;
+    }
+    if !prepared.has_extracted_bills() {
+        if let Err(error) = tx.commit() {
+            return vec![failure_result(message, &safe_filename, error.to_string())];
+        }
+        return skipped_results;
+    }
+    vec![failure_result(
         message,
         &safe_filename,
-        &hash,
-        &bill_ids,
-        "imported",
-        "",
-    ) {
-        let _ = tx.rollback();
-        return failure_result(message, &safe_filename, error);
-    }
-    if let Err(error) = tx.commit() {
-        return failure_result(message, &safe_filename, error.to_string());
-    }
-
-    InboxImportResult {
-        sender: message.sender.clone(),
-        subject: message.subject.clone(),
-        attachment_filename: safe_filename,
-        status: "imported".to_string(),
-        bill_ids,
-        bill_count: saved.len() as i32,
-        skipped_reason: None,
-        error: None,
-    }
+        "Inbox import did not find any bill to save.".to_string(),
+    )]
 }
 
 #[tauri::command]
@@ -729,7 +918,7 @@ pub fn import_inbox_attachments(
             subject: truncate_chars(&header_value(&parsed, "Subject"), MAX_SUBJECT_LEN),
         };
         for attachment in collect_attachments(&parsed) {
-            results.push(import_attachment(
+            results.extend(import_attachment(
                 &db,
                 billing_period_id,
                 &context,

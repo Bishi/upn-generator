@@ -77,7 +77,7 @@ Enter your incoming IMAP mailbox settings so the app can manually import bill at
 | Folder | `INBOX` |
 | TLS | Enabled |
 
-Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. The mailbox scan window controls how far back messages are searched; imported attachments must still match the selected billing period.
+Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. The mailbox scan window controls how far back messages are searched; imported attachments must still match the selected billing period and a configured provider that is still missing for that month.
 
 ### Settings -> App -> Appearance
 
@@ -106,7 +106,7 @@ Select the month and click **Import Bills** to choose a local file, or click **I
 
 The app supports importing a single combined PDF or a supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`). PDFs can contain all bills together; image imports are OCR'd on Windows before the same provider-detection pipeline runs.
 
-Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing period, avoids duplicate attachments by hash, and deletes its temporary attachment file when that attachment has finished importing.
+Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing period, skips unknown providers, skips configured providers that already have a bill in that month, avoids duplicate attachments and duplicate parsed bill content by hash, and deletes its temporary attachment file when that attachment has finished importing.
 
 | Provider | Service | Detection method |
 |----------|---------|-----------------|

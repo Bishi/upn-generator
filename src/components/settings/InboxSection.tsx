@@ -82,7 +82,7 @@ export function InboxSection() {
       <div className="border-b border-border px-5 py-4">
         <h3 className="font-head text-lg font-semibold">Inbox (IMAP) Settings</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Used to read incoming bill attachments. Attachments are imported through the normal bill parser and deleted after processing.
+          Used to read incoming bill attachments for configured providers that are still missing in the selected month.
         </p>
       </div>
       <CardContent className="p-5">
@@ -175,7 +175,7 @@ export function InboxSection() {
                 }
               />
               <p className="text-xs text-muted-foreground">
-                Looks back this many days, then imports only attachments that match the selected billing period.
+                Looks back this many days, then imports only configured missing providers for the selected billing period.
               </p>
             </div>
           </div>

@@ -124,6 +124,7 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
         ensure_required_tables_on_attached(&conn)?;
         let has_inbox_config = attached_table_exists(&conn, "inbox_config")?;
         let has_inbox_imports = attached_table_exists(&conn, "inbox_imports")?;
+        let has_inbox_bill_hashes = attached_table_exists(&conn, "inbox_bill_hashes")?;
         let has_app_settings = attached_table_exists(&conn, "app_settings")?;
 
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -131,6 +132,7 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
         tx.execute_batch(
             "
             DELETE FROM bill_splits;
+            DELETE FROM inbox_bill_hashes;
             DELETE FROM bills;
             DELETE FROM billing_periods;
             DELETE FROM apartments;
@@ -238,6 +240,22 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
                     attachment_sha256, bill_ids, bill_count, status,
                     error_text, imported_at
                 FROM restore_db.inbox_imports;
+                ",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_inbox_bill_hashes {
+            tx.execute_batch(
+                "
+                INSERT INTO inbox_bill_hashes (
+                    id, billing_period_id, inbox_import_id, bill_id,
+                    bill_hash, created_at
+                )
+                SELECT
+                    id, billing_period_id, inbox_import_id, bill_id,
+                    bill_hash, created_at
+                FROM restore_db.inbox_bill_hashes;
                 ",
             )
             .map_err(|e| e.to_string())?;

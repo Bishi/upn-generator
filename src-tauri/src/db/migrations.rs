@@ -372,6 +372,16 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             imported_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS inbox_bill_hashes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            billing_period_id INTEGER NOT NULL REFERENCES billing_periods(id),
+            inbox_import_id INTEGER REFERENCES inbox_imports(id) ON DELETE CASCADE,
+            bill_id INTEGER REFERENCES bills(id),
+            bill_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(billing_period_id, bill_hash)
+        );
+
         CREATE TABLE IF NOT EXISTS app_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             theme TEXT NOT NULL DEFAULT 'refined'
@@ -432,6 +442,11 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
          ON inbox_imports(billing_period_id, attachment_sha256, status)",
         [],
     );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_bill_hashes_period_hash
+         ON inbox_bill_hashes(billing_period_id, bill_hash)",
+        [],
+    );
 
     let building_name: String = conn
         .query_row("SELECT name FROM building WHERE id=1", [], |row| row.get(0))
@@ -469,6 +484,7 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
         DELETE FROM bill_splits;
+        DELETE FROM inbox_bill_hashes;
         DELETE FROM bills;
         DELETE FROM billing_periods;
         DELETE FROM inbox_imports;
