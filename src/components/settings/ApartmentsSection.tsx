@@ -135,7 +135,7 @@ export function ApartmentsSection() {
                 variant="outline"
                 size="sm"
                 onClick={() => apt.id && deleteMutation.mutate(apt.id)}
-                className="gap-1.5 text-destructive hover:text-destructive"
+                className="gap-1.5 text-danger hover:text-danger"
               >
                 <Trash2 className="size-3.5" />
                 Delete
@@ -146,7 +146,7 @@ export function ApartmentsSection() {
       </div>
 
       {editing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay">
           <Card className="w-full max-w-md max-h-[90vh] flex flex-col">
             <CardHeader className="shrink-0">
               <CardTitle>{isNew ? "Add Apartment" : "Edit Apartment"}</CardTitle>

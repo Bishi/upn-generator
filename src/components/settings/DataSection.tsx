@@ -158,7 +158,7 @@ export function DataSection() {
 
         <div className="space-y-3 border-t pt-6">
           <div>
-            <p className="text-sm font-medium text-destructive">Dev Factory Reset</p>
+            <p className="text-sm font-medium text-danger">Dev Factory Reset</p>
             <p className="text-sm text-muted-foreground">
               Resets building, apartments, providers, SMTP, billing periods, bills, and splits
               back to the seeded defaults.
@@ -191,7 +191,7 @@ export function DataSection() {
         </div>
 
         {(backupMutation.error || restoreMutation.error || resetMutation.error) && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <div className="rounded-md border border-danger/40 bg-danger-soft px-4 py-3 text-sm text-danger">
             {backupMutation.error?.message ??
               restoreMutation.error?.message ??
               resetMutation.error?.message}

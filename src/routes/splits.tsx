@@ -17,7 +17,7 @@ export const Route = createFileRoute("/splits")({
 function ReviewIndicator({ note }: { note: string }) {
   return (
     <span
-      className="mt-0.5 inline-flex size-2.5 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-500/60 cursor-help"
+      className="mt-0.5 inline-flex size-2.5 shrink-0 cursor-help rounded-full bg-warning ring-1 ring-warning/60"
       title={note}
       aria-label={note}
     />
@@ -99,7 +99,7 @@ function EditableCell({
           autoFocus
         />
         <button
-          className="text-green-600 hover:text-green-700"
+          className="text-success hover:text-success/80"
           onClick={() => {
             const cents = Math.round(parseFloat(value) * 100) || 0;
             if (split.split_id) onSave(split.split_id, cents);
@@ -223,7 +223,7 @@ function SplitsPage() {
       }
     >
       {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
+        <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {error}
         </div>
       )}
@@ -235,7 +235,7 @@ function SplitsPage() {
       )}
 
       {selected && splits.length === 0 && (
-        <div className="overflow-auto rounded-lg border border-border min-h-[268px]">
+        <div className="min-h-[268px] overflow-auto rounded-lg border border-border bg-card shadow-card">
           <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
             <div className="max-w-md space-y-3">
               {loadingSplits ? (
@@ -254,7 +254,7 @@ function SplitsPage() {
                   <div>
                     <Link
                       to="/bills"
-                      className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+                      className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
                     >
                       Go to Bills
                     </Link>
@@ -267,10 +267,10 @@ function SplitsPage() {
       )}
 
       {!loadingSplits && splits.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-card">
           <table className="w-full min-w-max text-sm">
             <thead>
-              <tr className="bg-muted/50 text-xs font-medium text-muted-foreground">
+              <tr className="bg-surface-2 text-xs font-medium text-muted-foreground">
                 <th className="px-3 py-2 text-left">Bill</th>
                 <th className="px-3 py-2 text-right">Total</th>
                 {apartments.map(([id, apt]) => (
@@ -328,7 +328,7 @@ function SplitsPage() {
               ))}
             </tbody>
             <tfoot>
-              <tr className="border-t border-border bg-muted/30 font-semibold">
+              <tr className="border-t border-border bg-surface-2 font-semibold">
                 <td className="px-3 py-2">Total per Apartment</td>
                 <td className="px-3 py-2 text-right font-mono">
                   {formatEur(
@@ -350,7 +350,7 @@ function SplitsPage() {
         <div className="flex justify-end">
           <Link
             to="/upn"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
           >
             Continue to UPN Preview
           </Link>

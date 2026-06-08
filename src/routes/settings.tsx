@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { Building2, Database, Home, Mail, Zap } from "lucide-react";
+import { Building2, Database, Home, Mail, Palette, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AppearanceSection } from "@/components/settings/AppearanceSection";
 import { ApartmentsSection } from "@/components/settings/ApartmentsSection";
 import { BuildingSection } from "@/components/settings/BuildingSection";
 import { DataSection } from "@/components/settings/DataSection";
@@ -12,13 +13,20 @@ export const Route = createFileRoute("/settings")({
   component: SettingsPage,
 });
 
-type Tab = "building" | "apartments" | "providers" | "smtp" | "data";
+type Tab =
+  | "building"
+  | "apartments"
+  | "providers"
+  | "smtp"
+  | "appearance"
+  | "data";
 
 const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "building", label: "Building", icon: <Building2 className="size-4" /> },
   { id: "apartments", label: "Apartments", icon: <Home className="size-4" /> },
   { id: "providers", label: "Providers", icon: <Zap className="size-4" /> },
   { id: "smtp", label: "Email (SMTP)", icon: <Mail className="size-4" /> },
+  { id: "appearance", label: "Appearance", icon: <Palette className="size-4" /> },
   { id: "data", label: "Data", icon: <Database className="size-4" /> },
 ];
 
@@ -51,6 +59,7 @@ function SettingsPage() {
       {activeTab === "apartments" && <ApartmentsSection />}
       {activeTab === "providers" && <ProvidersSection />}
       {activeTab === "smtp" && <SmtpSection />}
+      {activeTab === "appearance" && <AppearanceSection />}
       {activeTab === "data" && <DataSection />}
     </div>
   );

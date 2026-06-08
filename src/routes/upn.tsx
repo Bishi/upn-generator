@@ -66,7 +66,7 @@ function ApartmentCard({
   const total = splits.reduce((s, r) => s + r.split_amount_cents, 0);
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 shadow-card">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="font-semibold">{apartmentLabel}</h3>
@@ -91,7 +91,7 @@ function ApartmentCard({
           {emailResult && (
             <span
               className={`flex items-center gap-1 text-xs ${
-                emailResult.success ? "text-green-600" : "text-destructive"
+                emailResult.success ? "text-success" : "text-danger"
               }`}
             >
               {emailResult.success ? (
@@ -257,7 +257,7 @@ function UpnPage() {
       }
     >
       {pageMessage && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
+        <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {pageMessage}
         </div>
       )}
@@ -282,7 +282,7 @@ function UpnPage() {
               <span>No splits found. Go to Splits and click Recalculate first.</span>
               <Link
                 to="/splits"
-                className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+                className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
               >
                 Go to Splits
               </Link>
@@ -308,20 +308,20 @@ function UpnPage() {
       )}
 
       {emailResults.length > 0 && (
-        <div className="rounded-lg border border-border p-4">
+        <div className="rounded-lg border border-border bg-card p-4 shadow-card">
           <h3 className="font-semibold mb-3 text-sm">Email Results</h3>
           <div className="flex flex-col gap-1.5">
             {emailResults.map((r, i) => (
               <div key={i} className="flex items-center gap-2 text-sm">
                 {r.success ? (
-                  <CheckCircle2 className="size-4 text-green-600 shrink-0" />
+                  <CheckCircle2 className="size-4 shrink-0 text-success" />
                 ) : (
-                  <XCircle className="size-4 text-destructive shrink-0" />
+                  <XCircle className="size-4 shrink-0 text-danger" />
                 )}
                 <span className="font-medium">{r.apartment_label}</span>
                 <span className="text-muted-foreground">{r.email}</span>
                 {r.error && (
-                  <span className="text-destructive text-xs">{r.error}</span>
+                  <span className="text-xs text-danger">{r.error}</span>
                 )}
               </div>
             ))}

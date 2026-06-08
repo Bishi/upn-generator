@@ -79,7 +79,7 @@ export function BillingPageShell({
                       onChange={(e) => setNewYear(Number(e.target.value))}
                     />
                     <button
-                      className="text-green-600 hover:text-green-700"
+                      className="text-success hover:text-success/80"
                       onClick={() => {
                         void Promise.resolve(onAddYear(newYear)).then(() => {
                           setShowAddYear(false);

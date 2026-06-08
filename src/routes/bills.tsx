@@ -18,7 +18,7 @@ export const Route = createFileRoute("/bills")({
 function ReviewIndicator({ note }: { note: string }) {
   return (
     <span
-      className="mt-0.5 inline-flex size-2.5 shrink-0 rounded-full bg-amber-400 ring-1 ring-amber-500/60 cursor-help"
+      className="mt-0.5 inline-flex size-2.5 shrink-0 cursor-help rounded-full bg-warning ring-1 ring-warning/60"
       title={note}
       aria-label={note}
     />
@@ -102,7 +102,7 @@ function BillRow({
           <div className="flex gap-1">
             <button
               onClick={save}
-              className="text-green-600 hover:text-green-700"
+              className="text-success hover:text-success/80"
             >
               <Check className="size-4" />
             </button>
@@ -150,7 +150,7 @@ function BillRow({
           </button>
           <button
             onClick={() => bill.id && onDelete(bill.id)}
-            className="text-muted-foreground hover:text-destructive"
+            className="text-muted-foreground hover:text-danger"
           >
             <Trash2 className="size-3.5" />
           </button>
@@ -329,13 +329,13 @@ function BillsPage() {
       )}
 
       {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
+        <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {error}
         </div>
       )}
 
       {selected && (
-        <div className="rounded-lg border border-border overflow-hidden min-h-[268px]">
+        <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
           {loadingBills ? (
             <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
               <div className="max-w-md space-y-2">
@@ -357,7 +357,7 @@ function BillsPage() {
           ) : (
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+                <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
                   <th className="px-3 py-2">File / Provider</th>
                   <th className="px-3 py-2">Creditor</th>
                   <th className="px-3 py-2">Amount</th>
@@ -378,7 +378,7 @@ function BillsPage() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="bg-muted/30 font-medium">
+                <tr className="bg-surface-2 font-medium">
                   <td
                     className="px-3 py-2 text-xs text-muted-foreground"
                     colSpan={2}
@@ -400,7 +400,7 @@ function BillsPage() {
         <div className="flex justify-end">
           <Link
             to="/splits"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
           >
             Continue to Splits
           </Link>
