@@ -28,7 +28,7 @@ export function WorkflowStatusBar() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    if (location.pathname === "/settings") return;
+    if (location.pathname === "/" || location.pathname === "/settings") return;
 
     const refresh = async () => {
       const requestId = ++requestRef.current;
@@ -73,7 +73,7 @@ export function WorkflowStatusBar() {
     };
   }, [location.pathname]);
 
-  if (location.pathname === "/settings") return null;
+  if (location.pathname === "/" || location.pathname === "/settings") return null;
 
   if (!hydrated || !snapshot.period) {
     return (

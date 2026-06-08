@@ -1,10 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2, Files } from "lucide-react";
+import {
+  AlertTriangle,
+  Mail,
+  Download,
+  Eye,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Files,
+} from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import type { EmailResult, SplitRow } from "@/lib/types";
+import type { Apartment, EmailResult, SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import { Button } from "@/components/ui/button";
@@ -13,10 +22,23 @@ export const Route = createFileRoute("/upn")({
   component: UpnPage,
 });
 
+function parseRecipientList(raw: string) {
+  return raw
+    .split(",")
+    .map((recipient) => recipient.trim())
+    .filter(Boolean);
+}
+
+function hasSendableRecipient(raw: string) {
+  return parseRecipientList(raw).length > 0;
+}
+
 function ApartmentCard({
   billingPeriodId,
   apartmentId,
   apartmentLabel,
+  apartmentUnitCode,
+  contactEmail,
   splits,
   emailResult,
   onPreviewError,
@@ -24,6 +46,8 @@ function ApartmentCard({
   billingPeriodId: number;
   apartmentId: number;
   apartmentLabel: string;
+  apartmentUnitCode: string;
+  contactEmail: string;
   splits: SplitRow[];
   emailResult?: EmailResult;
   onPreviewError: (message: string | null) => void;
@@ -71,8 +95,21 @@ function ApartmentCard({
         <div>
           <h3 className="font-semibold">{apartmentLabel}</h3>
           <p className="text-xs text-muted-foreground">
-            {splits.length} UPN{splits.length === 1 ? "" : "s"} in one apartment packet
+            {apartmentUnitCode || "No unit code"} · {splits.length} UPN{splits.length === 1 ? "" : "s"}
           </p>
+          <div className="mt-2">
+            {hasSendableRecipient(contactEmail) ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2 py-1 text-xs font-semibold text-success">
+                <Mail className="size-3" />
+                recipient on file
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
+                <AlertTriangle className="size-3" />
+                missing email
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex flex-col items-end gap-2">
           <Button
@@ -147,6 +184,7 @@ function ApartmentCard({
 
 function UpnPage() {
   const [splits, setSplits] = useState<SplitRow[]>([]);
+  const [apartmentsConfig, setApartmentsConfig] = useState<Apartment[]>([]);
   const [loadingSplits, setLoadingSplits] = useState(false);
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -161,6 +199,10 @@ function UpnPage() {
     setSelectedYear,
     setSelected,
   } = useBillingPeriodSelection();
+
+  useEffect(() => {
+    void ipc.getApartments().then(setApartmentsConfig);
+  }, []);
 
   useEffect(() => {
     const requestId = ++loadRequestRef.current;
@@ -211,16 +253,29 @@ function UpnPage() {
     }
   };
 
-  const byApartment = new Map<number, { label: string; splits: SplitRow[] }>();
+  const apartmentConfigById = new Map(
+    apartmentsConfig.map((apartment) => [apartment.id, apartment]),
+  );
+  const byApartment = new Map<number, { label: string; unitCode: string; contactEmail: string; splits: SplitRow[] }>();
   for (const s of splits) {
     if (!byApartment.has(s.apartment_id)) {
-      byApartment.set(s.apartment_id, { label: s.apartment_label, splits: [] });
+      byApartment.set(s.apartment_id, {
+        label: s.apartment_label,
+        unitCode: s.apartment_unit_code,
+        contactEmail: apartmentConfigById.get(s.apartment_id)?.contact_email ?? "",
+        splits: [],
+      });
     }
     byApartment.get(s.apartment_id)!.splits.push(s);
   }
   const apartments = [...byApartment.entries()].sort((a, b) =>
     a[1].label.localeCompare(b[1].label)
   );
+  const totalSlipCount = splits.length;
+  const readyRecipientCount = apartments.filter(([, apartment]) =>
+    hasSendableRecipient(apartment.contactEmail),
+  ).length;
+  const missingRecipientCount = Math.max(0, apartments.length - readyRecipientCount);
 
   return (
     <BillingPageShell
@@ -262,6 +317,27 @@ function UpnPage() {
         </div>
       )}
 
+      {!loadingSplits && apartments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+          <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
+            <CheckCircle2 className="size-3.5" />
+            {readyRecipientCount} ready
+            <span className="font-normal text-muted-foreground">recipient on file</span>
+          </span>
+          {missingRecipientCount > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-md bg-warning-soft px-3 py-1 text-xs font-semibold text-warning">
+              <AlertTriangle className="size-3.5" />
+              {missingRecipientCount} missing email
+            </span>
+          )}
+          <span className="inline-flex items-center gap-2 rounded-md bg-surface-3 px-3 py-1 text-xs font-semibold text-muted-foreground">
+            <Files className="size-3.5" />
+            {totalSlipCount} slips
+            <span className="font-normal">across {apartments.length} packets</span>
+          </span>
+        </div>
+      )}
+
       {!selected && (
         <p className="text-muted-foreground text-sm">
           Select a billing period to view UPN forms.
@@ -293,12 +369,14 @@ function UpnPage() {
 
       {!loadingSplits && apartments.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {apartments.map(([aptId, { label, splits: aptSplits }]) => (
+          {apartments.map(([aptId, { label, unitCode, contactEmail, splits: aptSplits }]) => (
             <ApartmentCard
               key={aptId}
               billingPeriodId={selected!.id!}
               apartmentId={aptId}
               apartmentLabel={label}
+              apartmentUnitCode={unitCode}
+              contactEmail={contactEmail}
               splits={aptSplits}
               emailResult={emailResults.find((r) => r.apartment_label === label)}
               onPreviewError={setPageMessage}

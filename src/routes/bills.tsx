@@ -1,7 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { FilePlus, Pencil, Check, X, Plus, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  FilePlus,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -98,6 +107,9 @@ function BillRow({
             }
           />
         </td>
+        <td className="px-3 py-2 text-xs text-muted-foreground">
+          Manual edit
+        </td>
         <td className="px-3 py-2">
           <div className="flex gap-1">
             <button
@@ -119,7 +131,7 @@ function BillRow({
   }
 
   return (
-    <tr className="border-b border-border transition-colors hover:bg-accent/20">
+    <tr className={`border-b border-border transition-colors hover:bg-accent/20 ${bill.parse_note ? "bg-warning-soft/70" : ""}`}>
       <td className="px-3 py-2 text-xs text-muted-foreground max-w-56">
         <div className="flex items-start gap-2">
           {bill.parse_note && <ReviewIndicator note={bill.parse_note} />}
@@ -139,6 +151,18 @@ function BillRow({
       <td className="px-3 py-2 text-sm">{bill.due_date}</td>
       <td className="px-3 py-2 text-xs text-muted-foreground max-w-40 truncate">
         {bill.purpose_text}
+      </td>
+      <td className="px-3 py-2">
+        {bill.parse_note ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
+            <AlertTriangle className="size-3" />
+            Verify
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-2 py-1 text-xs font-semibold text-muted-foreground">
+            Auto-matched
+          </span>
+        )}
       </td>
       <td className="px-3 py-2">
         <div className="flex gap-1">
@@ -288,6 +312,8 @@ function BillsPage() {
   };
 
   const totalCents = bills.reduce((s, b) => s + b.amount_cents, 0);
+  const reviewBills = bills.filter((bill) => bill.parse_note?.trim());
+  const cleanCount = Math.max(0, bills.length - reviewBills.length);
 
   return (
     <BillingPageShell
@@ -334,6 +360,31 @@ function BillsPage() {
         </div>
       )}
 
+      {selected && bills.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+            Imported from
+          </span>
+          {cleanCount > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
+              <CheckCircle2 className="size-3.5" />
+              {cleanCount} file{cleanCount === 1 ? "" : "s"} clean
+            </span>
+          )}
+          {reviewBills.map((bill) => (
+            <span
+              key={bill.id ?? bill.source_filename}
+              className="inline-flex items-center gap-2 rounded-md bg-warning-soft px-3 py-1 text-xs text-warning"
+              title={bill.parse_note}
+            >
+              <AlertTriangle className="size-3.5" />
+              <span className="font-semibold text-foreground">{bill.source_filename}</span>
+              <span className="text-muted-foreground">needs review</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {selected && (
         <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
           {loadingBills ? (
@@ -364,6 +415,7 @@ function BillsPage() {
                   <th className="px-3 py-2">Reference</th>
                   <th className="px-3 py-2">Due Date</th>
                   <th className="px-3 py-2">Purpose</th>
+                  <th className="px-3 py-2">Detection</th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
@@ -388,7 +440,7 @@ function BillsPage() {
                   <td className="px-3 py-2 font-mono">
                     {formatEur(totalCents)} EUR
                   </td>
-                  <td colSpan={4}></td>
+                  <td colSpan={5}></td>
                 </tr>
               </tfoot>
             </table>

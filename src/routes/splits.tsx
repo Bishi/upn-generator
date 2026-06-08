@@ -193,6 +193,22 @@ function SplitsPage() {
   };
 
   const { apartments, bills, matrix } = buildMatrix(splits);
+  const splitBasisCounts = splits.reduce(
+    (counts, split) => {
+      const current = counts.get(split.split_basis) ?? 0;
+      counts.set(split.split_basis, current + 1);
+      return counts;
+    },
+    new Map<SplitRow["split_basis"], number>(),
+  );
+  const billBasisCounts = bills.reduce(
+    (counts, [, info]) => {
+      const current = counts.get(info.splitBasis) ?? 0;
+      counts.set(info.splitBasis, current + 1);
+      return counts;
+    },
+    new Map<SplitRow["split_basis"], number>(),
+  );
 
   const apartmentTotals = new Map<number, number>();
   for (const s of splits) {
@@ -225,6 +241,32 @@ function SplitsPage() {
       {error && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {error}
+        </div>
+      )}
+
+      {!loadingSplits && splits.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+            Split method
+          </span>
+          <MethodChip
+            label="m2"
+            detail={`${billBasisCounts.get("m2_percentage") ?? 0} bill${(billBasisCounts.get("m2_percentage") ?? 0) === 1 ? "" : "s"}`}
+            tone="neutral"
+          />
+          <MethodChip
+            label="people"
+            detail={`${billBasisCounts.get("occupants") ?? 0} bill${(billBasisCounts.get("occupants") ?? 0) === 1 ? "" : "s"}`}
+            tone="accent"
+          />
+          <MethodChip
+            label="equal"
+            detail={`${billBasisCounts.get("equal_apartments") ?? 0} bill${(billBasisCounts.get("equal_apartments") ?? 0) === 1 ? "" : "s"}`}
+            tone="warn"
+          />
+          <span className="ml-auto text-xs text-muted-foreground">
+            {splitBasisCounts.size} active method{splitBasisCounts.size === 1 ? "" : "s"}
+          </span>
         </div>
       )}
 
@@ -357,5 +399,28 @@ function SplitsPage() {
         </div>
       )}
     </BillingPageShell>
+  );
+}
+
+function MethodChip({
+  label,
+  detail,
+  tone,
+}: {
+  label: string;
+  detail: string;
+  tone: "neutral" | "accent" | "warn";
+}) {
+  const toneClass = {
+    neutral: "bg-surface-3 text-muted-foreground",
+    accent: "bg-accent-soft text-accent-foreground",
+    warn: "bg-warning-soft text-warning",
+  }[tone];
+
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-md px-3 py-1 text-xs ${toneClass}`}>
+      <span className="rounded-full bg-card px-2 py-0.5 font-semibold">{label}</span>
+      <span>{detail}</span>
+    </span>
   );
 }

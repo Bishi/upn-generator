@@ -40,29 +40,32 @@ export function BillingPageShell({
   return (
     <div className="flex flex-col gap-6">
       <section className="grid gap-4">
-        <div className="flex min-h-[72px] flex-wrap items-start justify-between gap-4">
-          <div className="min-h-[72px]">
-            <h2 className="text-2xl font-bold">{title}</h2>
+        <div className="flex min-h-[58px] flex-wrap items-start justify-between gap-4">
+          <div className="min-h-[58px]">
+            <h2 className="text-3xl font-semibold leading-tight">{title}</h2>
             <p className="mt-1 min-h-5 text-sm text-muted-foreground">
               {hasSubtitle ? subtitle : "\u00A0"}
             </p>
           </div>
-          <div className="flex min-h-[72px] flex-wrap items-start justify-end gap-2">
+          <div className="flex min-h-[58px] flex-wrap items-start justify-end gap-2">
             {actions ?? <div className="h-9" />}
           </div>
         </div>
 
-        <div className="grid gap-3">
-          <div className="min-h-9 flex items-center">
+        <div className="rounded-lg border border-border bg-card px-4 py-3 shadow-card">
+          <div className="mb-3 flex min-h-8 items-center border-b border-border pb-3">
             <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                Year
+              </span>
               {years.map((year) => (
                 <button
                   key={year}
                   onClick={() => onSelectYear(year)}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                  className={`h-7 rounded-md px-3 text-sm font-semibold transition-colors ${
                     selectedYear === year
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "border-border hover:bg-accent"
+                      ? "bg-accent-soft text-accent-foreground"
+                      : "bg-surface-3 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                   }`}
                 >
                   {year}
@@ -100,7 +103,7 @@ export function BillingPageShell({
                     size="sm"
                     variant="outline"
                     onClick={() => setShowAddYear(true)}
-                    className="gap-1"
+                    className="h-7 gap-1 px-2.5"
                   >
                     <CalendarPlus className="size-3.5" /> Add Year
                   </Button>
@@ -109,17 +112,20 @@ export function BillingPageShell({
             </div>
           </div>
 
-          <div className="min-h-9 flex items-center">
+          <div className="flex min-h-8 items-center">
             {yearPeriods.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Month
+                </span>
                 {yearPeriods.map((period) => (
                   <button
                     key={period.id}
                     onClick={() => onSelectPeriod(period)}
-                    className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
+                    className={`h-8 min-w-20 rounded-md px-3 text-sm font-medium transition-colors ${
                       selected?.id === period.id
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "border-border hover:bg-accent"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-surface-3 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                     }`}
                   >
                     {MONTHS[period.month - 1]}

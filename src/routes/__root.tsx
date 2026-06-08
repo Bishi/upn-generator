@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import {
   Banknote,
   FileText,
+  Gauge,
   SplitSquareHorizontal,
   CreditCard,
   Settings,
@@ -41,6 +42,7 @@ function RootLayout() {
         <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
           Monthly Workflow
         </div>
+        <NavLink to="/" icon={<Gauge className="size-4" />} label="Dashboard" />
         <NavLink to="/bills" icon={<FileText className="size-4" />} label="Bills" />
         <NavLink to="/splits" icon={<SplitSquareHorizontal className="size-4" />} label="Splits" />
         <NavLink to="/upn" icon={<CreditCard className="size-4" />} label="UPN Preview" />

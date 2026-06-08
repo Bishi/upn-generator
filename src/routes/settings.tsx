@@ -34,18 +34,23 @@ function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("building");
 
   return (
-    <div>
-      <h2 className="mb-6 text-2xl font-bold">Settings</h2>
+    <div className="flex flex-col gap-5">
+      <section>
+        <h2 className="text-3xl font-semibold leading-tight">Settings</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Configure the building, apartments, providers, delivery, appearance, and data.
+        </p>
+      </section>
 
-      <div className="mb-6 flex gap-1 border-b border-border">
+      <div className="flex gap-1 overflow-x-auto border-b border-border">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              "flex items-center gap-2 border-b-2 -mb-px px-4 py-2 text-sm font-medium transition-colors",
+              "-mb-px flex h-10 items-center gap-2 whitespace-nowrap border-b-2 px-4 text-sm font-semibold transition-colors",
               activeTab === tab.id
-                ? "border-primary text-foreground"
+                ? "border-primary text-accent-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
@@ -55,12 +60,14 @@ function SettingsPage() {
         ))}
       </div>
 
-      {activeTab === "building" && <BuildingSection />}
-      {activeTab === "apartments" && <ApartmentsSection />}
-      {activeTab === "providers" && <ProvidersSection />}
-      {activeTab === "smtp" && <SmtpSection />}
-      {activeTab === "appearance" && <AppearanceSection />}
-      {activeTab === "data" && <DataSection />}
+      <div>
+        {activeTab === "building" && <BuildingSection />}
+        {activeTab === "apartments" && <ApartmentsSection />}
+        {activeTab === "providers" && <ProvidersSection />}
+        {activeTab === "smtp" && <SmtpSection />}
+        {activeTab === "appearance" && <AppearanceSection />}
+        {activeTab === "data" && <DataSection />}
+      </div>
     </div>
   );
 }
