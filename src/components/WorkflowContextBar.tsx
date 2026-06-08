@@ -181,7 +181,7 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
         )}
       </div>
 
-      <div className="flex max-w-[660px] flex-1 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         {steps.map((step, index) => (
           <WorkflowStep
             key={step.label}
@@ -192,7 +192,7 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
         ))}
       </div>
 
-      <div className="ml-auto min-w-36 text-right">
+      <div className="shrink-0 min-w-36 text-right">
         <div className="text-[10px] font-medium text-muted-foreground">
           Total this period
         </div>

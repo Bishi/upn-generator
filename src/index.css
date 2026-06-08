@@ -1,3 +1,29 @@
+@import "@fontsource/hanken-grotesk/latin-400.css";
+@import "@fontsource/hanken-grotesk/latin-ext-400.css";
+@import "@fontsource/hanken-grotesk/latin-500.css";
+@import "@fontsource/hanken-grotesk/latin-ext-500.css";
+@import "@fontsource/hanken-grotesk/latin-600.css";
+@import "@fontsource/hanken-grotesk/latin-ext-600.css";
+@import "@fontsource/hanken-grotesk/latin-700.css";
+@import "@fontsource/hanken-grotesk/latin-ext-700.css";
+@import "@fontsource/hanken-grotesk/latin-800.css";
+@import "@fontsource/hanken-grotesk/latin-ext-800.css";
+@import "@fontsource/spectral/latin-400.css";
+@import "@fontsource/spectral/latin-ext-400.css";
+@import "@fontsource/spectral/latin-400-italic.css";
+@import "@fontsource/spectral/latin-ext-400-italic.css";
+@import "@fontsource/spectral/latin-500.css";
+@import "@fontsource/spectral/latin-ext-500.css";
+@import "@fontsource/spectral/latin-600.css";
+@import "@fontsource/spectral/latin-ext-600.css";
+@import "@fontsource/spectral/latin-700.css";
+@import "@fontsource/spectral/latin-ext-700.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-ext-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/ibm-plex-mono/latin-ext-500.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-ext-600.css";
 @import "tailwindcss";
 
 @theme {
@@ -83,10 +109,23 @@ html {
   --app-radius-xl: 20px;
   --app-shadow-card: 0 1px 2px rgba(29, 27, 23, 0.03), 0 2px 8px rgba(29, 27, 23, 0.05);
   --app-shadow-pop: 0 16px 40px -10px rgba(29, 27, 23, 0.22);
-  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --font-body-system: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-head-system: var(--font-body-system);
+  --font-mono-system: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --font-body-design: "Hanken Grotesk", var(--font-body-system);
+  --font-head-design: "Spectral", Georgia, var(--font-body-system);
+  --font-mono-design: "IBM Plex Mono", var(--font-mono-system);
+  --font-body: var(--font-body-design);
+  --font-head: var(--font-head-design);
+  --font-mono: var(--font-mono-design);
   font-feature-settings: "tnum" 1, "lnum" 1;
   color-scheme: light;
+}
+
+[data-font-mode="system"] {
+  --font-body: var(--font-body-system);
+  --font-head: var(--font-head-system);
+  --font-mono: var(--font-mono-system);
 }
 
 [data-theme="refined"] {
@@ -219,6 +258,13 @@ body {
   font-family: var(--font-body);
   background-color: var(--background);
   color: var(--foreground);
+}
+
+h1,
+h2,
+h3,
+.font-head {
+  font-family: var(--font-head);
 }
 
 .font-mono {
