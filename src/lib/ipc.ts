@@ -8,6 +8,8 @@ import type {
   BillSplit,
   Building,
   EmailResult,
+  InboxConfig,
+  InboxImportResult,
   Provider,
   SmtpConfig,
   SplitRow,
@@ -36,6 +38,13 @@ export const ipc = {
   getSmtpConfig: () => invoke<SmtpConfig>("get_smtp_config"),
   saveSmtpConfig: (config: SmtpConfig) =>
     invoke<void>("save_smtp_config", { config }),
+  getInboxConfig: () => invoke<InboxConfig>("get_inbox_config"),
+  saveInboxConfig: (config: InboxConfig) =>
+    invoke<void>("save_inbox_config", { config }),
+  saveInboxPassword: (password: string) =>
+    invoke<void>("save_inbox_password", { password }),
+  testInboxConnection: (config: InboxConfig, password: string) =>
+    invoke<void>("test_inbox_connection", { config, password }),
   getAppSettings: () => invoke<AppSettings>("get_app_settings"),
   saveAppSettings: (settings: AppSettings) =>
     invoke<AppSettings>("save_app_settings", { settings }),
@@ -55,6 +64,8 @@ export const ipc = {
     invoke<Bill>("import_bill", { filePath, billingPeriodId }),
   importBills: (filePath: string, billingPeriodId: number) =>
     invoke<Bill[]>("import_bills", { filePath, billingPeriodId }),
+  importInboxAttachments: (billingPeriodId: number) =>
+    invoke<InboxImportResult[]>("import_inbox_attachments", { billingPeriodId }),
   saveBill: (bill: Bill) => invoke<Bill>("save_bill", { bill }),
   deleteBill: (id: number) => invoke<void>("delete_bill", { id }),
 

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
+import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
 
 const emptyConfig: SmtpConfig = {
   host: "",
@@ -59,7 +60,7 @@ export function SmtpSection() {
   if (isLoading) return <SettingsLoadingCard rows={5} />;
 
   return (
-    <Card className="max-w-xl overflow-hidden">
+    <Card className={`${SETTINGS_PANEL_WIDTH} overflow-hidden`}>
       <div className="border-b border-border px-5 py-4">
         <h3 className="font-head text-lg font-semibold">Email (SMTP) Settings</h3>
         <p className="mt-1 text-sm text-muted-foreground">

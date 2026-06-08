@@ -11,6 +11,10 @@ use commands::config::{
     get_providers, get_smtp_config, reset_all_data, save_apartment, save_app_settings,
     save_building, save_provider, save_smtp_config, DbState,
 };
+use commands::inbox::{
+    get_inbox_config, import_inbox_attachments, save_inbox_config, save_inbox_password,
+    test_inbox_connection,
+};
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
     generate_upn_pdf, get_smtp_password, open_preview_apartment_upns, open_preview_upn,
@@ -62,6 +66,11 @@ pub fn run() {
             delete_provider,
             get_smtp_config,
             save_smtp_config,
+            get_inbox_config,
+            save_inbox_config,
+            save_inbox_password,
+            test_inbox_connection,
+            import_inbox_attachments,
             get_app_settings,
             save_app_settings,
             reset_all_data,

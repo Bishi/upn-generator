@@ -1,12 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, CheckCircle2, FilePlus, Pencil, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, FilePlus, Mail, Pencil, Plus, Trash2, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
-import type { Bill } from "@/lib/types";
+import type { Bill, InboxImportResult } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -214,6 +214,8 @@ function BillsPage() {
   const [bills, setBills] = useState<Bill[]>(() => snapshot.bills);
   const [loadingBills, setLoadingBills] = useState(() => snapshot.bills.length === 0);
   const [importing, setImporting] = useState(false);
+  const [inboxImporting, setInboxImporting] = useState(false);
+  const [inboxResults, setInboxResults] = useState<InboxImportResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
   const loadedPeriodIdRef = useRef<number | null>(snapshot.bills.length > 0 ? selected?.id ?? null : null);
@@ -279,6 +281,23 @@ function BillsPage() {
     }
   };
 
+  const importInbox = async () => {
+    if (!selected?.id) return;
+    setError(null);
+    setInboxResults([]);
+    setInboxImporting(true);
+    try {
+      const results = await ipc.importInboxAttachments(selected.id);
+      setInboxResults(results);
+      await loadBills(selected.id);
+      notifyWorkflowStatusChanged();
+    } catch (e) {
+      setError(`Failed to import from inbox: ${e}`);
+    } finally {
+      setInboxImporting(false);
+    }
+  };
+
   const addBlankBill = async () => {
     if (!selected?.id) return;
     const blank: Bill = {
@@ -322,6 +341,9 @@ function BillsPage() {
   const totalCents = bills.reduce((s, b) => s + b.amount_cents, 0);
   const reviewBills = bills.filter((bill) => bill.parse_note?.trim());
   const cleanCount = Math.max(0, bills.length - reviewBills.length);
+  const inboxImported = inboxResults.filter((result) => result.status === "imported");
+  const inboxSkipped = inboxResults.filter((result) => result.status === "skipped_duplicate");
+  const inboxFailed = inboxResults.filter((result) => result.status === "failed");
 
   return (
     <BillingPageShell
@@ -333,6 +355,10 @@ function BillsPage() {
             <Button variant="outline" onClick={addBlankBill}>
               <Plus className="size-4 mr-2" />
               Add Bill
+            </Button>
+            <Button variant="outline" onClick={importInbox} disabled={inboxImporting}>
+              <Mail className="size-4 mr-2" />
+              {inboxImporting ? "Checking..." : "Import from Inbox"}
             </Button>
             <Button onClick={importFiles} disabled={importing}>
               <FilePlus className="size-4 mr-2" />
@@ -355,6 +381,45 @@ function BillsPage() {
       {error && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {error}
+        </div>
+      )}
+
+      {selected && inboxResults.length > 0 && (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Inbox import
+            </span>
+            <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
+              <CheckCircle2 className="size-3.5" />
+              {inboxImported.length} imported
+            </span>
+            <span className="inline-flex items-center gap-2 rounded-md bg-surface-3 px-3 py-1 text-xs font-semibold text-muted-foreground">
+              {inboxSkipped.length} skipped
+            </span>
+            {inboxFailed.length > 0 && (
+              <span className="inline-flex items-center gap-2 rounded-md bg-danger-soft px-3 py-1 text-xs font-semibold text-danger">
+                <AlertTriangle className="size-3.5" />
+                {inboxFailed.length} failed
+              </span>
+            )}
+          </div>
+          {inboxFailed.length > 0 && (
+            <div className="mt-3 space-y-1 border-t border-border pt-3">
+              {inboxFailed.map((result, index) => (
+                <div
+                  key={`${result.attachment_filename}-${index}`}
+                  className="text-xs text-muted-foreground"
+                >
+                  <span className="font-semibold text-foreground">
+                    {result.attachment_filename}
+                  </span>
+                  {": "}
+                  {result.error ?? "Import failed."}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { THEMES, useTheme, type ThemeId } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
 import {
   Card,
   CardContent,
@@ -19,7 +20,7 @@ export function AppearanceSection() {
   const { theme, setTheme } = useTheme();
 
   return (
-    <Card className="max-w-2xl overflow-hidden">
+    <Card className={`${SETTINGS_PANEL_WIDTH} overflow-hidden`}>
       <div className="border-b border-border px-5 py-4">
         <h3 className="font-head text-lg font-semibold">Appearance</h3>
         <p className="mt-1 text-sm text-muted-foreground">

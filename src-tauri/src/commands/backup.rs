@@ -56,6 +56,28 @@ fn backup_output_path(output_path: &str) -> Result<&Path, String> {
     Ok(path)
 }
 
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+        [table],
+        |_| Ok(()),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+    .map(|row| row.is_some())
+}
+
+fn attached_table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM restore_db.sqlite_master WHERE type='table' AND name=?1",
+        [table],
+        |_| Ok(()),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+    .map(|row| row.is_some())
+}
+
 #[tauri::command]
 pub fn create_db_backup(db: State<DbState>, output_path: String) -> Result<BackupFileInfo, String> {
     let backup_path = backup_output_path(&output_path)?;
@@ -71,6 +93,11 @@ pub fn create_db_backup(db: State<DbState>, output_path: String) -> Result<Backu
     backup_conn
         .execute("UPDATE smtp_config SET password='' WHERE id=1", [])
         .map_err(|e| e.to_string())?;
+    if table_exists(&backup_conn, "inbox_config")? {
+        backup_conn
+            .execute("UPDATE inbox_config SET password='' WHERE id=1", [])
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(BackupFileInfo { path: output_path })
 }
@@ -95,6 +122,9 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
     let restore_result = (|| -> Result<(), String> {
         ensure_required_tables(&conn)?;
         ensure_required_tables_on_attached(&conn)?;
+        let has_inbox_config = attached_table_exists(&conn, "inbox_config")?;
+        let has_inbox_imports = attached_table_exists(&conn, "inbox_imports")?;
+        let has_app_settings = attached_table_exists(&conn, "app_settings")?;
 
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
@@ -107,6 +137,8 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
             DELETE FROM providers;
             DELETE FROM building;
             DELETE FROM smtp_config;
+            DELETE FROM inbox_imports;
+            DELETE FROM inbox_config;
             DELETE FROM app_settings;
             ",
         )
@@ -168,15 +200,48 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
         )
         .map_err(|e| e.to_string())?;
 
-        let has_app_settings = tx
-            .query_row(
-                "SELECT 1 FROM restore_db.sqlite_master WHERE type='table' AND name='app_settings'",
+        if has_inbox_config {
+            tx.execute(
+                "INSERT INTO inbox_config (
+                    id, host, port, username, password, use_tls, folder,
+                    days_to_scan, sender_allowlist
+                 )
+                 SELECT
+                    id, host, port, username, '', use_tls, folder,
+                    days_to_scan, sender_allowlist
+                 FROM restore_db.inbox_config WHERE id=1",
                 [],
-                |_| Ok(()),
             )
-            .optional()
-            .map_err(|e| e.to_string())?
-            .is_some();
+            .map_err(|e| e.to_string())?;
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO inbox_config (
+                id, host, port, username, password, use_tls, folder,
+                days_to_scan, sender_allowlist
+             ) VALUES (1, '', 993, '', '', 1, 'INBOX', 45, '')",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+        if has_inbox_imports {
+            tx.execute_batch(
+                "
+                INSERT INTO inbox_imports (
+                    id, billing_period_id, folder, uid_validity, message_uid,
+                    message_id, sender, subject, attachment_filename,
+                    attachment_sha256, bill_ids, bill_count, status,
+                    error_text, imported_at
+                )
+                SELECT
+                    id, billing_period_id, folder, uid_validity, message_uid,
+                    message_id, sender, subject, attachment_filename,
+                    attachment_sha256, bill_ids, bill_count, status,
+                    error_text, imported_at
+                FROM restore_db.inbox_imports;
+                ",
+            )
+            .map_err(|e| e.to_string())?;
+        }
 
         if has_app_settings {
             tx.execute(

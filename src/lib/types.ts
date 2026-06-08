@@ -50,6 +50,17 @@ export interface SmtpConfig {
   use_tls: boolean;
 }
 
+export interface InboxConfig {
+  host: string;
+  port: number;
+  username: string;
+  use_tls: boolean;
+  folder: string;
+  days_to_scan: number;
+  sender_allowlist: string;
+  password_configured: boolean;
+}
+
 export interface AppSettings {
   theme: string;
 }
@@ -125,6 +136,17 @@ export interface EmailResult {
   apartment_label: string;
   email: string;
   success: boolean;
+  error: string | null;
+}
+
+export interface InboxImportResult {
+  sender: string;
+  subject: string;
+  attachment_filename: string;
+  status: "imported" | "skipped_duplicate" | "failed";
+  bill_ids: number[];
+  bill_count: number;
+  skipped_reason: string | null;
   error: string | null;
 }
 

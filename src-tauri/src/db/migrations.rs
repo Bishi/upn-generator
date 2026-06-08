@@ -340,6 +340,38 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
 
         INSERT OR IGNORE INTO smtp_config (id) VALUES (1);
 
+        CREATE TABLE IF NOT EXISTS inbox_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            host TEXT NOT NULL DEFAULT '',
+            port INTEGER NOT NULL DEFAULT 993,
+            username TEXT NOT NULL DEFAULT '',
+            password TEXT NOT NULL DEFAULT '',
+            use_tls INTEGER NOT NULL DEFAULT 1,
+            folder TEXT NOT NULL DEFAULT 'INBOX',
+            days_to_scan INTEGER NOT NULL DEFAULT 45,
+            sender_allowlist TEXT NOT NULL DEFAULT ''
+        );
+
+        INSERT OR IGNORE INTO inbox_config (id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS inbox_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            billing_period_id INTEGER NOT NULL REFERENCES billing_periods(id),
+            folder TEXT NOT NULL DEFAULT '',
+            uid_validity INTEGER,
+            message_uid INTEGER,
+            message_id TEXT NOT NULL DEFAULT '',
+            sender TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            attachment_filename TEXT NOT NULL DEFAULT '',
+            attachment_sha256 TEXT NOT NULL DEFAULT '',
+            bill_ids TEXT NOT NULL DEFAULT '',
+            bill_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT '',
+            error_text TEXT NOT NULL DEFAULT '',
+            imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS app_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             theme TEXT NOT NULL DEFAULT 'refined'
@@ -395,6 +427,11 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_apartment_label ON apartments(building_id, label)",
         [],
     );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_imports_period_hash_status
+         ON inbox_imports(billing_period_id, attachment_sha256, status)",
+        [],
+    );
 
     let building_name: String = conn
         .query_row("SELECT name FROM building WHERE id=1", [], |row| row.get(0))
@@ -434,11 +471,16 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
         DELETE FROM bill_splits;
         DELETE FROM bills;
         DELETE FROM billing_periods;
+        DELETE FROM inbox_imports;
         DELETE FROM apartments;
         DELETE FROM providers;
         UPDATE building SET name='', address='', city='', postal_code='' WHERE id=1;
         UPDATE smtp_config
         SET host='', port=587, username='', from_email='', use_tls=1, password=''
+        WHERE id=1;
+        UPDATE inbox_config
+        SET host='', port=993, username='', password='', use_tls=1, folder='INBOX',
+            days_to_scan=45, sender_allowlist=''
         WHERE id=1;
         UPDATE app_settings SET theme='refined' WHERE id=1;
         ",

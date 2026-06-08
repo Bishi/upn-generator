@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
 
 function backupFilename() {
   const now = new Date();
@@ -115,7 +116,7 @@ export function DataSection() {
   };
 
   return (
-    <div className="grid max-w-4xl gap-4 xl:grid-cols-[1fr_0.9fr]">
+    <div className={`${SETTINGS_PANEL_WIDTH} grid gap-4`}>
       <Card className="overflow-hidden">
         <div className="border-b border-border px-5 py-4">
           <h3 className="font-head text-lg font-semibold">Data Backup</h3>

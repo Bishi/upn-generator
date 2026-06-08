@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
 import { cn } from "@/lib/utils";
 
 export function SettingsLoadingCard({
@@ -9,7 +10,7 @@ export function SettingsLoadingCard({
   rows?: number;
 }) {
   return (
-    <Card className={cn("max-w-lg", className)}>
+    <Card className={cn(SETTINGS_PANEL_WIDTH, className)}>
       <CardHeader>
         <div className="h-5 w-44 rounded-md bg-surface-3" />
         <div className="mt-2 h-4 w-72 max-w-full rounded-md bg-surface-3" />
