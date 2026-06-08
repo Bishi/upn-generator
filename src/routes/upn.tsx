@@ -98,11 +98,17 @@ function ApartmentRows({
 
   return (
     <Fragment>
-      <tr className="border-b border-border hover:bg-accent/10">
+      <tr
+        className="cursor-pointer border-b border-border hover:bg-accent/10"
+        onClick={onToggle}
+      >
         <td className="px-3 py-3">
           <button
             type="button"
-            onClick={onToggle}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
             className="flex min-w-0 items-center gap-2 text-left"
           >
             <ChevronDown
@@ -160,7 +166,7 @@ function ApartmentRows({
         <td className="px-3 py-3 text-right font-mono font-semibold">
           {formatEur(total)} EUR
         </td>
-        <td className="px-3 py-3">
+        <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
           <Button
             variant="ghost"
             size="sm"
