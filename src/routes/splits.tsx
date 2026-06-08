@@ -8,7 +8,7 @@ import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/splits")({
@@ -308,14 +308,14 @@ function SplitsPage() {
           <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="bg-surface-2 text-xs font-medium text-muted-foreground">
-                <th className="sticky left-0 z-10 min-w-48 bg-surface-2 px-3 py-2 text-left">
+                <th className="sticky left-0 z-10 min-w-48 bg-surface-2 px-3 pt-3.5 pb-2.5 text-left">
                   Bill
                 </th>
-                <th className="border-r border-border-2 px-3 py-2 text-right">
+                <th className="border-r border-border-2 px-3 pt-3.5 pb-2.5 text-right">
                   Total
                 </th>
                 {apartments.map(([id, apt]) => (
-                  <th key={id} className="px-3 py-2 text-right whitespace-nowrap">
+                  <th key={id} className="px-3 pt-3.5 pb-2.5 text-right whitespace-nowrap">
                     <div>{apt.label}</div>
                     <div className="text-[11px] font-normal text-muted-foreground">
                       {apt.unitCode || "No code"}
@@ -326,8 +326,11 @@ function SplitsPage() {
             </thead>
             <tbody>
               {bills.map(([billId, info]) => (
-                <tr key={billId} className="border-t border-border hover:bg-accent/10">
-                  <td className="sticky left-0 z-10 bg-card px-3 py-2">
+                <tr
+                  key={billId}
+                  className="border-t border-border odd:bg-card even:bg-surface-2/50 hover:bg-accent/10"
+                >
+                  <td className="sticky left-0 z-10 bg-inherit px-3 py-2">
                     <div className="flex items-start gap-2 max-w-56">
                       {info.parseNote && <ReviewIndicator note={info.parseNote} />}
                       <div className="min-w-0">
@@ -391,7 +394,7 @@ function SplitsPage() {
         <div className="flex justify-end">
           <Link
             to="/upn"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+            className={buttonVariants()}
           >
             Continue to UPN Preview
           </Link>

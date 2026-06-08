@@ -9,7 +9,7 @@ import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Bill } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/bills")({
@@ -407,13 +407,13 @@ function BillsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
-                  <th className="w-8 px-3 py-2"></th>
-                  <th className="px-3 py-2">Provider</th>
-                  <th className="px-3 py-2">Reference</th>
-                  <th className="px-3 py-2">Due Date</th>
-                  <th className="px-3 py-2">Detection</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
-                  <th className="px-3 py-2"></th>
+                  <th className="w-8 px-3 pt-3.5 pb-2.5"></th>
+                  <th className="px-3 pt-3.5 pb-2.5">Provider</th>
+                  <th className="px-3 pt-3.5 pb-2.5">Reference</th>
+                  <th className="px-3 pt-3.5 pb-2.5">Due Date</th>
+                  <th className="px-3 pt-3.5 pb-2.5">Detection</th>
+                  <th className="px-3 pt-3.5 pb-2.5 text-right">Amount</th>
+                  <th className="px-3 pt-3.5 pb-2.5"></th>
                 </tr>
               </thead>
               <tbody>
@@ -450,7 +450,7 @@ function BillsPage() {
         <div className="flex justify-end">
           <Link
             to="/splits"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+            className={buttonVariants()}
           >
             Continue to Splits
           </Link>

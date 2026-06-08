@@ -17,7 +17,7 @@ import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Apartment, EmailResult, SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
 
 export const Route = createFileRoute("/upn")({
@@ -402,7 +402,7 @@ function UpnPage() {
               <span>No splits found. Go to Splits and click Recalculate first.</span>
               <Link
                 to="/splits"
-                className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+                className={buttonVariants()}
               >
                 Go to Splits
               </Link>
@@ -416,11 +416,11 @@ function UpnPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
-                <th className="px-3 py-2">Apartment</th>
-                <th className="px-3 py-2">Recipient</th>
-                <th className="px-3 py-2 text-right">Status</th>
-                <th className="px-3 py-2 text-right">Total</th>
-                <th className="w-32 px-3 py-2"></th>
+                <th className="px-3 pt-3.5 pb-2.5">Apartment</th>
+                <th className="px-3 pt-3.5 pb-2.5">Recipient</th>
+                <th className="px-3 pt-3.5 pb-2.5 text-right">Status</th>
+                <th className="px-3 pt-3.5 pb-2.5 text-right">Total</th>
+                <th className="w-32 px-3 pt-3.5 pb-2.5"></th>
               </tr>
             </thead>
             <tbody>

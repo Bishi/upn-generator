@@ -55,20 +55,29 @@ function DashboardPage() {
   const [downloading, setDownloading] = useState(false);
 
   const history = useMemo<PeriodTotal[]>(
-    () =>
-      [...allPeriods]
-        .filter((period): period is BillingPeriod & { id: number } => period.id != null)
-        .sort((a, b) => {
-          if (a.year !== b.year) return b.year - a.year;
-          return b.month - a.month;
+    () => {
+      const now = new Date();
+      const anchorYear = selected?.year ?? now.getFullYear();
+      const anchorMonth = selected?.month ?? now.getMonth() + 1;
+      const anchorValue = anchorYear * 12 + anchorMonth;
+
+      return [...allPeriods]
+        .filter((period): period is BillingPeriod & { id: number } => {
+          if (period.id == null) return false;
+          const periodValue = period.year * 12 + period.month;
+          return periodValue <= anchorValue;
         })
-        .slice(0, 6)
-        .reverse()
+        .sort((a, b) => {
+          if (a.year !== b.year) return a.year - b.year;
+          return a.month - b.month;
+        })
+        .slice(-6)
         .map((period) => ({
           period,
           totalCents: snapshot.periodStatuses.get(period.id)?.totalCents ?? 0,
-        })),
-    [allPeriods, snapshot.periodStatuses],
+        }));
+    },
+    [allPeriods, selected, snapshot.periodStatuses],
   );
 
   const totalCents = bills.reduce((sum, bill) => sum + bill.amount_cents, 0);
@@ -368,27 +377,44 @@ function DashboardPage() {
                   History appears after bills are imported.
                 </div>
               ) : (
-                history.map((entry) => (
-                  <div
-                    key={entry.period.id}
-                    className="flex h-full flex-1 flex-col justify-end gap-1"
-                  >
+                history.map((entry) => {
+                  const monthLabel = `${MONTHS[entry.period.month - 1]} ${entry.period.year}`;
+                  const totalLabel = `${formatEur(entry.totalCents)} EUR`;
+                  const isSelected = entry.period.id === selected?.id;
+
+                  return (
                     <div
-                      className={`min-h-1 rounded-t ${
-                        entry.period.id === selected?.id ? "bg-primary" : "bg-accent-soft-2"
-                      }`}
-                      style={{
-                        height: `${Math.max(
-                          6,
-                          Math.round((entry.totalCents / maxHistory) * 60),
-                        )}px`,
-                      }}
-                    />
-                    <span className="text-center text-[10px] text-muted-foreground">
-                      {MONTHS[entry.period.month - 1].slice(0, 3)}
-                    </span>
-                  </div>
-                ))
+                      key={entry.period.id}
+                      tabIndex={0}
+                      role="img"
+                      aria-label={`${monthLabel}: ${totalLabel}`}
+                      className="group relative flex h-full flex-1 cursor-default flex-col justify-end gap-1 rounded-sm outline-none"
+                    >
+                      <span className="pointer-events-none absolute bottom-7 left-1/2 z-10 w-max max-w-32 -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-center text-[11px] font-semibold text-popover-foreground opacity-0 shadow-pop ring-1 ring-border transition duration-150 group-hover:-translate-y-1 group-hover:opacity-100 group-focus-visible:-translate-y-1 group-focus-visible:opacity-100">
+                        <span className="block font-mono">{totalLabel}</span>
+                        <span className="block text-[10px] font-medium text-muted-foreground">
+                          {monthLabel}
+                        </span>
+                      </span>
+                      <div
+                        className={`min-h-1 rounded-t transition duration-150 group-hover:-translate-y-0.5 group-hover:shadow-sm group-focus-visible:-translate-y-0.5 ${
+                          isSelected
+                            ? "bg-primary group-hover:bg-accent-strong"
+                            : "bg-accent-soft-2 group-hover:bg-primary"
+                        }`}
+                        style={{
+                          height: `${Math.max(
+                            6,
+                            Math.round((entry.totalCents / maxHistory) * 60),
+                          )}px`,
+                        }}
+                      />
+                      <span className="text-center text-[10px] text-muted-foreground">
+                        {MONTHS[entry.period.month - 1].slice(0, 3)}
+                      </span>
+                    </div>
+                  );
+                })
               )}
             </div>
           </Card>

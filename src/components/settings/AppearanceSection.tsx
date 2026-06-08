@@ -9,6 +9,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
+const THEME_SWATCHES: Record<ThemeId, [string, string, string]> = {
+  refined: ["#3d7558", "#dff0e8", "#f6ead4"],
+  crisp: ["#2f5bea", "#e9eefe", "#fbefdc"],
+  official: ["#da3a52", "#fbe6ea", "#f7ead3"],
+};
+
 export function AppearanceSection() {
   const { theme, setTheme } = useTheme();
 
@@ -72,9 +78,13 @@ function ThemeOption({
         {description}
       </span>
       <span className="mt-4 flex gap-1.5" aria-hidden="true">
-        <span className="h-2 flex-1 rounded-full bg-primary" />
-        <span className="h-2 flex-1 rounded-full bg-accent-soft" />
-        <span className="h-2 flex-1 rounded-full bg-warning-soft" />
+        {THEME_SWATCHES[id].map((color) => (
+          <span
+            key={color}
+            className="h-2 flex-1 rounded-full"
+            style={{ backgroundColor: color }}
+          />
+        ))}
       </span>
     </button>
   );
