@@ -201,7 +201,7 @@ export function InboxSection() {
                 type="checkbox"
                 checked={form.use_tls}
                 onChange={(event) => setForm({ ...form, use_tls: event.target.checked })}
-                className="size-4"
+                className="size-4 accent-primary"
               />
               Use TLS
             </label>

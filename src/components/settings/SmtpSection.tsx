@@ -136,7 +136,7 @@ export function SmtpSection() {
               id="use_tls"
               checked={form.use_tls}
               onChange={(e) => setForm({ ...form, use_tls: e.target.checked })}
-              className="size-4"
+              className="size-4 accent-primary"
             />
             <Label htmlFor="use_tls">Use TLS/STARTTLS</Label>
           </div>

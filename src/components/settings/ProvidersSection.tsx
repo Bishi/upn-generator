@@ -316,7 +316,7 @@ function ProviderDetail({
                     split_basis: event.target.value as Provider["split_basis"],
                   })
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-card focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <option value="m2_percentage">{splitBasisLongLabel("m2_percentage")}</option>
                 <option value="occupants">{splitBasisLongLabel("occupants")}</option>
@@ -379,7 +379,7 @@ function ProviderDetail({
                   onChange={(event) =>
                     onChange({ ...provider, purpose_code: event.target.value })
                   }
-                  className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 font-mono text-sm shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 font-mono text-sm shadow-card focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
                   {PURPOSE_CODES.map((code) => (
                     <option key={code} value={code}>
