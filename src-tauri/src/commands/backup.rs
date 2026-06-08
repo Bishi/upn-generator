@@ -107,6 +107,7 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
             DELETE FROM providers;
             DELETE FROM building;
             DELETE FROM smtp_config;
+            DELETE FROM app_settings;
             ",
         )
         .map_err(|e| e.to_string())?;
@@ -164,6 +165,36 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
             SELECT id, host, port, username, from_email, use_tls, ''
             FROM restore_db.smtp_config;
             ",
+        )
+        .map_err(|e| e.to_string())?;
+
+        let has_app_settings = tx
+            .query_row(
+                "SELECT 1 FROM restore_db.sqlite_master WHERE type='table' AND name='app_settings'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .is_some();
+
+        if has_app_settings {
+            tx.execute(
+                "INSERT INTO app_settings (id, theme)
+                 SELECT id, theme FROM restore_db.app_settings WHERE id=1",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            tx.execute(
+                "INSERT INTO app_settings (id, theme) VALUES (1, 'refined')",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO app_settings (id, theme) VALUES (1, 'refined')",
+            [],
         )
         .map_err(|e| e.to_string())?;
 

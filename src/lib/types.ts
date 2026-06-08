@@ -50,6 +50,10 @@ export interface SmtpConfig {
   use_tls: boolean;
 }
 
+export interface AppSettings {
+  theme: string;
+}
+
 export interface BackupFileInfo {
   path: string;
 }

@@ -13,12 +13,13 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `rusqlite` (bundled) is used directly - no `tauri-plugin-sql`
 - TanStack Router route tree is auto-generated at `src/routeTree.gen.ts` - do not edit manually
 - No `tailwind.config.js` - Tailwind v4 config is inline via CSS
-- Theme colors are tokenized in `src/index.css`; refined is the CSS fallback/default theme, with crisp and official available through local UI preference state
+- Theme colors are tokenized in `src/index.css`; refined is the CSS fallback/default theme, and the selected theme is stored in the SQLite `app_settings` singleton row so it is included in backups
 - Main DB lives at `%APPDATA%\si.upn-generator\upn-generator.db`
 - Manual backups are user-chosen `.sqlite3` SQLite snapshots created from the live DB
 - Manual backups intentionally blank `smtp_config.password`
 - `building` table always has exactly 1 row (`id=1`)
 - `smtp_config` table always has exactly 1 row (`id=1`)
+- `app_settings` table always has exactly 1 row (`id=1`) for database-backed UI preferences such as theme
 - Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
 - Apartment `contact_email` remains the persisted field name and supports comma-separated recipients
 - Provider split logic is configured per provider via `split_basis` (`occupants`, `m2_percentage`, or `equal_apartments`)
@@ -34,7 +35,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
 - `src/routes/settings.tsx` - Settings page (6 tabs, including Appearance and Data backup/restore)
 - `src/components/settings/` - per-tab setting components
-- `src/lib/theme.tsx` - local theme preference runtime (`refined`, `crisp`, `official`)
+- `src/lib/theme.tsx` - database-backed theme preference runtime
 - `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
 - `src-tauri/src/commands/splits.rs` - split calculation logic
 - `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, and email sending

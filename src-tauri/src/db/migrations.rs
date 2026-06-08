@@ -339,6 +339,13 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         );
 
         INSERT OR IGNORE INTO smtp_config (id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            theme TEXT NOT NULL DEFAULT 'refined'
+        );
+
+        INSERT OR IGNORE INTO app_settings (id, theme) VALUES (1, 'refined');
         ",
     )
     .map_err(|e| e.to_string())?;
@@ -433,6 +440,7 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
         UPDATE smtp_config
         SET host='', port=587, username='', from_email='', use_tls=1, password=''
         WHERE id=1;
+        UPDATE app_settings SET theme='refined' WHERE id=1;
         ",
     )
     .map_err(|e| e.to_string())?;

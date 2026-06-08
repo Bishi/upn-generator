@@ -26,8 +26,8 @@ export function AppearanceSection() {
       <CardHeader>
         <CardTitle>Appearance</CardTitle>
         <CardDescription>
-          Switch between tokenized visual themes. This preference is saved only
-          on this device.
+          Switch between tokenized visual themes. This preference is saved in
+          the app database and included in backups.
         </CardDescription>
       </CardHeader>
       <CardContent>

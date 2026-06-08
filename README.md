@@ -66,11 +66,11 @@ Gmail note: you must create an **App Password** in your Google Account security 
 
 ### Settings -> Appearance
 
-Choose the app theme. **Refined** is the default and the polished production direction. **Crisp** and **Official** are available for visual testing. The choice is saved on this device only.
+Choose the app theme. **Refined** is the default and the polished production direction. The selected theme is saved in the app database and included in manual backups.
 
 ### Settings -> Data
 
-Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, and splits.
+Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme.
 
 Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, the SMTP password is not included in backups, so after restore you must enter it again in **Settings -> Email** before sending emails.
 
@@ -152,7 +152,7 @@ Six tabs for configuring the application:
 - **Apartments** - List of apartments with names, unit codes, occupants, m2 percentages, and comma-separated email recipients
 - **Providers** - Utility providers with IBANs, purpose text templates, and split basis rules (`People`, `m2`, or `Equal`)
 - **Email** - SMTP settings for sending emails
-- **Appearance** - Local visual theme selector (`Refined`, `Crisp`, `Official`)
+- **Appearance** - Database-backed visual theme selector
 - **Data** - Manual SQLite backup and restore
 
 ---
@@ -165,9 +165,7 @@ All data is stored locally in a SQLite database at:
 %APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data but intentionally exclude the saved SMTP password.
-
-The selected appearance theme is stored in local browser/app storage under `upn-generator.theme`. It is not included in SQLite backups. If the value is missing or invalid, the app falls back to the refined theme.
+Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data and the selected appearance theme, but intentionally exclude the saved SMTP password.
 
 Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings.
 

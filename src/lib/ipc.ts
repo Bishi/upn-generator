@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppSettings,
   Apartment,
   BackupFileInfo,
   Bill,
@@ -35,6 +36,9 @@ export const ipc = {
   getSmtpConfig: () => invoke<SmtpConfig>("get_smtp_config"),
   saveSmtpConfig: (config: SmtpConfig) =>
     invoke<void>("save_smtp_config", { config }),
+  getAppSettings: () => invoke<AppSettings>("get_app_settings"),
+  saveAppSettings: (settings: AppSettings) =>
+    invoke<AppSettings>("save_app_settings", { settings }),
   resetAllData: () => invoke<void>("reset_all_data"),
 
   // Billing periods

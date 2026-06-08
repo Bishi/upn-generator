@@ -7,9 +7,9 @@ use commands::bills::{
     get_billing_periods, get_bills, import_bill, import_bills, save_bill,
 };
 use commands::config::{
-    delete_apartment, delete_provider, get_apartments, get_building, get_providers,
-    get_smtp_config, reset_all_data, save_apartment, save_building, save_provider,
-    save_smtp_config, DbState,
+    delete_apartment, delete_provider, get_apartments, get_app_settings, get_building,
+    get_providers, get_smtp_config, reset_all_data, save_apartment, save_app_settings,
+    save_building, save_provider, save_smtp_config, DbState,
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
@@ -62,6 +62,8 @@ pub fn run() {
             delete_provider,
             get_smtp_config,
             save_smtp_config,
+            get_app_settings,
+            save_app_settings,
             reset_all_data,
             // Bills
             get_billing_periods,
