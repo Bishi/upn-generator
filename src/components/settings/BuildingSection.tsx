@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 
 const emptyBuilding: Building = {
   id: null,
@@ -44,7 +45,7 @@ export function BuildingSection() {
     mutation.mutate(form);
   };
 
-  if (isLoading) return <div className="text-muted-foreground text-sm">Loading...</div>;
+  if (isLoading) return <SettingsLoadingCard />;
 
   return (
     <Card className="max-w-lg">

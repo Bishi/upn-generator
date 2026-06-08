@@ -4,6 +4,7 @@ import { RefreshCw, Check, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
@@ -132,12 +133,16 @@ function EditableCell({
 }
 
 function SplitsPage() {
-  const [splits, setSplits] = useState<SplitRow[]>([]);
-  const [loadingSplits, setLoadingSplits] = useState(false);
+  const { selected } = useBillingPeriodSelection();
+  const snapshot = useWorkflowSnapshotContext();
+  const [splits, setSplits] = useState<SplitRow[]>(() => snapshot.splits);
+  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.splits.length === 0);
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const { selected } = useBillingPeriodSelection();
+  const loadedPeriodIdRef = useRef<number | null>(
+    snapshot.splits.length > 0 ? selected?.id ?? null : null,
+  );
 
   const loadSplits = async (periodId: number) => {
     const rows = await ipc.getSplits(periodId);
@@ -152,13 +157,19 @@ function SplitsPage() {
       return;
     }
 
-    setSplits([]);
-    setLoadingSplits(true);
-    void ipc.getSplits(selected.id).then((rows) => {
-      if (loadRequestRef.current !== requestId) return;
-      setSplits(rows);
-      setLoadingSplits(false);
-    });
+    if (loadedPeriodIdRef.current !== selected.id || splits.length === 0) {
+      setLoadingSplits(true);
+    }
+    void ipc
+      .getSplits(selected.id)
+      .then((rows) => {
+        if (loadRequestRef.current !== requestId) return;
+        setSplits(rows);
+        loadedPeriodIdRef.current = selected.id;
+      })
+      .finally(() => {
+        if (loadRequestRef.current === requestId) setLoadingSplits(false);
+      });
     return () => {
       loadRequestRef.current += 1;
     };

@@ -2,12 +2,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Plus, Pencil, Trash2, Users, X, Save, Percent } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Apartment } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { cn } from "@/lib/utils";
 
 const newApartment = (): Apartment => ({
@@ -27,9 +29,11 @@ const newApartment = (): Apartment => ({
 
 export function ApartmentsSection() {
   const queryClient = useQueryClient();
+  const snapshot = useWorkflowSnapshotContext();
   const { data: apartments = [], isLoading } = useQuery({
     queryKey: ["apartments"],
     queryFn: ipc.getApartments,
+    initialData: snapshot.apartments.length > 0 ? snapshot.apartments : undefined,
   });
   const { data: building } = useQuery({
     queryKey: ["building"],
@@ -76,7 +80,7 @@ export function ApartmentsSection() {
     if (editing) saveMutation.mutate(editing);
   };
 
-  if (isLoading) return <div className="text-muted-foreground text-sm">Loading...</div>;
+  if (isLoading) return <SettingsLoadingCard className="max-w-none" rows={3} />;
 
   return (
     <div className="space-y-4">

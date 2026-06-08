@@ -12,7 +12,10 @@ import {
 import { BillingPeriodSelectionProvider } from "@/lib/billing-period-selection";
 import { WorkflowContextBar } from "@/components/WorkflowContextBar";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import { useWorkflowSnapshot } from "@/lib/workflow-snapshot";
+import {
+  useWorkflowSnapshotContext,
+  WorkflowSnapshotProvider,
+} from "@/lib/workflow-snapshot";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -72,12 +75,21 @@ function RootLayout() {
 function ShellContent() {
   const location = useLocation();
   const { allPeriods, selected } = useBillingPeriodSelection();
-  const snapshot = useWorkflowSnapshot(selected?.id, allPeriods);
   const showContextBar =
     location.pathname === "/" ||
     location.pathname.startsWith("/bills") ||
     location.pathname.startsWith("/splits") ||
     location.pathname.startsWith("/upn");
+
+  return (
+    <WorkflowSnapshotProvider selectedPeriodId={selected?.id} periods={allPeriods}>
+      <ShellFrame showContextBar={showContextBar} />
+    </WorkflowSnapshotProvider>
+  );
+}
+
+function ShellFrame({ showContextBar }: { showContextBar: boolean }) {
+  const snapshot = useWorkflowSnapshotContext();
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

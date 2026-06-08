@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ipc } from "@/lib/ipc";
 import { subscribeWorkflowStatusChanged } from "@/lib/workflow-status";
 import type { Apartment, Bill, BillingPeriod, Provider, SplitRow } from "@/lib/types";
@@ -25,6 +35,8 @@ export type WorkflowSnapshot = {
   selectedStatus: PeriodStatus;
   refresh: () => Promise<void>;
 };
+
+const WorkflowSnapshotContext = createContext<WorkflowSnapshot | null>(null);
 
 export const EMPTY_PERIOD_STATUS: PeriodStatus = {
   bills: false,
@@ -155,4 +167,32 @@ export function useWorkflowSnapshot(
     selectedStatus,
     refresh,
   };
+}
+
+export function WorkflowSnapshotProvider({
+  selectedPeriodId,
+  periods,
+  children,
+}: {
+  selectedPeriodId: number | null | undefined;
+  periods: BillingPeriod[];
+  children: ReactNode;
+}) {
+  const snapshot = useWorkflowSnapshot(selectedPeriodId, periods);
+
+  return createElement(
+    WorkflowSnapshotContext.Provider,
+    { value: snapshot },
+    children,
+  );
+}
+
+export function useWorkflowSnapshotContext() {
+  const snapshot = useContext(WorkflowSnapshotContext);
+  if (!snapshot) {
+    throw new Error(
+      "useWorkflowSnapshotContext must be used inside WorkflowSnapshotProvider.",
+    );
+  }
+  return snapshot;
 }

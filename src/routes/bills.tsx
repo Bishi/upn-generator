@@ -5,6 +5,7 @@ import { AlertTriangle, Check, CheckCircle2, FilePlus, Pencil, Plus, Trash2, X }
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Bill } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
@@ -208,12 +209,14 @@ function BillRow({
 }
 
 function BillsPage() {
-  const [bills, setBills] = useState<Bill[]>([]);
-  const [loadingBills, setLoadingBills] = useState(false);
+  const { selected } = useBillingPeriodSelection();
+  const snapshot = useWorkflowSnapshotContext();
+  const [bills, setBills] = useState<Bill[]>(() => snapshot.bills);
+  const [loadingBills, setLoadingBills] = useState(() => snapshot.bills.length === 0);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const { selected } = useBillingPeriodSelection();
+  const loadedPeriodIdRef = useRef<number | null>(snapshot.bills.length > 0 ? selected?.id ?? null : null);
 
   const loadBills = async (periodId: number) => {
     const bs = await ipc.getBills(periodId);
@@ -228,13 +231,19 @@ function BillsPage() {
       return;
     }
 
-    setBills([]);
-    setLoadingBills(true);
-    void ipc.getBills(selected.id).then((bs) => {
-      if (loadRequestRef.current !== requestId) return;
-      setBills(bs);
-      setLoadingBills(false);
-    });
+    if (loadedPeriodIdRef.current !== selected.id || bills.length === 0) {
+      setLoadingBills(true);
+    }
+    void ipc
+      .getBills(selected.id)
+      .then((bs) => {
+        if (loadRequestRef.current !== requestId) return;
+        setBills(bs);
+        loadedPeriodIdRef.current = selected.id;
+      })
+      .finally(() => {
+        if (loadRequestRef.current === requestId) setLoadingBills(false);
+      });
     return () => {
       loadRequestRef.current += 1;
     };

@@ -2,12 +2,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Plus, Pencil, Trash2, X, Save, ChevronDown, ChevronUp } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Provider } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 
 const PURPOSE_CODES = ["OTHR", "ENRG", "WTER", "SCVE", "SALA", "RENT", "COST"];
 
@@ -43,9 +45,11 @@ function splitBasisLabel(splitBasis: Provider["split_basis"]) {
 
 export function ProvidersSection() {
   const queryClient = useQueryClient();
+  const snapshot = useWorkflowSnapshotContext();
   const { data: providers = [], isLoading } = useQuery({
     queryKey: ["providers"],
     queryFn: ipc.getProviders,
+    initialData: snapshot.providers.length > 0 ? snapshot.providers : undefined,
   });
 
   const [editing, setEditing] = useState<Provider | null>(null);
@@ -71,7 +75,7 @@ export function ProvidersSection() {
     if (editing) saveMutation.mutate(editing);
   };
 
-  if (isLoading) return <div className="text-muted-foreground text-sm">Loading...</div>;
+  if (isLoading) return <SettingsLoadingCard className="max-w-xl" rows={3} />;
 
   return (
     <div className="space-y-4">

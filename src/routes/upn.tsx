@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Apartment, EmailResult, SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
@@ -215,32 +216,59 @@ function ApartmentRows({
 }
 
 function UpnPage() {
-  const [splits, setSplits] = useState<SplitRow[]>([]);
-  const [apartmentsConfig, setApartmentsConfig] = useState<Apartment[]>([]);
-  const [loadingSplits, setLoadingSplits] = useState(false);
+  const { selected } = useBillingPeriodSelection();
+  const snapshot = useWorkflowSnapshotContext();
+  const [splits, setSplits] = useState<SplitRow[]>(() => snapshot.splits);
+  const [apartmentsConfig, setApartmentsConfig] = useState<Apartment[]>(
+    () => snapshot.apartments,
+  );
+  const [loadingApartments, setLoadingApartments] = useState(
+    () => snapshot.apartments.length === 0,
+  );
+  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.splits.length === 0);
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const { selected } = useBillingPeriodSelection();
+  const loadedPeriodIdRef = useRef<number | null>(
+    snapshot.splits.length > 0 ? selected?.id ?? null : null,
+  );
   const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
 
   useEffect(() => {
-    void ipc.getApartments().then(setApartmentsConfig);
+    let cancelled = false;
+    if (apartmentsConfig.length === 0) setLoadingApartments(true);
+    void ipc
+      .getApartments()
+      .then((apartments) => {
+        if (!cancelled) setApartmentsConfig(apartments);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingApartments(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     const requestId = ++loadRequestRef.current;
     if (selected?.id) {
       setEmailResults([]);
-      setSplits([]);
-      setLoadingSplits(true);
-      void ipc.getSplits(selected.id).then((rows) => {
-        if (loadRequestRef.current !== requestId) return;
-        setSplits(rows);
-        setLoadingSplits(false);
-      });
+      if (loadedPeriodIdRef.current !== selected.id || splits.length === 0) {
+        setLoadingSplits(true);
+      }
+      void ipc
+        .getSplits(selected.id)
+        .then((rows) => {
+          if (loadRequestRef.current !== requestId) return;
+          setSplits(rows);
+          loadedPeriodIdRef.current = selected.id;
+        })
+        .finally(() => {
+          if (loadRequestRef.current === requestId) setLoadingSplits(false);
+        });
     } else {
       setSplits([]);
       setLoadingSplits(false);
@@ -301,6 +329,7 @@ function UpnPage() {
     hasSendableRecipient(apartment.contactEmail),
   ).length;
   const missingRecipientCount = Math.max(0, apartments.length - readyRecipientCount);
+  const loadingUpnData = loadingSplits || loadingApartments;
 
   return (
     <BillingPageShell
@@ -332,7 +361,7 @@ function UpnPage() {
         </div>
       )}
 
-      {!loadingSplits && apartments.length > 0 && (
+      {!loadingUpnData && apartments.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
           <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
             <CheckCircle2 className="size-3.5" />
@@ -361,7 +390,7 @@ function UpnPage() {
 
       {selected && splits.length === 0 && (
         <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground min-h-[132px] flex items-center justify-center">
-          {loadingSplits ? (
+          {loadingUpnData ? (
             <div className="text-center">
               <div className="text-sm font-medium text-foreground">Loading UPN data...</div>
               <div className="text-sm text-muted-foreground">
@@ -382,7 +411,7 @@ function UpnPage() {
         </div>
       )}
 
-      {!loadingSplits && apartments.length > 0 && (
+      {!loadingUpnData && apartments.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
           <table className="w-full text-sm">
             <thead>

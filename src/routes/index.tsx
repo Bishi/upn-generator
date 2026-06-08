@@ -24,7 +24,7 @@ import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import type { BillingPeriod, Provider } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
 import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
-import { useWorkflowSnapshot } from "@/lib/workflow-snapshot";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
@@ -47,7 +47,7 @@ type ProviderRow = {
 
 function DashboardPage() {
   const { allPeriods, selected } = useBillingPeriodSelection();
-  const snapshot = useWorkflowSnapshot(selected?.id, allPeriods);
+  const snapshot = useWorkflowSnapshotContext();
   const { apartments, providers, bills, splits } = snapshot;
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState(false);

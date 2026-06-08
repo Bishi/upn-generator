@@ -61,12 +61,24 @@ function SettingsPage() {
       </div>
 
       <div>
-        {activeTab === "building" && <BuildingSection />}
-        {activeTab === "apartments" && <ApartmentsSection />}
-        {activeTab === "providers" && <ProvidersSection />}
-        {activeTab === "smtp" && <SmtpSection />}
-        {activeTab === "appearance" && <AppearanceSection />}
-        {activeTab === "data" && <DataSection />}
+        <div hidden={activeTab !== "building"}>
+          <BuildingSection />
+        </div>
+        <div hidden={activeTab !== "apartments"}>
+          <ApartmentsSection />
+        </div>
+        <div hidden={activeTab !== "providers"}>
+          <ProvidersSection />
+        </div>
+        <div hidden={activeTab !== "smtp"}>
+          <SmtpSection />
+        </div>
+        <div hidden={activeTab !== "appearance"}>
+          <AppearanceSection />
+        </div>
+        <div hidden={activeTab !== "data"}>
+          <DataSection />
+        </div>
       </div>
     </div>
   );

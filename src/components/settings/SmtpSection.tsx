@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 
 const emptyConfig: SmtpConfig = {
   host: "",
@@ -55,7 +56,7 @@ export function SmtpSection() {
     mutation.mutate(form);
   };
 
-  if (isLoading) return <div className="text-sm text-muted-foreground">Loading...</div>;
+  if (isLoading) return <SettingsLoadingCard rows={5} />;
 
   return (
     <Card className="max-w-lg">
