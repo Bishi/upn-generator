@@ -4,9 +4,6 @@ import { cn } from "@/lib/utils";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 
 const THEME_SWATCHES: Record<ThemeId, [string, string, string]> = {
@@ -22,16 +19,16 @@ export function AppearanceSection() {
   const { theme, setTheme } = useTheme();
 
   return (
-    <Card className="max-w-4xl">
-      <CardHeader>
-        <CardTitle>Appearance</CardTitle>
-        <CardDescription>
+    <Card className="max-w-2xl overflow-hidden">
+      <div className="border-b border-border px-5 py-4">
+        <h3 className="font-head text-lg font-semibold">Appearance</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
           Switch between tokenized visual themes. This preference is saved in
           the app database and included in backups.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        </p>
+      </div>
+      <CardContent className="p-5">
+        <div className="grid gap-3 sm:grid-cols-2">
           {THEMES.map((item) => (
             <ThemeOption
               key={item.id}

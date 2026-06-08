@@ -6,7 +6,7 @@ import type { Building } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 
 const emptyBuilding: Building = {
@@ -48,12 +48,14 @@ export function BuildingSection() {
   if (isLoading) return <SettingsLoadingCard />;
 
   return (
-    <Card className="max-w-lg">
-      <CardHeader>
-        <CardTitle>Building Details</CardTitle>
-        <CardDescription>The building this app manages. Used as creditor address on UPN forms.</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <Card className="max-w-xl overflow-hidden">
+      <div className="border-b border-border px-5 py-4">
+        <h3 className="font-head text-lg font-semibold">Building Details</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Used as the payer address on UPN forms.
+        </p>
+      </div>
+      <CardContent className="p-5">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="name">Building name</Label>

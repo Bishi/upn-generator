@@ -1,13 +1,13 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Plus, Pencil, Trash2, Users, X, Save, Percent } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { Check, Plus, Save, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Apartment } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,10 @@ const newApartment = (): Apartment => ({
   is_active: true,
 });
 
+function cloneApartment(apartment: Apartment) {
+  return { ...apartment };
+}
+
 export function ApartmentsSection() {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
@@ -40,32 +44,65 @@ export function ApartmentsSection() {
     queryFn: ipc.getBuilding,
   });
 
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<Apartment | null>(null);
   const [isNew, setIsNew] = useState(false);
 
-  const totalOccupants = apartments.filter((a) => a.is_active).reduce((s, a) => s + a.occupant_count, 0);
-  const totalM2Percentage = apartments.filter((a) => a.is_active).reduce((s, a) => s + a.m2_percentage, 0);
+  const activeApartments = apartments.filter((apartment) => apartment.is_active);
+  const totalOccupants = activeApartments.reduce(
+    (sum, apartment) => sum + apartment.occupant_count,
+    0,
+  );
+  const totalM2Percentage = activeApartments.reduce(
+    (sum, apartment) => sum + apartment.m2_percentage,
+    0,
+  );
+  const allocationComplete = Math.abs(totalM2Percentage - 100) < 0.01;
+
+  const selectedApartment = useMemo(
+    () => apartments.find((apartment) => apartment.id === selectedId) ?? apartments[0] ?? null,
+    [apartments, selectedId],
+  );
+
+  useEffect(() => {
+    if (isNew) return;
+    if (selectedApartment) {
+      setSelectedId(selectedApartment.id);
+      setEditing(cloneApartment(selectedApartment));
+    } else {
+      setSelectedId(null);
+      setEditing(null);
+    }
+  }, [isNew, selectedApartment]);
 
   const saveMutation = useMutation({
     mutationFn: ipc.saveApartment,
-    onSuccess: () => {
+    onSuccess: (savedApartment) => {
       queryClient.invalidateQueries({ queryKey: ["apartments"] });
-      setEditing(null);
+      setSelectedId(savedApartment.id);
+      setEditing(cloneApartment(savedApartment));
       setIsNew(false);
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: ipc.deleteApartment,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["apartments"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apartments"] });
+      setSelectedId(null);
+      setEditing(null);
+      setIsNew(false);
+    },
   });
 
-  const handleEdit = (apt: Apartment) => {
-    setEditing({ ...apt });
+  const handleSelect = (apartment: Apartment) => {
+    setSelectedId(apartment.id);
+    setEditing(cloneApartment(apartment));
     setIsNew(false);
   };
 
   const handleNew = () => {
+    setSelectedId(null);
     setEditing({
       ...newApartment(),
       payer_address: building?.address ?? "",
@@ -75,203 +112,311 @@ export function ApartmentsSection() {
     setIsNew(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = (event: FormEvent) => {
+    event.preventDefault();
     if (editing) saveMutation.mutate(editing);
+  };
+
+  const handleDiscard = () => {
+    if (isNew) {
+      setIsNew(false);
+      setEditing(selectedApartment ? cloneApartment(selectedApartment) : null);
+      return;
+    }
+    if (selectedApartment) setEditing(cloneApartment(selectedApartment));
   };
 
   if (isLoading) return <SettingsLoadingCard className="max-w-none" rows={3} />;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            {apartments.length} apartment{apartments.length !== 1 ? "s" : ""} · {totalOccupants} total occupants · {totalM2Percentage.toFixed(2)}% active m² share
-          </p>
+      <Card className="p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="px-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+            Apartments
+          </span>
+          <Badge variant="secondary" className="gap-1.5">
+            {activeApartments.length} active
+          </Badge>
+          <Badge variant="secondary" className="gap-1.5">
+            {totalOccupants} occupants
+          </Badge>
+          <Badge
+            variant={allocationComplete ? "success" : "warning"}
+            className="gap-1.5"
+          >
+            {allocationComplete && <Check className="size-3" />}
+            {totalM2Percentage.toFixed(2)}% m2 allocated
+          </Badge>
+          <Button onClick={handleNew} size="sm" className="ml-auto gap-2">
+            <Plus className="size-4" />
+            Add Apartment
+          </Button>
         </div>
-        <Button onClick={handleNew} size="sm" className="gap-2">
-          <Plus className="size-4" />
-          Add Apartment
-        </Button>
-      </div>
+      </Card>
 
-      <div className="grid grid-cols-2 gap-4">
-        {apartments.map((apt) => (
-          <Card key={apt.id} className={cn(!apt.is_active && "opacity-60")}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate">{apt.label || "Unnamed"}</div>
-                  <div className="text-xs font-normal text-muted-foreground">
-                    {apt.unit_code || "No unit code"}
+      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <Card className="overflow-hidden">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="text-sm font-semibold">Apartments</div>
+          </div>
+          <div className="divide-y divide-border">
+            {apartments.map((apartment) => {
+              const isSelected = !isNew && apartment.id === editing?.id;
+              return (
+                <button
+                  type="button"
+                  key={apartment.id}
+                  className={cn(
+                    "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40",
+                    isSelected && "bg-accent-soft text-accent-foreground",
+                  )}
+                  onClick={() => handleSelect(apartment)}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold">
+                      {apartment.label || "Unnamed"}
+                    </div>
+                    <div className="truncate font-mono text-xs text-muted-foreground">
+                      {apartment.unit_code || "No unit"} -{" "}
+                      {apartment.m2_percentage.toFixed(1)}%
+                    </div>
                   </div>
-                </div>
-                <Badge variant={apt.is_active ? "default" : "secondary"}>
-                  {apt.is_active ? "Active" : "Inactive"}
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm space-y-2 text-muted-foreground">
-              <div className="flex items-center gap-1.5">
-                <Users className="size-3.5" />
-                <span>{apt.occupant_count} occupant{apt.occupant_count !== 1 ? "s" : ""}</span>
-                {totalOccupants > 0 && apt.is_active && (
-                  <span className="ml-auto text-xs">
-                    {((apt.occupant_count / totalOccupants) * 100).toFixed(1)}% people
-                  </span>
+                  <Badge
+                    variant={apartment.is_active ? "success" : "secondary"}
+                    className="h-5 px-2 text-[10px]"
+                  >
+                    {apartment.is_active ? "Active" : "Off"}
+                  </Badge>
+                </button>
+              );
+            })}
+          </div>
+          <div className="border-t border-border bg-surface-2 px-4 py-3">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>m2 allocated</span>
+              <span
+                className={cn(
+                  "font-mono font-semibold",
+                  allocationComplete ? "text-success" : "text-danger",
                 )}
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Percent className="size-3.5" />
-                <span>{apt.m2_percentage.toFixed(2)}% m² share</span>
-              </div>
-              <div className="truncate">{apt.contact_email || "—"}</div>
-              <div className="font-medium text-foreground">{apt.payer_name || "—"}</div>
-              <div className="text-xs">{apt.payer_address}, {apt.payer_postal_code} {apt.payer_city}</div>
-            </CardContent>
-            <CardFooter className="gap-2 pt-0">
-              <Button variant="outline" size="sm" onClick={() => handleEdit(apt)} className="gap-1.5">
-                <Pencil className="size-3.5" />
-                Edit
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => apt.id && deleteMutation.mutate(apt.id)}
-                className="gap-1.5 text-danger hover:text-danger"
               >
-                <Trash2 className="size-3.5" />
-                Delete
-              </Button>
-            </CardFooter>
-          </Card>
-        ))}
+                {totalM2Percentage.toFixed(1)}%
+              </span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-3">
+              <div
+                className={cn("h-full rounded-full", allocationComplete ? "bg-success" : "bg-danger")}
+                style={{ width: `${Math.min(100, Math.max(0, totalM2Percentage))}%` }}
+              />
+            </div>
+          </div>
+        </Card>
+
+        <ApartmentDetail
+          apartment={editing}
+          isNew={isNew}
+          isSaving={saveMutation.isPending}
+          isDeleting={deleteMutation.isPending}
+          onChange={setEditing}
+          onSave={handleSave}
+          onDiscard={handleDiscard}
+          onDelete={() => editing?.id && deleteMutation.mutate(editing.id)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ApartmentDetail({
+  apartment,
+  isNew,
+  isSaving,
+  isDeleting,
+  onChange,
+  onSave,
+  onDiscard,
+  onDelete,
+}: {
+  apartment: Apartment | null;
+  isNew: boolean;
+  isSaving: boolean;
+  isDeleting: boolean;
+  onChange: (apartment: Apartment) => void;
+  onSave: (event: FormEvent) => void;
+  onDiscard: () => void;
+  onDelete: () => void;
+}) {
+  if (!apartment) {
+    return (
+      <Card className="flex min-h-72 items-center justify-center p-8 text-center text-sm text-muted-foreground">
+        Select an apartment to edit its billing and payer details.
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="border-b border-border px-5 py-3">
+        <div>
+          <h3 className="font-head text-lg font-semibold">
+            {isNew ? "New apartment" : apartment.label || "Unnamed"}
+            {!isNew && apartment.unit_code && (
+              <span className="ml-2 font-body text-sm font-normal text-muted-foreground">
+                {apartment.unit_code}
+              </span>
+            )}
+          </h3>
+        </div>
       </div>
 
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay">
-          <Card className="w-full max-w-md max-h-[90vh] flex flex-col">
-            <CardHeader className="shrink-0">
-              <CardTitle>{isNew ? "Add Apartment" : "Edit Apartment"}</CardTitle>
-            </CardHeader>
-            <form onSubmit={handleSave} className="flex flex-col overflow-hidden flex-1">
-              <CardContent className="space-y-4 overflow-y-auto flex-1">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Apartment name</Label>
-                    <Input
-                      value={editing.label}
-                      onChange={(e) => setEditing({ ...editing, label: e.target.value })}
-                      placeholder="Andreja Vidonja"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Unit code</Label>
-                    <Input
-                      value={editing.unit_code}
-                      onChange={(e) => setEditing({ ...editing, unit_code: e.target.value })}
-                      placeholder="1287/6"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Occupants</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={editing.occupant_count}
-                      onChange={(e) => setEditing({ ...editing, occupant_count: parseInt(e.target.value) || 1 })}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>m² percentage</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={editing.m2_percentage}
-                      onChange={(e) => setEditing({ ...editing, m2_percentage: parseFloat(e.target.value) || 0 })}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Contact email(s)</Label>
-                  <Input
-                    value={editing.contact_email}
-                    onChange={(e) => setEditing({ ...editing, contact_email: e.target.value })}
-                    placeholder="tenant@example.com, second@example.com"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Separate multiple recipients with commas. One combined apartment PDF will be sent to all of them.
-                  </p>
-                </div>
-                <div className="space-y-1.5 border-t pt-4">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Payer details (printed on UPN)</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Payer name</Label>
-                  <Input
-                    value={editing.payer_name}
-                    onChange={(e) => setEditing({ ...editing, payer_name: e.target.value })}
-                    placeholder="Ana Horvat"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Street address</Label>
-                  <Input
-                    value={editing.payer_address}
-                    onChange={(e) => setEditing({ ...editing, payer_address: e.target.value })}
-                    placeholder="Kamniska ulica 36/1"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Postal code</Label>
-                    <Input
-                      value={editing.payer_postal_code}
-                      onChange={(e) => setEditing({ ...editing, payer_postal_code: e.target.value })}
-                      placeholder="1000"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>City</Label>
-                    <Input
-                      value={editing.payer_city}
-                      onChange={(e) => setEditing({ ...editing, payer_city: e.target.value })}
-                      placeholder="Ljubljana"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="is_active"
-                    checked={editing.is_active}
-                    onChange={(e) => setEditing({ ...editing, is_active: e.target.checked })}
-                    className="size-4"
-                  />
-                  <Label htmlFor="is_active">Active (included in splits)</Label>
-                </div>
-              </CardContent>
-              <CardFooter className="gap-2">
-                <Button type="submit" disabled={saveMutation.isPending} className="gap-2">
-                  <Save className="size-4" />
-                  {saveMutation.isPending ? "Saving..." : "Save"}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => { setEditing(null); setIsNew(false); }} className="gap-2">
-                  <X className="size-4" />
-                  Cancel
-                </Button>
-              </CardFooter>
-            </form>
-          </Card>
+      <form onSubmit={onSave}>
+        <CardContent className="grid gap-6 p-5 lg:grid-cols-2">
+          <div className="space-y-4 lg:border-r lg:border-border lg:pr-6">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Billing
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Name">
+                <Input
+                  value={apartment.label}
+                  onChange={(event) => onChange({ ...apartment, label: event.target.value })}
+                  required
+                />
+              </Field>
+              <Field label="Unit code">
+                <Input
+                  value={apartment.unit_code}
+                  onChange={(event) =>
+                    onChange({ ...apartment, unit_code: event.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Occupants">
+                <Input
+                  type="number"
+                  min={1}
+                  value={apartment.occupant_count}
+                  onChange={(event) =>
+                    onChange({
+                      ...apartment,
+                      occupant_count: parseInt(event.target.value, 10) || 1,
+                    })
+                  }
+                  required
+                />
+              </Field>
+              <Field label="m2 %">
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={apartment.m2_percentage}
+                  onChange={(event) =>
+                    onChange({
+                      ...apartment,
+                      m2_percentage: parseFloat(event.target.value) || 0,
+                    })
+                  }
+                  required
+                />
+              </Field>
+            </div>
+            <Field label="Contact email(s)">
+              <Input
+                value={apartment.contact_email}
+                onChange={(event) =>
+                  onChange({ ...apartment, contact_email: event.target.value })
+                }
+                placeholder="tenant@example.com, second@example.com"
+              />
+            </Field>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={apartment.is_active}
+                onChange={(event) =>
+                  onChange({ ...apartment, is_active: event.target.checked })
+                }
+                className="size-4 accent-primary"
+              />
+              Active
+            </label>
+          </div>
+
+          <div className="space-y-4">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Payer details (printed on UPN)
+            </div>
+            <Field label="Payer name">
+              <Input
+                value={apartment.payer_name}
+                onChange={(event) =>
+                  onChange({ ...apartment, payer_name: event.target.value })
+                }
+              />
+            </Field>
+            <Field label="Street address">
+              <Input
+                value={apartment.payer_address}
+                onChange={(event) =>
+                  onChange({ ...apartment, payer_address: event.target.value })
+                }
+              />
+            </Field>
+            <div className="grid grid-cols-[0.8fr_1.2fr] gap-3">
+              <Field label="Postal code">
+                <Input
+                  value={apartment.payer_postal_code}
+                  onChange={(event) =>
+                    onChange({ ...apartment, payer_postal_code: event.target.value })
+                  }
+                />
+              </Field>
+              <Field label="City">
+                <Input
+                  value={apartment.payer_city}
+                  onChange={(event) =>
+                    onChange({ ...apartment, payer_city: event.target.value })
+                  }
+                />
+              </Field>
+            </div>
+          </div>
+        </CardContent>
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-4">
+          <Button type="submit" disabled={isSaving} className="gap-2">
+            <Save className="size-4" />
+            {isSaving ? "Saving..." : isNew ? "Save apartment" : "Save changes"}
+          </Button>
+          <Button type="button" variant="outline" onClick={onDiscard} className="gap-2">
+            <X className="size-4" />
+            Discard
+          </Button>
+          {!isNew && (
+            <Button
+              type="button"
+              variant="outline"
+              className="ml-auto gap-2 text-danger hover:text-danger"
+              disabled={isDeleting}
+              onClick={onDelete}
+            >
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          )}
         </div>
-      )}
+      </form>
+    </Card>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      {children}
     </div>
   );
 }

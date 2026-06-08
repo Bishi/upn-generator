@@ -4,23 +4,17 @@ import {
   AlertTriangle,
   ArrowRight,
   Banknote,
-  Building2,
   CheckCircle2,
   Download,
-  Droplet,
   FilePlus,
-  Flame,
   Inbox,
   Layers,
   Loader2,
   Send,
-  Sparkles,
-  Trash2,
   Users,
-  Wind,
-  Zap,
 } from "lucide-react";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
+import { serviceIconFor } from "@/lib/service-icons";
 import type { BillingPeriod, Provider } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
 import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
@@ -555,23 +549,6 @@ function DashboardActions({
       </Button>
     </div>
   );
-}
-
-function serviceIconFor(label: string, providerName: string) {
-  const value = `${label} ${providerName}`.toLowerCase();
-
-  if (value.includes("elektr") || value.includes("electric")) return Zap;
-  if (value.includes("voda") || value.includes("water")) return Droplet;
-  if (value.includes("gas") || value.includes("plin") || value.includes("energetika")) {
-    return Flame;
-  }
-  if (value.includes("snaga") || value.includes("waste") || value.includes("trash")) {
-    return Trash2;
-  }
-  if (value.includes("clean") || value.includes("cisc")) return Sparkles;
-  if (value.includes("chimney") || value.includes("dimnik")) return Wind;
-
-  return Building2;
 }
 
 function StatTile({
