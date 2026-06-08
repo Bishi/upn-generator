@@ -44,11 +44,6 @@ type StepState = "done" | "now" | "todo" | "blocked";
 
 export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
   const location = useLocation();
-  const routeStage = location.pathname.includes("/splits")
-    ? "splits"
-    : location.pathname.includes("/upn")
-      ? "upn"
-      : "bills";
   const {
     allPeriods,
     years,
@@ -66,6 +61,17 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
     : EMPTY_PERIOD_STATUS;
   const billsReady = selectedStatus.bills;
   const splitsReady = selectedStatus.splits;
+  const routeStage = location.pathname.includes("/splits")
+    ? "splits"
+    : location.pathname.includes("/upn")
+      ? "upn"
+      : location.pathname === "/"
+        ? splitsReady
+          ? "upn"
+          : billsReady
+            ? "splits"
+            : "bills"
+        : "bills";
 
   const createAndSelectYear = useCallback(
     async (year: number) => {

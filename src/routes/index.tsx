@@ -1,22 +1,32 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowRight,
   Banknote,
-  Check,
+  Building2,
   CheckCircle2,
+  Download,
+  Droplet,
   FilePlus,
+  Flame,
   Inbox,
   Layers,
+  Loader2,
   Send,
+  Sparkles,
+  Trash2,
   Users,
+  Wind,
+  Zap,
 } from "lucide-react";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import type { BillingPeriod } from "@/lib/types";
+import type { BillingPeriod, Provider } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
-import { Card } from "@/components/ui/card";
+import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
 import { useWorkflowSnapshot } from "@/lib/workflow-snapshot";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 export const Route = createFileRoute("/")({
   component: DashboardPage,
@@ -27,10 +37,23 @@ type PeriodTotal = {
   totalCents: number;
 };
 
+type ProviderRow = {
+  key: string;
+  label: string;
+  providerName: string;
+  total: number;
+  count: number;
+};
+
 function DashboardPage() {
   const { allPeriods, selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshot(selected?.id, allPeriods);
   const { apartments, providers, bills, splits } = snapshot;
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
   const history = useMemo<PeriodTotal[]>(
     () =>
       [...allPeriods]
@@ -43,20 +66,16 @@ function DashboardPage() {
         .reverse()
         .map((period) => ({
           period,
-          totalCents:
-            snapshot.periodStatuses.get(period.id)?.totalCents ?? 0,
+          totalCents: snapshot.periodStatuses.get(period.id)?.totalCents ?? 0,
         })),
     [allPeriods, snapshot.periodStatuses],
   );
 
   const totalCents = bills.reduce((sum, bill) => sum + bill.amount_cents, 0);
   const apartmentsWithSplits = new Set(splits.map((split) => split.apartment_id)).size;
-  const needsReview = bills.filter((bill) => bill.parse_note?.trim()).length;
-  const importedProviderCount = new Set(
-    bills
-      .map((bill) => bill.provider_id)
-      .filter((providerId): providerId is number => providerId != null),
-  ).size;
+  const reviewBills = bills.filter((bill) => bill.parse_note?.trim());
+  const firstReviewBill = reviewBills[0] ?? null;
+  const needsReview = reviewBills.length;
   const unmatchedBillCount = bills.filter((bill) => bill.provider_id == null).length;
   const selectedLabel = selected
     ? `${MONTHS[selected.month - 1]} ${selected.year}`
@@ -66,28 +85,133 @@ function DashboardPage() {
   const splitsReady = splits.length > 0;
   const upnsReady = billsReady && splitsReady;
   const maxHistory = Math.max(1, ...history.map((entry) => entry.totalCents));
+  const selectedHistoryIndex = history.findIndex((entry) => entry.period.id === selected?.id);
+  const previousHistory =
+    selectedHistoryIndex > 0 ? history[selectedHistoryIndex - 1] : null;
+  const monthlyDelta =
+    previousHistory && previousHistory.totalCents > 0
+      ? ((totalCents - previousHistory.totalCents) / previousHistory.totalCents) * 100
+      : null;
+  const totalDetail =
+    !billsReady
+      ? "No bills imported yet"
+      : monthlyDelta != null
+        ? `${monthlyDelta >= 0 ? "+" : ""}${monthlyDelta.toFixed(1)}% vs ${
+            MONTHS[previousHistory!.period.month - 1]
+          }`
+        : `${bills.length} source bill${bills.length === 1 ? "" : "s"}`;
+  const expectedBillCount = providers.length || bills.length;
+  const billsImportedValue = billsReady
+    ? expectedBillCount > 0
+      ? `${bills.length} / ${expectedBillCount}`
+      : String(bills.length)
+    : expectedBillCount > 0
+      ? `0 / ${expectedBillCount}`
+      : "0";
+  const billsImportedDetail = !billsReady
+    ? "Import from PDF or scan"
+    : unmatchedBillCount > 0
+      ? `${unmatchedBillCount} bill${unmatchedBillCount === 1 ? "" : "s"} unmatched`
+      : "All providers detected";
+  const apartmentsBilledDetail =
+    splitsReady && apartments.length > 0 && apartmentsWithSplits >= apartments.length
+      ? "100% of m2 allocated"
+      : splitsReady
+        ? `${apartmentsWithSplits} of ${apartments.length} apartments allocated`
+        : "Calculate splits first";
+  const reviewLabel =
+    firstReviewBill?.provider_name ??
+    firstReviewBill?.creditor_name ??
+    firstReviewBill?.source_filename ??
+    "Bill";
+  const reviewNote = firstReviewBill?.parse_note?.trim() ?? "";
 
-  const primaryAction = !billsReady
-    ? { to: "/bills" as const, label: "Import bills", icon: <FilePlus className="size-4" /> }
-    : !splitsReady
-      ? { to: "/splits" as const, label: "Calculate splits", icon: <Layers className="size-4" /> }
-      : { to: "/upn" as const, label: "Review & send", icon: <Send className="size-4" /> };
+  const providerById = useMemo(
+    () =>
+      new Map(
+        providers
+          .filter((provider): provider is Provider & { id: number } => provider.id != null)
+          .map((provider) => [provider.id, provider]),
+      ),
+    [providers],
+  );
 
-  const providerRows = useMemo(() => {
-    const byProvider = new Map<string, { total: number; count: number }>();
+  const providerRows = useMemo<ProviderRow[]>(() => {
+    const byProvider = new Map<string, ProviderRow>();
+
     for (const bill of bills) {
-      const key =
-        bill.provider_name ?? (bill.creditor_name || bill.source_filename);
-      const current = byProvider.get(key) ?? { total: 0, count: 0 };
+      const provider = bill.provider_id != null ? providerById.get(bill.provider_id) : null;
+      const key = provider?.id != null ? `provider-${provider.id}` : `bill-${bill.id}`;
+      const label =
+        provider?.service_type?.trim() ||
+        provider?.name?.trim() ||
+        bill.provider_name?.trim() ||
+        bill.creditor_name?.trim() ||
+        bill.source_filename;
+      const providerName =
+        provider?.name?.trim() ||
+        bill.provider_name?.trim() ||
+        bill.creditor_name?.trim() ||
+        bill.source_filename;
+      const current =
+        byProvider.get(key) ?? {
+          key,
+          label,
+          providerName,
+          total: 0,
+          count: 0,
+        };
+
       byProvider.set(key, {
+        ...current,
         total: current.total + bill.amount_cents,
         count: current.count + 1,
       });
     }
-    return [...byProvider.entries()]
-      .map(([label, value]) => ({ label, ...value }))
-      .sort((a, b) => b.total - a.total);
-  }, [bills]);
+
+    return [...byProvider.values()].sort((a, b) => b.total - a.total);
+  }, [bills, providerById]);
+
+  const handleDownload = async () => {
+    if (!selected?.id) return;
+    setActionMessage(null);
+    setActionError(false);
+    setDownloading(true);
+    try {
+      const result = await downloadPeriodUpnPdfs(selected.id);
+      if (result) {
+        setActionMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
+      }
+    } catch (error) {
+      setActionError(true);
+      setActionMessage(String(error));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleSendEmails = async () => {
+    if (!selected?.id) return;
+    setActionMessage(null);
+    setActionError(false);
+    setSending(true);
+    try {
+      const results = await sendPeriodEmails(selected.id);
+      const sentCount = results.filter((result) => result.success).length;
+      const failedCount = results.length - sentCount;
+      setActionMessage(
+        failedCount > 0
+          ? `Sent ${sentCount} email(s), ${failedCount} failed.`
+          : `Sent ${sentCount} email(s).`,
+      );
+      setActionError(failedCount > 0);
+    } catch (error) {
+      setActionError(true);
+      setActionMessage(String(error));
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -98,109 +222,73 @@ function DashboardPage() {
           </div>
           <h2 className="mt-1 text-3xl font-semibold leading-tight">{selectedLabel}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {buildingLabel} · {apartments.length} apartment{apartments.length === 1 ? "" : "s"}
+            {buildingLabel} - {apartments.length} apartment
+            {apartments.length === 1 ? "" : "s"}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {upnsReady && (
-            <Link
-              to="/bills"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card transition-colors hover:bg-accent hover:text-accent-foreground"
-            >
-              <FilePlus className="size-4" />
-              Import more
-            </Link>
-          )}
-          <Link
-            to={primaryAction.to}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-card transition-colors hover:bg-primary/90"
-          >
-            {primaryAction.icon}
-            {primaryAction.label}
-          </Link>
-        </div>
+
+        <DashboardActions
+          billsReady={billsReady}
+          splitsReady={splitsReady}
+          selectedPeriodId={selected?.id ?? null}
+          sending={sending}
+          downloading={downloading}
+          onDownload={handleDownload}
+          onSend={handleSendEmails}
+        />
       </section>
 
-      <Card className="p-4">
-        <div className="flex flex-wrap items-center gap-4">
-          <WorkflowStep
-            state={billsReady ? "done" : "now"}
-            number={1}
-            label="Import bills"
-            detail={
-              billsReady
-                ? `${bills.length} bill${bills.length === 1 ? "" : "s"} imported`
-                : "No bills yet"
-            }
-          />
-          <StepRail done={billsReady} />
-          <WorkflowStep
-            state={splitsReady ? "done" : billsReady ? "now" : "todo"}
-            number={2}
-            label="Calculate splits"
-            detail={
-              splitsReady
-                ? `${apartmentsWithSplits} apartment${apartmentsWithSplits === 1 ? "" : "s"} split`
-                : "Waiting for bills"
-            }
-          />
-          <StepRail done={splitsReady} />
-          <WorkflowStep
-            state={upnsReady ? "now" : "todo"}
-            number={3}
-            label="Review & send UPNs"
-            detail={upnsReady ? "Apartment packets ready" : "Waiting for splits"}
-          />
-          <div className="ml-auto min-w-32 text-right">
-            <div className="text-xs text-muted-foreground">To collect this month</div>
-            <div className="font-mono text-sm font-semibold">
-              {billsReady ? `${formatEur(totalCents)} EUR` : "-"}
-            </div>
-          </div>
+      {actionMessage && (
+        <div
+          className={`rounded-md border px-4 py-3 text-sm ${
+            actionError
+              ? "border-danger/30 bg-danger-soft text-danger"
+              : "border-success/30 bg-success-soft text-success"
+          }`}
+        >
+          {actionMessage}
         </div>
-      </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-4">
         <StatTile
           icon={<Banknote className="size-4" />}
           label={splitsReady ? "Total this month" : "Total imported"}
           value={billsReady ? `${formatEur(totalCents)} EUR` : "-"}
-          detail={billsReady ? `${bills.length} source bill${bills.length === 1 ? "" : "s"}` : "Import PDF or image bills"}
-          tone="accent"
+          detail={totalDetail}
+          tone={billsReady ? "accent" : "neutral"}
         />
         <StatTile
           icon={<Inbox className="size-4" />}
-          label="Providers matched"
-          value={
-            billsReady
-              ? providers.length > 0
-                ? `${importedProviderCount} / ${providers.length}`
-                : String(importedProviderCount)
-              : "0"
-          }
-          detail={
-            billsReady
-              ? `${bills.length} bill${bills.length === 1 ? "" : "s"} imported${
-                  unmatchedBillCount > 0
-                    ? `, ${unmatchedBillCount} unmatched`
-                    : ""
-                }`
-              : "Nothing imported yet"
-          }
+          label="Bills imported"
+          value={billsImportedValue}
+          detail={billsImportedDetail}
           tone={billsReady ? "good" : "neutral"}
         />
         <StatTile
           icon={<Users className="size-4" />}
           label="Apartments billed"
           value={splitsReady ? String(apartmentsWithSplits) : "-"}
-          detail={splitsReady ? "Ready for packet preview" : "Calculate splits first"}
+          detail={apartmentsBilledDetail}
           tone={splitsReady ? "good" : "neutral"}
         />
         <StatTile
-          icon={needsReview > 0 ? <AlertTriangle className="size-4" /> : <CheckCircle2 className="size-4" />}
+          icon={
+            needsReview > 0 ? (
+              <AlertTriangle className="size-4" />
+            ) : (
+              <CheckCircle2 className="size-4" />
+            )
+          }
           label="Needs review"
-          value={snapshot.loading ? "Checking" : needsReview > 0 ? `${needsReview} bill${needsReview === 1 ? "" : "s"}` : "Clear"}
-          detail={needsReview > 0 ? "OCR or parser note present" : "No flagged bill notes"}
+          value={
+            snapshot.loading
+              ? "Checking"
+              : needsReview > 0
+                ? `${needsReview} bill${needsReview === 1 ? "" : "s"}`
+                : "Clear"
+          }
+          detail={needsReview > 0 ? reviewLabel : "No flagged bill notes"}
           tone={needsReview > 0 ? "warn" : "good"}
         />
       </div>
@@ -210,7 +298,9 @@ function DashboardPage() {
           <div className="flex items-baseline justify-between border-b border-border px-5 py-4">
             <h3 className="text-sm font-semibold">Where the money goes</h3>
             <span className="text-xs text-muted-foreground">
-              {providerRows.length > 0 ? `${providerRows.length} provider${providerRows.length === 1 ? "" : "s"}` : ""}
+              {providerRows.length > 0
+                ? `${providerRows.length} provider${providerRows.length === 1 ? "" : "s"}`
+                : ""}
             </span>
           </div>
           {providerRows.length === 0 ? (
@@ -223,12 +313,19 @@ function DashboardPage() {
             <div className="divide-y divide-border px-5 py-2">
               {providerRows.map((provider) => {
                 const share = totalCents > 0 ? provider.total / totalCents : 0;
+                const ProviderIcon = serviceIconFor(provider.label, provider.providerName);
                 return (
-                  <div key={provider.label} className="grid grid-cols-[minmax(140px,1fr)_minmax(120px,220px)_100px_44px] items-center gap-3 py-3 text-sm">
+                  <div
+                    key={provider.key}
+                    className="grid grid-cols-[30px_minmax(120px,1fr)_minmax(100px,220px)_100px_44px] items-center gap-3 py-3 text-sm"
+                  >
+                    <span className="grid size-8 place-items-center rounded-md bg-surface-3 text-muted-foreground">
+                      <ProviderIcon className="size-4" />
+                    </span>
                     <div className="min-w-0">
                       <div className="truncate font-semibold">{provider.label}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {provider.count} bill{provider.count === 1 ? "" : "s"}
+                      <div className="truncate text-xs text-muted-foreground">
+                        {provider.providerName}
                       </div>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
@@ -252,11 +349,18 @@ function DashboardPage() {
 
         <div className="flex flex-col gap-4">
           <Card className="p-5">
-            <div className="mb-4 flex items-baseline justify-between">
+            <div className="mb-4 flex items-baseline justify-between gap-3">
               <h3 className="text-sm font-semibold">Monthly total</h3>
-              <span className="rounded-full bg-surface-3 px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-                {history.length} mo
-              </span>
+              <div className="flex items-baseline gap-2">
+                {billsReady && (
+                  <span className="font-mono text-sm font-semibold">
+                    {formatEur(totalCents)} EUR
+                  </span>
+                )}
+                <span className="rounded-full bg-surface-3 px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                  {history.length} mo
+                </span>
+              </div>
             </div>
             <div className="flex h-20 items-end gap-2">
               {history.length === 0 ? (
@@ -265,13 +369,19 @@ function DashboardPage() {
                 </div>
               ) : (
                 history.map((entry) => (
-                  <div key={entry.period.id} className="flex h-full flex-1 flex-col justify-end gap-1">
+                  <div
+                    key={entry.period.id}
+                    className="flex h-full flex-1 flex-col justify-end gap-1"
+                  >
                     <div
                       className={`min-h-1 rounded-t ${
                         entry.period.id === selected?.id ? "bg-primary" : "bg-accent-soft-2"
                       }`}
                       style={{
-                        height: `${Math.max(6, Math.round((entry.totalCents / maxHistory) * 60))}px`,
+                        height: `${Math.max(
+                          6,
+                          Math.round((entry.totalCents / maxHistory) * 60),
+                        )}px`,
                       }}
                     />
                     <span className="text-center text-[10px] text-muted-foreground">
@@ -283,7 +393,11 @@ function DashboardPage() {
             </div>
           </Card>
 
-          <Card className={`p-5 ${needsReview > 0 ? "border-warning bg-warning-soft" : ""}`}>
+          <Card
+            className={`p-5 ${
+              needsReview > 0 ? "border-warning bg-warning-soft" : ""
+            }`}
+          >
             <div className="flex gap-3">
               <span
                 className={`mt-0.5 ${
@@ -297,12 +411,18 @@ function DashboardPage() {
                 )}
               </span>
               <div>
-                <h3 className={`text-sm font-semibold ${needsReview > 0 ? "text-warning" : ""}`}>
-                  {needsReview > 0 ? `${needsReview} bill needs review` : "No alerts this period"}
+                <h3
+                  className={`text-sm font-semibold ${
+                    needsReview > 0 ? "text-warning" : ""
+                  }`}
+                >
+                  {needsReview > 0
+                    ? `${needsReview} bill${needsReview === 1 ? "" : "s"} needs review`
+                    : "No alerts this period"}
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {needsReview > 0
-                    ? "Open Bills to verify parser and OCR notes before sending UPN packets."
+                    ? `${reviewLabel} - ${reviewNote || "Verify parser and OCR notes before sending UPN packets."}`
                     : upnsReady
                       ? "Bills and splits are ready for UPN preview."
                       : "The next workflow step will appear here as the period progresses."}
@@ -325,48 +445,89 @@ function DashboardPage() {
   );
 }
 
-function WorkflowStep({
-  state,
-  number,
-  label,
-  detail,
+function DashboardActions({
+  billsReady,
+  splitsReady,
+  selectedPeriodId,
+  sending,
+  downloading,
+  onDownload,
+  onSend,
 }: {
-  state: "done" | "now" | "todo";
-  number: number;
-  label: string;
-  detail: string;
+  billsReady: boolean;
+  splitsReady: boolean;
+  selectedPeriodId: number | null;
+  sending: boolean;
+  downloading: boolean;
+  onDownload: () => Promise<void>;
+  onSend: () => Promise<void>;
 }) {
-  return (
-    <div className="flex items-center gap-3">
-      <div
-        className={`grid size-8 shrink-0 place-items-center rounded-full text-sm font-bold ${
-          state === "done"
-            ? "bg-success text-primary-foreground"
-            : state === "now"
-              ? "bg-primary text-primary-foreground ring-4 ring-accent-soft"
-              : "bg-surface-3 text-muted-foreground ring-1 ring-border-2"
-        }`}
+  if (!billsReady) {
+    return (
+      <Link
+        to="/bills"
+        className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-card transition-colors hover:bg-primary/90"
       >
-        {state === "done" ? <Check className="size-4" /> : number}
+        <FilePlus className="size-4" />
+        Import bills
+      </Link>
+    );
+  }
+
+  if (!splitsReady) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Link
+          to="/bills"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <FilePlus className="size-4" />
+          Import more
+        </Link>
+        <Link
+          to="/splits"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-card transition-colors hover:bg-primary/90"
+        >
+          <Layers className="size-4" />
+          Calculate splits
+        </Link>
       </div>
-      <div>
-        <div className={`text-sm font-semibold ${state === "todo" ? "text-muted-foreground" : ""}`}>
-          {label}
-        </div>
-        <div className="text-xs text-muted-foreground">{detail}</div>
-      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        variant="outline"
+        onClick={() => void onDownload()}
+        disabled={!selectedPeriodId || downloading}
+      >
+        {downloading ? <Loader2 className="animate-spin" /> : <Download />}
+        {downloading ? "Saving..." : "Download PDFs"}
+      </Button>
+      <Button onClick={() => void onSend()} disabled={!selectedPeriodId || sending}>
+        {sending ? <Loader2 className="animate-spin" /> : <Send />}
+        {sending ? "Sending..." : "Send all emails"}
+      </Button>
     </div>
   );
 }
 
-function StepRail({ done }: { done: boolean }) {
-  return (
-    <div
-      className={`hidden h-0.5 min-w-8 flex-1 rounded-full lg:block ${
-        done ? "bg-success" : "bg-border-2"
-      }`}
-    />
-  );
+function serviceIconFor(label: string, providerName: string) {
+  const value = `${label} ${providerName}`.toLowerCase();
+
+  if (value.includes("elektr") || value.includes("electric")) return Zap;
+  if (value.includes("voda") || value.includes("water")) return Droplet;
+  if (value.includes("gas") || value.includes("plin") || value.includes("energetika")) {
+    return Flame;
+  }
+  if (value.includes("snaga") || value.includes("waste") || value.includes("trash")) {
+    return Trash2;
+  }
+  if (value.includes("clean") || value.includes("cisc")) return Sparkles;
+  if (value.includes("chimney") || value.includes("dimnik")) return Wind;
+
+  return Building2;
 }
 
 function StatTile({

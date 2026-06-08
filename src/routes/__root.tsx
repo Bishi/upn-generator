@@ -74,6 +74,7 @@ function ShellContent() {
   const { allPeriods, selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshot(selected?.id, allPeriods);
   const showContextBar =
+    location.pathname === "/" ||
     location.pathname.startsWith("/bills") ||
     location.pathname.startsWith("/splits") ||
     location.pathname.startsWith("/upn");

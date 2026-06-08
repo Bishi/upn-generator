@@ -1,5 +1,4 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { open } from "@tauri-apps/plugin-dialog";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -18,6 +17,7 @@ import type { Apartment, EmailResult, SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import { Button } from "@/components/ui/button";
+import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
 
 export const Route = createFileRoute("/upn")({
   component: UpnPage,
@@ -252,10 +252,10 @@ function UpnPage() {
 
   const sendEmails = async () => {
     if (!selected?.id) return;
-    setPageMessage(null);
-    setSending(true);
-    try {
-      const results = await ipc.sendEmails(selected.id);
+      setPageMessage(null);
+      setSending(true);
+      try {
+      const results = await sendPeriodEmails(selected.id);
       setEmailResults(results);
     } catch (e) {
       setPageMessage(String(e));
@@ -266,12 +266,11 @@ function UpnPage() {
 
   const downloadAll = async () => {
     if (!selected?.id) return;
-    setDownloading(true);
-    try {
-      const folder = await open({ directory: true, title: "Choose folder to save UPN PDFs" });
-      if (!folder || typeof folder !== "string") return;
-      const saved = await ipc.saveAllUpns(selected.id, folder);
-      setPageMessage(`Saved ${saved.length} PDF(s) to ${folder}`);
+      setDownloading(true);
+      try {
+      const result = await downloadPeriodUpnPdfs(selected.id);
+      if (!result) return;
+      setPageMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
     } catch (e) {
       setPageMessage(String(e));
     } finally {
