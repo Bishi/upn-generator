@@ -342,7 +342,7 @@ function BillsPage() {
   const reviewBills = bills.filter((bill) => bill.parse_note?.trim());
   const cleanCount = Math.max(0, bills.length - reviewBills.length);
   const inboxImported = inboxResults.filter((result) => result.status === "imported");
-  const inboxSkipped = inboxResults.filter((result) => result.status === "skipped_duplicate");
+  const inboxSkipped = inboxResults.filter((result) => result.status.startsWith("skipped_"));
   const inboxFailed = inboxResults.filter((result) => result.status === "failed");
 
   return (
@@ -404,6 +404,22 @@ function BillsPage() {
               </span>
             )}
           </div>
+          {inboxSkipped.length > 0 && (
+            <div className="mt-3 space-y-1 border-t border-border pt-3">
+              {inboxSkipped.map((result, index) => (
+                <div
+                  key={`${result.attachment_filename}-skipped-${index}`}
+                  className="text-xs text-muted-foreground"
+                >
+                  <span className="font-semibold text-foreground">
+                    {result.attachment_filename}
+                  </span>
+                  {": "}
+                  {result.skipped_reason ?? "Skipped."}
+                </div>
+              ))}
+            </div>
+          )}
           {inboxFailed.length > 0 && (
             <div className="mt-3 space-y-1 border-t border-border pt-3">
               {inboxFailed.map((result, index) => (

@@ -1125,9 +1125,16 @@ pub(crate) struct PreparedBillImport {
     filename: String,
     source_month: i32,
     source_year: i32,
+    detected_source_period: Option<(i32, i32)>,
     extracted: Vec<ExtractedBill>,
     log: String,
     redact_details: bool,
+}
+
+impl PreparedBillImport {
+    pub(crate) fn detected_source_period(&self) -> Option<(i32, i32)> {
+        self.detected_source_period
+    }
 }
 
 pub(crate) fn load_bill_import_context(
@@ -1172,8 +1179,8 @@ fn prepare_multi_bill_import_from_text(
     year: i32,
     include_raw_text_in_log: bool,
 ) -> PreparedBillImport {
-    let (source_month, source_year) =
-        find_source_period_month_year(&raw_text).unwrap_or((month, year));
+    let detected_source_period = find_source_period_month_year(&raw_text);
+    let (source_month, source_year) = detected_source_period.unwrap_or((month, year));
     let raw_log = if include_raw_text_in_log {
         raw_text.as_str()
     } else {
@@ -1266,6 +1273,7 @@ fn prepare_multi_bill_import_from_text(
         filename,
         source_month,
         source_year,
+        detected_source_period,
         extracted,
         log,
         redact_details,
@@ -1273,8 +1281,8 @@ fn prepare_multi_bill_import_from_text(
 }
 
 fn write_import_debug_log(log: &str) {
-    if let Some(path) = dirs_next::data_dir()
-        .map(|d| d.join("si.upn-generator").join("import_debug.log"))
+    if let Some(path) =
+        dirs_next::data_dir().map(|d| d.join("si.upn-generator").join("import_debug.log"))
     {
         let _ = std::fs::write(path, log);
     }
@@ -1434,17 +1442,13 @@ pub(crate) fn save_prepared_multi_bill_import(
         if prepared.redact_details {
             prepared.log.push_str(&format!(
                 "  provider={} status={} details=(redacted for inbox import)\n",
-                provider
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("(unmatched)"),
+                provider.map(|p| p.name.as_str()).unwrap_or("(unmatched)"),
                 status
             ));
         } else {
             prepared.log.push_str(&format!(
                 "  provider={} amount={} ref={} status={} parse_note={}\n",
-                provider
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("(unmatched)"),
+                provider.map(|p| p.name.as_str()).unwrap_or("(unmatched)"),
                 eb.amount_cents,
                 eb.reference,
                 status,
@@ -1480,6 +1484,37 @@ pub(crate) fn save_prepared_multi_bill_import(
 
     write_import_debug_log(&prepared.log);
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepared_import_preserves_detected_source_period() {
+        let prepared = prepare_multi_bill_import_from_text(
+            "Obracun za MAREC 2026".to_string(),
+            "invoice.pdf".to_string(),
+            4,
+            2026,
+            false,
+        );
+
+        assert_eq!(prepared.detected_source_period(), Some((3, 2026)));
+    }
+
+    #[test]
+    fn prepared_import_preserves_unknown_source_period() {
+        let prepared = prepare_multi_bill_import_from_text(
+            "Racun brez jasnega obdobja".to_string(),
+            "invoice.pdf".to_string(),
+            4,
+            2026,
+            false,
+        );
+
+        assert_eq!(prepared.detected_source_period(), None);
+    }
 }
 
 /// Import a bill file that may contain multiple bills.
@@ -1741,9 +1776,7 @@ pub fn import_bills(
         let id = conn.last_insert_rowid();
         log.push_str(&format!(
             "  provider={} amount={} ref={} status={} parse_note={}\n",
-            provider
-                .map(|p| p.name.as_str())
-                .unwrap_or("(unmatched)"),
+            provider.map(|p| p.name.as_str()).unwrap_or("(unmatched)"),
             eb.amount_cents,
             eb.reference,
             status,

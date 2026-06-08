@@ -9,8 +9,7 @@ use tauri::State;
 use tempfile::Builder as TempFileBuilder;
 
 use super::bills::{
-    load_bill_import_context, prepare_multi_bill_import_from_path,
-    save_prepared_multi_bill_import,
+    load_bill_import_context, prepare_multi_bill_import_from_path, save_prepared_multi_bill_import,
 };
 use super::config::DbState;
 
@@ -90,7 +89,11 @@ fn validate_folder(folder: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_config(config: &InboxConfig, require_password: bool, password: &str) -> Result<(), String> {
+fn validate_config(
+    config: &InboxConfig,
+    require_password: bool,
+    password: &str,
+) -> Result<(), String> {
     if config.host.trim().is_empty() {
         return Err("IMAP host is required.".to_string());
     }
@@ -172,7 +175,11 @@ fn sanitize_filename(filename: &str) -> String {
         })
         .collect();
     let trimmed = cleaned.trim_matches([' ', '.']).trim();
-    let safe = if trimmed.is_empty() { "attachment" } else { trimmed };
+    let safe = if trimmed.is_empty() {
+        "attachment"
+    } else {
+        trimmed
+    };
     truncate_chars(safe, 120)
 }
 
@@ -361,11 +368,7 @@ fn validate_attachment(attachment: &MailAttachment) -> Result<String, String> {
     Ok(ext)
 }
 
-fn failure_result(
-    message: &MessageContext,
-    filename: &str,
-    error: String,
-) -> InboxImportResult {
+fn failure_result(message: &MessageContext, filename: &str, error: String) -> InboxImportResult {
     InboxImportResult {
         sender: message.sender.clone(),
         subject: message.subject.clone(),
@@ -381,13 +384,14 @@ fn failure_result(
 fn skipped_result(
     message: &MessageContext,
     filename: &str,
+    status: &str,
     reason: &str,
 ) -> InboxImportResult {
     InboxImportResult {
         sender: message.sender.clone(),
         subject: message.subject.clone(),
         attachment_filename: filename.to_string(),
-        status: "skipped_duplicate".to_string(),
+        status: status.to_string(),
         bill_ids: Vec::new(),
         bill_count: 0,
         skipped_reason: Some(reason.to_string()),
@@ -444,6 +448,7 @@ fn import_attachment(
                 return skipped_result(
                     message,
                     &safe_filename,
+                    "skipped_duplicate",
                     "Attachment hash was already imported for this billing period.",
                 );
             }
@@ -484,6 +489,42 @@ fn import_attachment(
                 return failure_result(message, &safe_filename, error);
             }
         };
+    let period_mismatch = match prepared.detected_source_period() {
+        Some((source_month, source_year))
+            if source_month == context.month && source_year == context.year =>
+        {
+            None
+        }
+        Some((source_month, source_year)) => Some((
+            "skipped_wrong_period",
+            format!(
+                "Attachment appears to be for {:02}.{}, but the selected billing period is {:02}.{}.",
+                source_month, source_year, context.month, context.year
+            ),
+        )),
+        None => Some((
+            "skipped_unknown_period",
+            format!(
+                "Attachment billing period could not be detected for selected period {:02}.{}.",
+                context.month, context.year
+            ),
+        )),
+    };
+    if let Some((status, reason)) = period_mismatch {
+        if let Ok(conn) = db.0.lock() {
+            let _ = insert_import_record(
+                &conn,
+                billing_period_id,
+                message,
+                &safe_filename,
+                &hash,
+                &[],
+                status,
+                &reason,
+            );
+        }
+        return skipped_result(message, &safe_filename, status, &reason);
+    }
 
     let conn = match db.0.lock() {
         Ok(conn) => conn,

@@ -143,7 +143,7 @@ export interface InboxImportResult {
   sender: string;
   subject: string;
   attachment_filename: string;
-  status: "imported" | "skipped_duplicate" | "failed";
+  status: "imported" | "skipped_duplicate" | "skipped_wrong_period" | "skipped_unknown_period" | "failed";
   bill_ids: number[];
   bill_count: number;
   skipped_reason: string | null;

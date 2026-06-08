@@ -160,7 +160,7 @@ export function InboxSection() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="days_to_scan">Days to scan</Label>
+              <Label htmlFor="days_to_scan">Mailbox scan window</Label>
               <Input
                 id="days_to_scan"
                 type="number"
@@ -174,6 +174,9 @@ export function InboxSection() {
                   })
                 }
               />
+              <p className="text-xs text-muted-foreground">
+                Looks back this many days, then imports only attachments that match the selected billing period.
+              </p>
             </div>
           </div>
 
