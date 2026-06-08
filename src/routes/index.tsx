@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -12,18 +12,11 @@ import {
   Send,
   Users,
 } from "lucide-react";
-import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import type {
-  Apartment,
-  Bill,
-  Building,
-  BillingPeriod,
-  Provider,
-  SplitRow,
-} from "@/lib/types";
+import type { BillingPeriod } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
 import { Card } from "@/components/ui/card";
+import { useWorkflowSnapshot } from "@/lib/workflow-snapshot";
 
 export const Route = createFileRoute("/")({
   component: DashboardPage,
@@ -36,77 +29,25 @@ type PeriodTotal = {
 
 function DashboardPage() {
   const { allPeriods, selected } = useBillingPeriodSelection();
-  const [building, setBuilding] = useState<Building | null>(null);
-  const [apartments, setApartments] = useState<Apartment[]>([]);
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [bills, setBills] = useState<Bill[]>([]);
-  const [splits, setSplits] = useState<SplitRow[]>([]);
-  const [history, setHistory] = useState<PeriodTotal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const requestRef = useRef(0);
-
-  useEffect(() => {
-    const requestId = ++requestRef.current;
-    setLoading(true);
-
-    const load = async () => {
-      const [nextBuilding, nextApartments, nextProviders] = await Promise.all([
-        ipc.getBuilding(),
-        ipc.getApartments(),
-        ipc.getProviders(),
-      ]);
-      if (requestRef.current !== requestId) return;
-
-      setBuilding(nextBuilding);
-      setApartments(nextApartments);
-      setProviders(nextProviders);
-
-      if (!selected?.id) {
-        setBills([]);
-        setSplits([]);
-        setHistory([]);
-        setLoading(false);
-        return;
-      }
-
-      const recentPeriods = [...allPeriods]
-        .filter((period) => period.id != null)
+  const snapshot = useWorkflowSnapshot(selected?.id, allPeriods);
+  const { apartments, providers, bills, splits } = snapshot;
+  const history = useMemo<PeriodTotal[]>(
+    () =>
+      [...allPeriods]
+        .filter((period): period is BillingPeriod & { id: number } => period.id != null)
         .sort((a, b) => {
           if (a.year !== b.year) return b.year - a.year;
           return b.month - a.month;
         })
         .slice(0, 6)
-        .reverse();
-
-      const [nextBills, nextSplits, periodBills] = await Promise.all([
-        ipc.getBills(selected.id),
-        ipc.getSplits(selected.id),
-        Promise.all(
-          recentPeriods.map(async (period) => ({
-            period,
-            totalCents: (await ipc.getBills(period.id!)).reduce(
-              (sum, bill) => sum + bill.amount_cents,
-              0,
-            ),
-          })),
-        ),
-      ]);
-      if (requestRef.current !== requestId) return;
-
-      setBills(nextBills);
-      setSplits(nextSplits);
-      setHistory(periodBills);
-      setLoading(false);
-    };
-
-    void load().catch(() => {
-      if (requestRef.current === requestId) setLoading(false);
-    });
-
-    return () => {
-      requestRef.current += 1;
-    };
-  }, [allPeriods, selected]);
+        .reverse()
+        .map((period) => ({
+          period,
+          totalCents:
+            snapshot.periodStatuses.get(period.id)?.totalCents ?? 0,
+        })),
+    [allPeriods, snapshot.periodStatuses],
+  );
 
   const totalCents = bills.reduce((sum, bill) => sum + bill.amount_cents, 0);
   const apartmentsWithSplits = new Set(splits.map((split) => split.apartment_id)).size;
@@ -120,9 +61,7 @@ function DashboardPage() {
   const selectedLabel = selected
     ? `${MONTHS[selected.month - 1]} ${selected.year}`
     : "No billing period";
-  const buildingLabel = building
-    ? `${building.name}, ${building.city}`
-    : "Kamniska ulica 36, Ljubljana";
+  const buildingLabel = `${snapshot.buildingName}, ${snapshot.buildingCity}`;
   const billsReady = bills.length > 0;
   const splitsReady = splits.length > 0;
   const upnsReady = billsReady && splitsReady;
@@ -260,7 +199,7 @@ function DashboardPage() {
         <StatTile
           icon={needsReview > 0 ? <AlertTriangle className="size-4" /> : <CheckCircle2 className="size-4" />}
           label="Needs review"
-          value={loading ? "Checking" : needsReview > 0 ? `${needsReview} bill${needsReview === 1 ? "" : "s"}` : "Clear"}
+          value={snapshot.loading ? "Checking" : needsReview > 0 ? `${needsReview} bill${needsReview === 1 ? "" : "s"}` : "Clear"}
           detail={needsReview > 0 ? "OCR or parser note present" : "No flagged bill notes"}
           tone={needsReview > 0 ? "warn" : "good"}
         />

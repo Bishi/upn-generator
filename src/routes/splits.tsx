@@ -137,14 +137,7 @@ function SplitsPage() {
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const {
-    years,
-    yearPeriods,
-    selectedYear,
-    selected,
-    setSelectedYear,
-    setSelected,
-  } = useBillingPeriodSelection();
+  const { selected } = useBillingPeriodSelection();
 
   const loadSplits = async (periodId: number) => {
     const rows = await ipc.getSplits(periodId);
@@ -222,15 +215,6 @@ function SplitsPage() {
     <BillingPageShell
       title="Splits"
       subtitle={null}
-      years={years}
-      selectedYear={selectedYear}
-      onSelectYear={setSelectedYear}
-      yearPeriods={yearPeriods}
-      selected={selected}
-      onSelectPeriod={(period) => {
-        setSelected(period);
-        setSplits([]);
-      }}
       actions={
         <Button onClick={recalculate} disabled={!selected || calculating}>
           <RefreshCw className={`size-4 mr-2 ${calculating ? "animate-spin" : ""}`} />
@@ -313,8 +297,12 @@ function SplitsPage() {
           <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="bg-surface-2 text-xs font-medium text-muted-foreground">
-                <th className="px-3 py-2 text-left">Bill</th>
-                <th className="px-3 py-2 text-right">Total</th>
+                <th className="sticky left-0 z-10 min-w-48 bg-surface-2 px-3 py-2 text-left">
+                  Bill
+                </th>
+                <th className="border-r border-border-2 px-3 py-2 text-right">
+                  Total
+                </th>
                 {apartments.map(([id, apt]) => (
                   <th key={id} className="px-3 py-2 text-right whitespace-nowrap">
                     <div>{apt.label}</div>
@@ -328,7 +316,7 @@ function SplitsPage() {
             <tbody>
               {bills.map(([billId, info]) => (
                 <tr key={billId} className="border-t border-border hover:bg-accent/10">
-                  <td className="px-3 py-2">
+                  <td className="sticky left-0 z-10 bg-card px-3 py-2">
                     <div className="flex items-start gap-2 max-w-56">
                       {info.parseNote && <ReviewIndicator note={info.parseNote} />}
                       <div className="min-w-0">
@@ -346,7 +334,7 @@ function SplitsPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right font-mono font-medium">
+                  <td className="border-r border-border-2 px-3 py-2 text-right font-mono font-medium">
                     {formatEur(info.total)} EUR
                   </td>
                   {apartments.map(([aptId]) => {
@@ -371,8 +359,8 @@ function SplitsPage() {
             </tbody>
             <tfoot>
               <tr className="border-t border-border bg-surface-2 font-semibold">
-                <td className="px-3 py-2">Total per Apartment</td>
-                <td className="px-3 py-2 text-right font-mono">
+                <td className="sticky left-0 z-10 bg-surface-2 px-3 py-2">Total per Apartment</td>
+                <td className="border-r border-border-2 px-3 py-2 text-right font-mono">
                   {formatEur(
                     splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
                   )}

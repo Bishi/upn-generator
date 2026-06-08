@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Mail,
@@ -8,8 +8,9 @@ import {
   Eye,
   CheckCircle2,
   XCircle,
-  Loader2,
   Files,
+  ChevronDown,
+  Loader2,
 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -33,7 +34,7 @@ function hasSendableRecipient(raw: string) {
   return parseRecipientList(raw).length > 0;
 }
 
-function ApartmentCard({
+function ApartmentRows({
   billingPeriodId,
   apartmentId,
   apartmentLabel,
@@ -41,6 +42,8 @@ function ApartmentCard({
   contactEmail,
   splits,
   emailResult,
+  expanded,
+  onToggle,
   onPreviewError,
 }: {
   billingPeriodId: number;
@@ -50,6 +53,8 @@ function ApartmentCard({
   contactEmail: string;
   splits: SplitRow[];
   emailResult?: EmailResult;
+  expanded: boolean;
+  onToggle: () => void;
   onPreviewError: (message: string | null) => void;
 }) {
   const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
@@ -88,98 +93,125 @@ function ApartmentCard({
   };
 
   const total = splits.reduce((s, r) => s + r.split_amount_cents, 0);
+  const hasRecipient = hasSendableRecipient(contactEmail);
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 shadow-card">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-semibold">{apartmentLabel}</h3>
-          <p className="text-xs text-muted-foreground">
-            {apartmentUnitCode || "No unit code"} · {splits.length} UPN{splits.length === 1 ? "" : "s"}
-          </p>
-          <div className="mt-2">
-            {hasSendableRecipient(contactEmail) ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2 py-1 text-xs font-semibold text-success">
-                <Mail className="size-3" />
-                recipient on file
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
-                <AlertTriangle className="size-3" />
-                missing email
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-2">
+    <Fragment>
+      <tr className="border-b border-border hover:bg-accent/10">
+        <td className="px-3 py-3">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex min-w-0 items-center gap-2 text-left"
+          >
+            <ChevronDown
+              className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
+                expanded ? "" : "-rotate-90"
+              }`}
+            />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">{apartmentLabel}</div>
+              <div className="font-mono text-[11px] text-muted-foreground">
+                {apartmentUnitCode || "No unit code"} - {splits.length} UPN
+                {splits.length === 1 ? "" : "s"}
+              </div>
+            </div>
+          </button>
+        </td>
+        <td className="px-3 py-3">
+          {hasRecipient ? (
+            <span className="font-mono text-xs text-muted-foreground">
+              {contactEmail}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
+              <Mail className="size-3" />
+              no email
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-3 text-right">
+          {emailResult ? (
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${
+                emailResult.success
+                  ? "bg-success-soft text-success"
+                  : "bg-danger-soft text-danger"
+              }`}
+            >
+              {emailResult.success ? (
+                <CheckCircle2 className="size-3" />
+              ) : (
+                <XCircle className="size-3" />
+              )}
+              {emailResult.success ? "sent" : "failed"}
+            </span>
+          ) : hasRecipient ? (
+            <span className="inline-flex rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
+              ready
+            </span>
+          ) : (
+            <span className="inline-flex rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
+              hold
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-3 text-right font-mono font-semibold">
+          {formatEur(total)} EUR
+        </td>
+        <td className="px-3 py-3">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={previewAll}
             disabled={previewingAll || splits.length === 0}
+            className="w-full"
           >
             {previewingAll ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <Files className="size-3.5" />
+              <Eye className="size-3.5" />
             )}
-            Preview All
+            Preview all
           </Button>
-          {emailResult && (
-            <span
-              className={`flex items-center gap-1 text-xs ${
-                emailResult.success ? "text-success" : "text-danger"
-              }`}
-            >
-              {emailResult.success ? (
-                <CheckCircle2 className="size-3.5" />
-              ) : (
-                <XCircle className="size-3.5" />
-              )}
-              {emailResult.success ? "Sent" : emailResult.error ?? "Failed"}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        {splits.map((s) => (
-          <div
-            key={s.bill_id}
-            className="flex items-center justify-between text-sm"
-          >
-            <span className="text-muted-foreground truncate max-w-40">
-              {s.provider_name ?? s.bill_source_filename}
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="font-mono font-medium">
-                {formatEur(s.split_amount_cents)} EUR
-              </span>
+        </td>
+      </tr>
+      {expanded &&
+        splits.map((split) => (
+          <tr key={split.bill_id} className="border-b border-border bg-surface-2">
+            <td colSpan={2} className="px-9 py-2">
+              <div className="text-sm font-medium">
+                {split.provider_name ?? split.bill_source_filename}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {split.bill_source_filename}
+              </div>
+            </td>
+            <td />
+            <td className="px-3 py-2 text-right font-mono text-sm text-muted-foreground">
+              {formatEur(split.split_amount_cents)} EUR
+            </td>
+            <td className="px-3 py-2">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => previewUpn(s.bill_id)}
-                disabled={loadingPreview === s.bill_id}
-                title="Preview UPN"
+                onClick={() => previewUpn(split.bill_id)}
+                disabled={loadingPreview === split.bill_id}
+                className="w-full"
               >
-                {loadingPreview === s.bill_id ? (
+                {loadingPreview === split.bill_id ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
                   <Eye className="size-3.5" />
                 )}
                 Preview
               </Button>
-            </div>
-          </div>
+            </td>
+          </tr>
         ))}
-      </div>
-
-      <div className="border-t border-border pt-2 flex justify-between text-sm font-semibold">
-        <span>Total</span>
-        <span className="font-mono">{formatEur(total)} EUR</span>
-      </div>
-    </div>
+    </Fragment>
   );
+
 }
 
 function UpnPage() {
@@ -191,14 +223,8 @@ function UpnPage() {
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const {
-    years,
-    yearPeriods,
-    selectedYear,
-    selected,
-    setSelectedYear,
-    setSelected,
-  } = useBillingPeriodSelection();
+  const { selected } = useBillingPeriodSelection();
+  const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
 
   useEffect(() => {
     void ipc.getApartments().then(setApartmentsConfig);
@@ -281,16 +307,6 @@ function UpnPage() {
     <BillingPageShell
       title="UPN Preview"
       subtitle={null}
-      years={years}
-      selectedYear={selectedYear}
-      onSelectYear={setSelectedYear}
-      yearPeriods={yearPeriods}
-      selected={selected}
-      onSelectPeriod={(period) => {
-        setSelected(period);
-        setSplits([]);
-        setEmailResults([]);
-      }}
       actions={
         <>
           <Button
@@ -368,20 +384,52 @@ function UpnPage() {
       )}
 
       {!loadingSplits && apartments.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {apartments.map(([aptId, { label, unitCode, contactEmail, splits: aptSplits }]) => (
-            <ApartmentCard
-              key={aptId}
-              billingPeriodId={selected!.id!}
-              apartmentId={aptId}
-              apartmentLabel={label}
-              apartmentUnitCode={unitCode}
-              contactEmail={contactEmail}
-              splits={aptSplits}
-              emailResult={emailResults.find((r) => r.apartment_label === label)}
-              onPreviewError={setPageMessage}
-            />
-          ))}
+        <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
+                <th className="px-3 py-2">Apartment</th>
+                <th className="px-3 py-2">Recipient</th>
+                <th className="px-3 py-2 text-right">Status</th>
+                <th className="px-3 py-2 text-right">Total</th>
+                <th className="w-32 px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {apartments.map(([aptId, { label, unitCode, contactEmail, splits: aptSplits }]) => (
+                <ApartmentRows
+                  key={aptId}
+                  billingPeriodId={selected!.id!}
+                  apartmentId={aptId}
+                  apartmentLabel={label}
+                  apartmentUnitCode={unitCode}
+                  contactEmail={contactEmail}
+                  splits={aptSplits}
+                  emailResult={emailResults.find((r) => r.apartment_label === label)}
+                  expanded={expandedApartmentId === aptId}
+                  onToggle={() =>
+                    setExpandedApartmentId((current) =>
+                      current === aptId ? null : aptId,
+                    )
+                  }
+                  onPreviewError={setPageMessage}
+                />
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-surface-2 font-semibold">
+                <td colSpan={3} className="px-3 py-2 text-xs text-muted-foreground">
+                  {apartments.length} packet{apartments.length === 1 ? "" : "s"}
+                </td>
+                <td className="px-3 py-2 text-right font-mono">
+                  {formatEur(
+                    splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
+                  )} EUR
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
         </div>
       )}
 
