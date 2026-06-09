@@ -48,6 +48,8 @@ export interface SmtpConfig {
   username: string;
   from_email: string;
   use_tls: boolean;
+  allowlist_enabled: boolean;
+  recipient_allowlist: string;
 }
 
 export interface InboxConfig {
@@ -133,10 +135,34 @@ export interface SplitRow {
 // UPN
 
 export interface EmailResult {
+  apartment_id: number;
   apartment_label: string;
   email: string;
+  status: "sent" | "failed" | "blocked" | "partial" | "changed";
+  recipient: string;
+  original_recipient: string;
   success: boolean;
   error: string | null;
+}
+
+export interface UpnDeliveryEvent {
+  id: number;
+  attempt_id: string;
+  billing_period_id: number;
+  apartment_id: number;
+  delivery_type: "email";
+  status: "sent" | "failed" | "blocked";
+  recipient: string;
+  original_recipient: string;
+  attachment_sha256: string;
+  error: string;
+  created_at: string;
+}
+
+export interface UpnPacketHash {
+  apartment_id: number;
+  attachment_sha256: string;
+  error: string;
 }
 
 export interface InboxImportResult {

@@ -288,13 +288,16 @@ pub struct SmtpConfig {
     pub username: String,
     pub from_email: String,
     pub use_tls: bool,
+    pub allowlist_enabled: bool,
+    pub recipient_allowlist: String,
 }
 
 #[tauri::command]
 pub fn get_smtp_config(db: State<DbState>) -> Result<SmtpConfig, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.query_row(
-        "SELECT host, port, username, from_email, use_tls FROM smtp_config WHERE id=1",
+        "SELECT host, port, username, from_email, use_tls, allowlist_enabled, recipient_allowlist
+         FROM smtp_config WHERE id=1",
         [],
         |row| {
             Ok(SmtpConfig {
@@ -303,6 +306,8 @@ pub fn get_smtp_config(db: State<DbState>) -> Result<SmtpConfig, String> {
                 username: row.get(2)?,
                 from_email: row.get(3)?,
                 use_tls: row.get::<_, i32>(4)? != 0,
+                allowlist_enabled: row.get::<_, i32>(5)? != 0,
+                recipient_allowlist: row.get(6)?,
             })
         },
     )
@@ -313,10 +318,15 @@ pub fn get_smtp_config(db: State<DbState>) -> Result<SmtpConfig, String> {
 pub fn save_smtp_config(db: State<DbState>, config: SmtpConfig) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "UPDATE smtp_config SET host=?1, port=?2, username=?3, from_email=?4, use_tls=?5 WHERE id=1",
+        "UPDATE smtp_config
+         SET host=?1, port=?2, username=?3, from_email=?4, use_tls=?5,
+             allowlist_enabled=?6, recipient_allowlist=?7
+         WHERE id=1",
         rusqlite::params![
             config.host, config.port, config.username, config.from_email,
-            if config.use_tls { 1 } else { 0 }
+            if config.use_tls { 1 } else { 0 },
+            if config.allowlist_enabled { 1 } else { 0 },
+            config.recipient_allowlist.trim()
         ],
     )
     .map_err(|e| e.to_string())?;

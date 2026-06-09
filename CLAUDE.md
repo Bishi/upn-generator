@@ -19,13 +19,15 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - Manual backups intentionally blank `smtp_config.password` and `inbox_config.password`
 - `building` table always has exactly 1 row (`id=1`)
 - `smtp_config` table always has exactly 1 row (`id=1`)
+- SMTP email safety is stored on `smtp_config`; the recipient allowlist defaults enabled and empty so bulk UPN sends are blocked until test recipients are listed or the allowlist is disabled
 - `app_settings` table always has exactly 1 row (`id=1`) for database-backed UI preferences such as theme
 - `inbox_config` table always has exactly 1 row (`id=1`) for manual IMAP inbox import settings
 - Inbox imports are manual, read-only IMAP scans using `EXAMINE` and `BODY.PEEK`; attachments are parsed from temporary files and raw extracted text is not persisted for inbox imports
 - Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
 - Apartment `contact_email` remains the persisted field name and supports comma-separated recipients
+- UPN email delivery history is stored per recipient in `upn_delivery_events`; keyring password storage is still deferred, so SMTP and inbox passwords remain local DB fields excluded from backups
 - Provider split logic is configured per provider via `split_basis` (`occupants`, `m2_percentage`, or `equal_apartments`)
-- Factory reset reseeds building/apartments/providers/SMTP defaults and clears periods/bills/splits
+- Factory reset reseeds building/apartments/providers/SMTP defaults and clears periods/bills/splits/delivery history
 
 ## Key Files
 
@@ -41,7 +43,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
 - `src-tauri/src/commands/inbox.rs` - read-only IMAP inbox configuration, connection test, and attachment import commands
 - `src-tauri/src/commands/splits.rs` - split calculation logic
-- `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, and email sending
+- `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, email safety, delivery history, SMTP test, and email sending
 - `src/routes/bills.tsx` - Bills page
 - `src/routes/splits.tsx` - Splits matrix page
 - `src/routes/upn.tsx` - UPN preview and send page
@@ -68,7 +70,7 @@ UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 m
 - Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
 - Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send and read-only inbox import work; keyring for password storage is still pending)
 
-Current status: **v0.4.14. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, multi-recipient apartment emails, a manual SQLite backup/restore workflow, and manual read-only inbox attachment import.**
+Current status: **v0.4.14. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, guarded multi-recipient apartment emails with persisted delivery history, a manual SQLite backup/restore workflow, and manual read-only inbox attachment import.**
 
 ## Documentation
 

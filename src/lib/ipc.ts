@@ -13,6 +13,8 @@ import type {
   Provider,
   SmtpConfig,
   SplitRow,
+  UpnDeliveryEvent,
+  UpnPacketHash,
 } from "./types";
 
 export const ipc = {
@@ -45,6 +47,8 @@ export const ipc = {
     invoke<void>("save_inbox_password", { password }),
   testInboxConnection: (config: InboxConfig, password: string) =>
     invoke<void>("test_inbox_connection", { config, password }),
+  testSmtpConnection: (config: SmtpConfig, password: string, testRecipient: string) =>
+    invoke<void>("test_smtp_connection", { config, password, testRecipient }),
   getAppSettings: () => invoke<AppSettings>("get_app_settings"),
   saveAppSettings: (settings: AppSettings) =>
     invoke<AppSettings>("save_app_settings", { settings }),
@@ -89,6 +93,10 @@ export const ipc = {
     invoke<string[]>("save_all_upns", { billingPeriodId, folderPath }),
   sendEmails: (billingPeriodId: number) =>
     invoke<EmailResult[]>("send_emails", { billingPeriodId }),
+  getUpnDeliveryEvents: (billingPeriodId: number) =>
+    invoke<UpnDeliveryEvent[]>("get_upn_delivery_events", { billingPeriodId }),
+  getUpnPacketHashes: (billingPeriodId: number) =>
+    invoke<UpnPacketHash[]>("get_upn_packet_hashes", { billingPeriodId }),
   saveSmtpPassword: (password: string) =>
     invoke<void>("save_smtp_password", { password }),
   getSmtpPassword: () => invoke<string>("get_smtp_password"),

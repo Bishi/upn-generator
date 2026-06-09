@@ -454,6 +454,8 @@ pub fn create_billing_period(
 pub fn delete_billing_period(db: State<DbState>, id: i64) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     // Cascade: delete splits → bills → period
+    conn.execute("DELETE FROM upn_delivery_events WHERE billing_period_id=?1", [id])
+        .map_err(|e| e.to_string())?;
     conn.execute(
         "DELETE FROM bill_splits WHERE bill_id IN (SELECT id FROM bills WHERE billing_period_id=?1)",
         [id],

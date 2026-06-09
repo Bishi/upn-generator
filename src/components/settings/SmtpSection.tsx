@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Save, Eye, EyeOff } from "lucide-react";
+import { Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { SmtpConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,8 @@ const emptyConfig: SmtpConfig = {
   username: "",
   from_email: "",
   use_tls: true,
+  allowlist_enabled: true,
+  recipient_allowlist: "",
 };
 
 export function SmtpSection() {
@@ -29,6 +31,8 @@ export function SmtpSection() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [testRecipient, setTestRecipient] = useState("");
+  const [testStatus, setTestStatus] = useState<string | null>(null);
 
   useEffect(() => {
     if (data) setForm(data);
@@ -49,6 +53,16 @@ export function SmtpSection() {
       queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () => ipc.testSmtpConnection(form, password, testRecipient),
+    onSuccess: () => {
+      setTestStatus("Test email sent.");
+    },
+    onError: (error) => {
+      setTestStatus(String(error));
     },
   });
 
@@ -139,6 +153,79 @@ export function SmtpSection() {
               className="size-4 accent-primary"
             />
             <Label htmlFor="use_tls">Use TLS/STARTTLS</Label>
+          </div>
+          <div className="rounded-md border border-border bg-surface-2 p-4">
+            <div className="mb-3 flex items-start gap-2">
+              <ShieldCheck className="mt-0.5 size-4 text-success" />
+              <div>
+                <h4 className="text-sm font-semibold">Email safety</h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  When enabled, UPN emails are sent only to listed test recipients.
+                  Other recipients are skipped and recorded.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="allowlist_enabled"
+                  checked={form.allowlist_enabled}
+                  onChange={(e) =>
+                    setForm({ ...form, allowlist_enabled: e.target.checked })
+                  }
+                  className="size-4 accent-primary"
+                />
+                <Label htmlFor="allowlist_enabled">Enable recipient allowlist</Label>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="recipient_allowlist">Allowed test recipients</Label>
+                <Input
+                  id="recipient_allowlist"
+                  value={form.recipient_allowlist}
+                  onChange={(e) =>
+                    setForm({ ...form, recipient_allowlist: e.target.value })
+                  }
+                  placeholder="you@gmail.com, tester@example.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Empty list blocks all UPN email sends while the allowlist is enabled.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-card p-4">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="test_recipient">Test recipient</Label>
+                <Input
+                  id="test_recipient"
+                  type="email"
+                  value={testRecipient}
+                  onChange={(e) => setTestRecipient(e.target.value)}
+                  placeholder="you@gmail.com"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => testMutation.mutate()}
+                disabled={testMutation.isPending}
+                className="gap-2"
+              >
+                <Send className="size-4" />
+                {testMutation.isPending ? "Testing..." : "Test Email"}
+              </Button>
+            </div>
+            {testStatus && (
+              <p
+                className={`mt-2 text-xs ${
+                  testMutation.isError ? "text-danger" : "text-success"
+                }`}
+              >
+                {testStatus}
+              </p>
+            )}
           </div>
           <Button type="submit" disabled={mutation.isPending} className="gap-2">
             <Save className="size-4" />

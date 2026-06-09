@@ -14,7 +14,13 @@ import {
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
-import type { Apartment, EmailResult, SplitRow } from "@/lib/types";
+import type {
+  Apartment,
+  EmailResult,
+  SplitRow,
+  UpnDeliveryEvent,
+  UpnPacketHash,
+} from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -33,6 +39,109 @@ function parseRecipientList(raw: string) {
 
 function hasSendableRecipient(raw: string) {
   return parseRecipientList(raw).length > 0;
+}
+
+function statusLabel(status: EmailResult["status"]) {
+  switch (status) {
+    case "sent":
+      return "sent";
+    case "blocked":
+      return "blocked";
+    case "partial":
+      return "partial";
+    case "changed":
+      return "changed";
+    default:
+      return "failed";
+  }
+}
+
+function statusClass(status: EmailResult["status"]) {
+  if (status === "sent") return "bg-success-soft text-success";
+  if (status === "blocked") return "bg-warning-soft text-warning";
+  if (status === "partial") return "bg-warning-soft text-warning";
+  if (status === "changed") return "bg-warning-soft text-warning";
+  return "bg-danger-soft text-danger";
+}
+
+function normalizedRecipients(raw: string) {
+  return parseRecipientList(raw).map((recipient) => recipient.toLowerCase()).sort();
+}
+
+function sameRecipients(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function aggregateHistoryEvents(
+  events: UpnDeliveryEvent[],
+  apartmentsById: Map<number | null, Apartment>,
+  packetHashesByApartmentId: Map<number, UpnPacketHash>,
+): Map<number, EmailResult> {
+  const latestAttemptByApartment = new Map<number, string>();
+  const latestSortByApartment = new Map<number, string>();
+
+  for (const event of events) {
+    const sortKey = `${event.created_at}:${String(event.id).padStart(12, "0")}`;
+    const previous = latestSortByApartment.get(event.apartment_id);
+    if (!previous || sortKey >= previous) {
+      latestSortByApartment.set(event.apartment_id, sortKey);
+      latestAttemptByApartment.set(event.apartment_id, event.attempt_id);
+    }
+  }
+
+  const result = new Map<number, EmailResult>();
+  for (const [apartmentId, attemptId] of latestAttemptByApartment) {
+    const rows = events.filter(
+      (event) => event.apartment_id === apartmentId && event.attempt_id === attemptId,
+    );
+    const statuses = new Set(rows.map((event) => event.status));
+    const status: EmailResult["status"] =
+      statuses.size === 1
+        ? (rows[0]?.status as EmailResult["status"])
+        : "partial";
+    const apartment = apartmentsById.get(apartmentId) ?? null;
+    const currentRecipients = normalizedRecipients(apartment?.contact_email ?? "");
+    const historicalRecipients = rows
+      .map((event) => event.recipient.trim().toLowerCase())
+      .filter(Boolean)
+      .sort();
+    const currentPacketHash = packetHashesByApartmentId.get(apartmentId);
+    const historicalHashes = [...new Set(rows.map((event) => event.attachment_sha256))].filter(
+      Boolean,
+    );
+    const matchesRecipients = sameRecipients(currentRecipients, historicalRecipients);
+    const matchesPacket =
+      Boolean(currentPacketHash?.attachment_sha256) &&
+      historicalHashes.length === 1 &&
+      historicalHashes[0] === currentPacketHash?.attachment_sha256;
+    const isCurrent = matchesRecipients && matchesPacket;
+    const displayStatus: EmailResult["status"] = isCurrent ? status : "changed";
+    const errors = rows
+      .map((event) => event.error)
+      .filter(Boolean)
+      .filter((error, index, all) => all.indexOf(error) === index);
+    if (!isCurrent) {
+      errors.unshift(
+        currentPacketHash?.error
+          ? `Current packet could not be checked: ${currentPacketHash.error}`
+          : "Current recipients or UPN packet changed since this delivery attempt.",
+      );
+    }
+
+    result.set(apartmentId, {
+      apartment_id: apartmentId,
+      apartment_label: apartment?.label ?? `Apartment ${apartmentId}`,
+      email: apartment?.contact_email ?? rows.map((event) => event.original_recipient).join(", "),
+      status: displayStatus,
+      recipient: rows.map((event) => event.recipient).join(", "),
+      original_recipient: rows.map((event) => event.original_recipient).join(", "),
+      success: displayStatus === "sent",
+      error: errors.length > 0 ? errors.join("; ") : null,
+    });
+  }
+
+  return result;
 }
 
 function ApartmentRows({
@@ -140,18 +249,16 @@ function ApartmentRows({
         <td className="px-3 py-3 text-right">
           {emailResult ? (
             <span
-              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${
-                emailResult.success
-                  ? "bg-success-soft text-success"
-                  : "bg-danger-soft text-danger"
-              }`}
+              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${statusClass(
+                emailResult.status,
+              )}`}
             >
-              {emailResult.success ? (
+              {emailResult.status === "sent" ? (
                 <CheckCircle2 className="size-3" />
               ) : (
                 <XCircle className="size-3" />
               )}
-              {emailResult.success ? "sent" : "failed"}
+              {statusLabel(emailResult.status)}
             </span>
           ) : hasRecipient ? (
             <span className="inline-flex rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
@@ -235,6 +342,8 @@ function UpnPage() {
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
+  const [deliveryEvents, setDeliveryEvents] = useState<UpnDeliveryEvent[]>([]);
+  const [packetHashes, setPacketHashes] = useState<UpnPacketHash[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
   const loadedPeriodIdRef = useRef<number | null>(
@@ -265,11 +374,16 @@ function UpnPage() {
       if (loadedPeriodIdRef.current !== selected.id || splits.length === 0) {
         setLoadingSplits(true);
       }
-      void ipc
-        .getSplits(selected.id)
-        .then((rows) => {
+      void Promise.all([
+        ipc.getSplits(selected.id),
+        ipc.getUpnDeliveryEvents(selected.id),
+        ipc.getUpnPacketHashes(selected.id),
+      ])
+        .then(([rows, events, hashes]) => {
           if (loadRequestRef.current !== requestId) return;
           setSplits(rows);
+          setDeliveryEvents(events);
+          setPacketHashes(hashes);
           loadedPeriodIdRef.current = selected.id;
         })
         .finally(() => {
@@ -277,6 +391,8 @@ function UpnPage() {
         });
     } else {
       setSplits([]);
+      setDeliveryEvents([]);
+      setPacketHashes([]);
       setLoadingSplits(false);
     }
     return () => {
@@ -291,6 +407,12 @@ function UpnPage() {
       try {
       const results = await sendPeriodEmails(selected.id);
       setEmailResults(results);
+      const [events, hashes] = await Promise.all([
+        ipc.getUpnDeliveryEvents(selected.id),
+        ipc.getUpnPacketHashes(selected.id),
+      ]);
+      setDeliveryEvents(events);
+      setPacketHashes(hashes);
     } catch (e) {
       setPageMessage(String(e));
     } finally {
@@ -314,6 +436,14 @@ function UpnPage() {
 
   const apartmentConfigById = new Map(
     apartmentsConfig.map((apartment) => [apartment.id, apartment]),
+  );
+  const historyResultsByApartmentId = aggregateHistoryEvents(
+    deliveryEvents,
+    apartmentConfigById,
+    new Map(packetHashes.map((hash) => [hash.apartment_id, hash])),
+  );
+  const runResultsByApartmentId = new Map(
+    emailResults.map((result) => [result.apartment_id, result]),
   );
   const byApartment = new Map<number, { label: string; unitCode: string; contactEmail: string; splits: SplitRow[] }>();
   for (const s of splits) {
@@ -439,7 +569,10 @@ function UpnPage() {
                   apartmentUnitCode={unitCode}
                   contactEmail={contactEmail}
                   splits={aptSplits}
-                  emailResult={emailResults.find((r) => r.apartment_label === label)}
+                  emailResult={
+                    runResultsByApartmentId.get(aptId) ??
+                    historyResultsByApartmentId.get(aptId)
+                  }
                   expanded={expandedApartmentId === aptId}
                   onToggle={() =>
                     setExpandedApartmentId((current) =>
@@ -473,12 +606,17 @@ function UpnPage() {
           <div className="flex flex-col gap-1.5">
             {emailResults.map((r, i) => (
               <div key={i} className="flex items-center gap-2 text-sm">
-                {r.success ? (
+                {r.status === "sent" ? (
                   <CheckCircle2 className="size-4 shrink-0 text-success" />
                 ) : (
-                  <XCircle className="size-4 shrink-0 text-danger" />
+                  <XCircle
+                    className={`size-4 shrink-0 ${
+                      r.status === "failed" ? "text-danger" : "text-warning"
+                    }`}
+                  />
                 )}
                 <span className="font-medium">{r.apartment_label}</span>
+                <span className="text-muted-foreground">{statusLabel(r.status)}</span>
                 <span className="text-muted-foreground">{r.email}</span>
                 {r.error && (
                   <span className="text-xs text-danger">{r.error}</span>

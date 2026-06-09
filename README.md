@@ -64,6 +64,8 @@ Enter your outgoing mail server credentials so the app can send UPN slips to ten
 
 Gmail note: you must create an **App Password** in your Google Account security settings. Your regular Gmail password will not work.
 
+Use **Email safety** while testing SMTP delivery. The recipient allowlist is enabled by default and starts empty, so **Send Emails** records blocked attempts but does not contact tenants until you add allowed test recipients or turn the allowlist off. **Test Email** sends a small real email to the test recipient using the current form values; when the allowlist is enabled, that test recipient must also be listed.
+
 ### Settings -> Delivery -> Inbox
 
 Enter your incoming IMAP mailbox settings so the app can manually import bill attachments from email. Typical Gmail settings:
@@ -143,7 +145,9 @@ Each apartment card shows its line items and the total amount due.
 |--------|-------------|
 | **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
 | **Download All PDFs** | Saves all UPN slips to a folder of your choice |
-| **Send Emails** | Sends one combined apartment PDF to all configured recipient addresses for that apartment |
+| **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
+
+UPN Preview keeps email delivery history for the selected month. After reload, apartment rows can show sent, failed, blocked, or partial status based on the latest send attempt.
 
 ---
 
@@ -181,7 +185,7 @@ All data is stored locally in a SQLite database at:
 %APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, and inbox import history, but intentionally exclude saved SMTP and inbox passwords.
+Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, inbox import history, and UPN email delivery history, but intentionally exclude saved SMTP and inbox passwords.
 
 Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings. Inbox imports connect directly to the IMAP server you configure, store only import metadata, and do not persist raw extracted text from inbox attachments.
 
@@ -206,6 +210,8 @@ Make sure a PDF viewer is installed (for example Adobe Acrobat or Microsoft Edge
 **Email not sending**
 
 Check the SMTP settings under **Settings -> Delivery**. For Gmail, you must use an **App Password** - your regular account password will be rejected.
+
+If rows show **blocked**, the Email safety allowlist is enabled and the recipient is not listed. Add the test recipient to the allowlist or turn the allowlist off when you are ready to send to tenants.
 
 **Inbox import not connecting**
 

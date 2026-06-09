@@ -335,7 +335,9 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             port INTEGER NOT NULL DEFAULT 587,
             username TEXT NOT NULL DEFAULT '',
             from_email TEXT NOT NULL DEFAULT '',
-            use_tls INTEGER NOT NULL DEFAULT 1
+            use_tls INTEGER NOT NULL DEFAULT 1,
+            allowlist_enabled INTEGER NOT NULL DEFAULT 1,
+            recipient_allowlist TEXT NOT NULL DEFAULT ''
         );
 
         INSERT OR IGNORE INTO smtp_config (id) VALUES (1);
@@ -382,6 +384,20 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             UNIQUE(billing_period_id, bill_hash)
         );
 
+        CREATE TABLE IF NOT EXISTS upn_delivery_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id TEXT NOT NULL DEFAULT '',
+            billing_period_id INTEGER NOT NULL REFERENCES billing_periods(id),
+            apartment_id INTEGER NOT NULL REFERENCES apartments(id),
+            delivery_type TEXT NOT NULL DEFAULT 'email',
+            status TEXT NOT NULL DEFAULT '',
+            recipient TEXT NOT NULL DEFAULT '',
+            original_recipient TEXT NOT NULL DEFAULT '',
+            attachment_sha256 TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS app_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             theme TEXT NOT NULL DEFAULT 'refined'
@@ -406,6 +422,14 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     );
     let _ = conn.execute(
         "ALTER TABLE smtp_config ADD COLUMN password TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE smtp_config ADD COLUMN allowlist_enabled INTEGER NOT NULL DEFAULT 1",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE smtp_config ADD COLUMN recipient_allowlist TEXT NOT NULL DEFAULT ''",
         [],
     );
     let _ = conn.execute(
@@ -447,6 +471,26 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
          ON inbox_bill_hashes(billing_period_id, bill_hash)",
         [],
     );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_period
+         ON upn_delivery_events(billing_period_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_apartment
+         ON upn_delivery_events(apartment_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_attempt
+         ON upn_delivery_events(attempt_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_latest
+         ON upn_delivery_events(billing_period_id, apartment_id, created_at)",
+        [],
+    );
 
     let building_name: String = conn
         .query_row("SELECT name FROM building WHERE id=1", [], |row| row.get(0))
@@ -485,6 +529,7 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
         "
         DELETE FROM bill_splits;
         DELETE FROM inbox_bill_hashes;
+        DELETE FROM upn_delivery_events;
         DELETE FROM bills;
         DELETE FROM billing_periods;
         DELETE FROM inbox_imports;
@@ -492,7 +537,8 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
         DELETE FROM providers;
         UPDATE building SET name='', address='', city='', postal_code='' WHERE id=1;
         UPDATE smtp_config
-        SET host='', port=587, username='', from_email='', use_tls=1, password=''
+        SET host='', port=587, username='', from_email='', use_tls=1, password='',
+            allowlist_enabled=1, recipient_allowlist=''
         WHERE id=1;
         UPDATE inbox_config
         SET host='', port=993, username='', password='', use_tls=1, folder='INBOX',
