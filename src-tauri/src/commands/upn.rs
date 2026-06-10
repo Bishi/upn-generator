@@ -8,12 +8,14 @@ use printpdf::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::io::BufWriter;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
+
+use crate::credentials::{self, MailCredentialKind};
 
 use super::config::{DbState, SmtpConfig};
 
@@ -1312,9 +1314,12 @@ fn build_mailer(
 ) -> Result<SmtpTransport, String> {
     let creds = Credentials::new(smtp_user.to_string(), smtp_pass.to_string());
     if use_tls {
-        SmtpTransport::relay(smtp_host)
-            .map_err(|e| e.to_string())
-            .map(|builder| builder.port(smtp_port as u16).credentials(creds).build())
+        let builder = if smtp_port == 465 {
+            SmtpTransport::relay(smtp_host).map_err(|e| e.to_string())?
+        } else {
+            SmtpTransport::starttls_relay(smtp_host).map_err(|e| e.to_string())?
+        };
+        Ok(builder.port(smtp_port as u16).credentials(creds).build())
     } else {
         Ok(SmtpTransport::builder_dangerous(smtp_host)
             .port(smtp_port as u16)
@@ -1466,216 +1471,16 @@ pub fn open_preview_apartment_upns(
 
 #[tauri::command]
 pub fn save_smtp_password(db: State<DbState>, password: String) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("UPDATE smtp_config SET password=?1 WHERE id=1", [&password])
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn get_smtp_password(db: State<DbState>) -> Result<String, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.query_row("SELECT password FROM smtp_config WHERE id=1", [], |r| {
-        r.get(0)
-    })
-    .map_err(|e| e.to_string())
-}
-
-#[allow(dead_code)]
-fn send_emails_legacy(db: State<DbState>, billing_period_id: i64) -> Result<Vec<EmailResult>, String> {
-    let (smtp_host, smtp_port, smtp_user, smtp_from, use_tls, smtp_pass) = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        conn.query_row(
-            "SELECT host, port, username, from_email, use_tls, password
-             FROM smtp_config WHERE id=1",
-            [],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i32>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, i32>(4)? != 0,
-                    r.get::<_, String>(5)?,
-                ))
-            },
-        )
-        .map_err(|e| e.to_string())?
-    };
-
-    if smtp_host.is_empty() {
-        return Err("SMTP host not configured.".to_string());
+    if password.is_empty() {
+        return Ok(());
     }
-
-    let (month, year) = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        conn.query_row(
-            "SELECT month, year FROM billing_periods WHERE id=?1",
-            [billing_period_id],
-            |r| Ok((r.get::<_, i32>(0)?, r.get::<_, i32>(1)?)),
-        )
-        .map_err(|e| e.to_string())?
-    };
-
-    let apartments: Vec<(i64, String, String)> = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        query_vec(
-            &conn,
-            "SELECT DISTINCT a.id, a.label, a.contact_email
-             FROM bill_splits bs
-             JOIN bills b ON bs.bill_id = b.id
-             JOIN apartments a ON bs.apartment_id = a.id
-             WHERE b.billing_period_id = ?1 AND a.contact_email != ''
-             ORDER BY a.label",
-            &[&billing_period_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )?
-    };
-
-    let apartments: Vec<(i64, String, String, Vec<String>)> = apartments
-        .into_iter()
-        .filter_map(|(apt_id, apt_label, raw_email)| {
-            let recipients = parse_recipient_list(&raw_email);
-            if recipients.is_empty() {
-                None
-            } else {
-                Some((apt_id, apt_label, raw_email, recipients))
-            }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let username = conn
+        .query_row("SELECT username FROM smtp_config WHERE id=1", [], |row| {
+            row.get::<_, String>(0)
         })
-        .collect();
-
-    if apartments.is_empty() {
-        return Err("No apartments with email addresses have splits in this period.".to_string());
-    }
-
-    let creds = Credentials::new(smtp_user, smtp_pass);
-    let mailer: SmtpTransport = if use_tls {
-        SmtpTransport::relay(&smtp_host)
-            .map_err(|e| e.to_string())?
-            .port(smtp_port as u16)
-            .credentials(creds)
-            .build()
-    } else {
-        SmtpTransport::starttls_relay(&smtp_host)
-            .map_err(|e| e.to_string())?
-            .port(smtp_port as u16)
-            .credentials(creds)
-            .build()
-    };
-
-    let mut results: Vec<EmailResult> = Vec::new();
-
-    for (apt_id, apt_label, raw_email, recipients) in &apartments {
-        let attachment_bytes = {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
-            load_apartment_upn_data(&conn, billing_period_id, *apt_id)
-                .and_then(|items| render_upn_pdf_batch(&items))
-        };
-
-        let attachment_bytes = match attachment_bytes {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                results.push(EmailResult {
-                    apartment_id: *apt_id,
-                    apartment_label: apt_label.clone(),
-                    email: raw_email.clone(),
-                    status: "failed".to_string(),
-                    recipient: raw_email.clone(),
-                    original_recipient: raw_email.clone(),
-                    success: false,
-                    error: Some(e),
-                });
-                continue;
-            }
-        };
-
-        let subject = format!("Poloznice za {}/{}", month, year);
-        let body = format!(
-            "Spoštovani,\n\nv priponki najdete UPN položnice za {:02}/{}.\n\nLep pozdrav",
-            month, year
-        );
-
-        let from_result: Result<Mailbox, _> = smtp_from.parse();
-        let to_results: Result<Vec<Mailbox>, _> =
-            recipients.iter().map(|email| email.parse()).collect();
-        let from_addr = match from_result {
-            Ok(addr) => addr,
-            Err(e) => {
-                return Err(e.to_string());
-            }
-        };
-        let to_addrs = match to_results {
-            Ok(addrs) => addrs,
-            Err(_) => {
-                results.push(EmailResult {
-                    apartment_id: *apt_id,
-                    apartment_label: apt_label.clone(),
-                    email: recipients.join(", "),
-                    status: "failed".to_string(),
-                    recipient: recipients.join(", "),
-                    original_recipient: recipients.join(", "),
-                    success: false,
-                    error: Some("Invalid email address".to_string()),
-                });
-                continue;
-            }
-        };
-
-        let filename = format!(
-            "UPN_{}_{:02}_{}.pdf",
-            apt_label.replace(' ', "_"),
-            month,
-            year
-        );
-        let mp = MultiPart::mixed()
-            .singlepart(SinglePart::plain(body))
-            .singlepart(Attachment::new(filename).body(
-                attachment_bytes,
-                ContentType::parse("application/pdf").unwrap(),
-            ));
-
-        let builder = to_addrs.iter().cloned().fold(
-            Message::builder().from(from_addr).subject(&subject),
-            |builder, to_addr| builder.to(to_addr),
-        );
-
-        match builder.multipart(mp) {
-            Ok(msg) => match mailer.send(&msg) {
-                Ok(_) => results.push(EmailResult {
-                    apartment_id: *apt_id,
-                    apartment_label: apt_label.clone(),
-                    email: recipients.join(", "),
-                    status: "sent".to_string(),
-                    recipient: recipients.join(", "),
-                    original_recipient: recipients.join(", "),
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => results.push(EmailResult {
-                    apartment_id: *apt_id,
-                    apartment_label: apt_label.clone(),
-                    email: recipients.join(", "),
-                    status: "failed".to_string(),
-                    recipient: recipients.join(", "),
-                    original_recipient: recipients.join(", "),
-                    success: false,
-                    error: Some(e.to_string()),
-                }),
-            },
-            Err(e) => results.push(EmailResult {
-                apartment_id: *apt_id,
-                apartment_label: apt_label.clone(),
-                email: recipients.join(", "),
-                status: "failed".to_string(),
-                recipient: recipients.join(", "),
-                original_recipient: recipients.join(", "),
-                success: false,
-                error: Some(e.to_string()),
-            }),
-        }
-    }
-
-    Ok(results)
+        .map_err(|e| e.to_string())?;
+    credentials::save_password(&conn, MailCredentialKind::Smtp, &username, &password)
 }
 
 #[tauri::command]
@@ -1686,13 +1491,12 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         smtp_user,
         smtp_from,
         use_tls,
-        smtp_pass,
         allowlist_enabled,
         recipient_allowlist,
     ) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT host, port, username, from_email, use_tls, password,
+            "SELECT host, port, username, from_email, use_tls,
                     allowlist_enabled, recipient_allowlist
              FROM smtp_config WHERE id=1",
             [],
@@ -1703,9 +1507,8 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, i32>(4)? != 0,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, i32>(6)? != 0,
-                    r.get::<_, String>(7)?,
+                    r.get::<_, i32>(5)? != 0,
+                    r.get::<_, String>(6)?,
                 ))
             },
         )
@@ -1759,6 +1562,7 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
 
     let attempt_id = next_attempt_id();
     let allowlist = parse_allowlist(&recipient_allowlist);
+    let smtp_pass = { credentials::resolve_password(MailCredentialKind::Smtp, &smtp_user, "")? };
     let mailer = build_mailer(&smtp_host, smtp_port, &smtp_user, &smtp_pass, use_tls);
     let from_addr = smtp_from.parse::<Mailbox>();
     let mut results = Vec::new();
@@ -2007,20 +1811,12 @@ pub fn get_upn_packet_hashes(
 
 #[tauri::command]
 pub fn test_smtp_connection(
-    db: State<DbState>,
     config: SmtpConfig,
     password: String,
     test_recipient: String,
 ) -> Result<(), String> {
-    let smtp_pass = if password.is_empty() {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        conn.query_row("SELECT password FROM smtp_config WHERE id=1", [], |r| {
-            r.get::<_, String>(0)
-        })
-        .map_err(|e| e.to_string())?
-    } else {
-        password
-    };
+    let smtp_pass =
+        credentials::resolve_password(MailCredentialKind::Smtp, &config.username, &password)?;
 
     if config.host.trim().is_empty() {
         return Err("SMTP host not configured.".to_string());
@@ -2137,7 +1933,10 @@ mod tests {
         assert_eq!(result.apartment_id, 7);
         assert_eq!(result.status, "partial");
         assert!(!result.success);
-        assert_eq!(result.error.as_deref(), Some("Recipient is not in the enabled test allowlist."));
+        assert_eq!(
+            result.error.as_deref(),
+            Some("Recipient is not in the enabled test allowlist.")
+        );
     }
 
     #[test]

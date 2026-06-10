@@ -99,5 +99,4 @@ export const ipc = {
     invoke<UpnPacketHash[]>("get_upn_packet_hashes", { billingPeriodId }),
   saveSmtpPassword: (password: string) =>
     invoke<void>("save_smtp_password", { password }),
-  getSmtpPassword: () => invoke<string>("get_smtp_password"),
 };

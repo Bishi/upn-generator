@@ -8,6 +8,8 @@ use std::io::Write;
 use tauri::State;
 use tempfile::Builder as TempFileBuilder;
 
+use crate::credentials::{self, MailCredentialKind};
+
 use super::bills::{
     bill_content_hash, load_bill_import_context, prepare_multi_bill_import_from_path,
     retain_expected_provider_bills, retain_new_bill_hashes, save_prepared_multi_bill_import,
@@ -253,29 +255,41 @@ fn collect_attachments(mail: &ParsedMail<'_>) -> Vec<MailAttachment> {
 
 fn load_credentials(db: &State<DbState>) -> Result<InboxCredentials, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.query_row(
-        "SELECT host, port, username, password, use_tls, folder, days_to_scan,
+    let mut credentials_row = conn
+        .query_row(
+            "SELECT host, port, username, password, use_tls, folder, days_to_scan,
                 sender_allowlist
          FROM inbox_config WHERE id=1",
-        [],
-        |row| {
-            let password: String = row.get(3)?;
-            Ok(InboxCredentials {
-                config: InboxConfig {
-                    host: row.get(0)?,
-                    port: row.get(1)?,
-                    username: row.get(2)?,
-                    use_tls: row.get::<_, i32>(4)? != 0,
-                    folder: row.get(5)?,
-                    days_to_scan: row.get(6)?,
-                    sender_allowlist: row.get(7)?,
-                    password_configured: !password.is_empty(),
-                },
-                password,
-            })
-        },
+            [],
+            |row| {
+                let password: String = row.get(3)?;
+                Ok(InboxCredentials {
+                    config: InboxConfig {
+                        host: row.get(0)?,
+                        port: row.get(1)?,
+                        username: row.get(2)?,
+                        use_tls: row.get::<_, i32>(4)? != 0,
+                        folder: row.get(5)?,
+                        days_to_scan: row.get(6)?,
+                        sender_allowlist: row.get(7)?,
+                        password_configured: false,
+                    },
+                    password,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    credentials_row.config.password_configured = credentials::password_configured(
+        MailCredentialKind::Imap,
+        &credentials_row.config.username,
+    )?;
+    credentials_row.password = credentials::resolve_password(
+        MailCredentialKind::Imap,
+        &credentials_row.config.username,
+        "",
     )
-    .map_err(|e| e.to_string())
+    .unwrap_or_default();
+    Ok(credentials_row)
 }
 
 fn connect_tls(
@@ -813,25 +827,18 @@ pub fn save_inbox_password(db: State<DbState>, password: String) -> Result<(), S
         return Ok(());
     }
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE inbox_config SET password=?1 WHERE id=1",
-        params![password],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    let username = conn
+        .query_row("SELECT username FROM inbox_config WHERE id=1", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|e| e.to_string())?;
+    credentials::save_password(&conn, MailCredentialKind::Imap, &username, &password)
 }
 
 #[tauri::command]
-pub fn test_inbox_connection(
-    db: State<DbState>,
-    config: InboxConfig,
-    password: String,
-) -> Result<(), String> {
-    let stored_password = if password.is_empty() {
-        load_credentials(&db)?.password
-    } else {
-        password
-    };
+pub fn test_inbox_connection(config: InboxConfig, password: String) -> Result<(), String> {
+    let stored_password =
+        credentials::resolve_password(MailCredentialKind::Imap, &config.username, &password)?;
     let mut session = connect_tls(&config, &stored_password)?;
     session
         .examine(config.folder.as_str())
