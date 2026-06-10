@@ -161,6 +161,11 @@ pub fn save_apartment(db: State<DbState>, apartment: Apartment) -> Result<Apartm
 #[tauri::command]
 pub fn delete_apartment(db: State<DbState>, id: i64) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM upn_delivery_events WHERE apartment_id=?1",
+        [id],
+    )
+    .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM apartments WHERE id=?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -323,7 +328,10 @@ pub fn save_smtp_config(db: State<DbState>, config: SmtpConfig) -> Result<(), St
              allowlist_enabled=?6, recipient_allowlist=?7
          WHERE id=1",
         rusqlite::params![
-            config.host, config.port, config.username, config.from_email,
+            config.host,
+            config.port,
+            config.username,
+            config.from_email,
             if config.use_tls { 1 } else { 0 },
             if config.allowlist_enabled { 1 } else { 0 },
             config.recipient_allowlist.trim()

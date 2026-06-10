@@ -75,7 +75,7 @@ function sameRecipients(left: string[], right: string[]) {
 
 function aggregateHistoryEvents(
   events: UpnDeliveryEvent[],
-  apartmentsById: Map<number | null, Apartment>,
+  apartmentsById: Map<number, Apartment>,
   packetHashesByApartmentId: Map<number, UpnPacketHash>,
 ): Map<number, EmailResult> {
   const latestAttemptByApartment = new Map<number, string>();
@@ -385,6 +385,15 @@ function UpnPage() {
           setDeliveryEvents(events);
           setPacketHashes(hashes);
           loadedPeriodIdRef.current = selected.id;
+          setPageMessage(null);
+        })
+        .catch((error) => {
+          if (loadRequestRef.current === requestId) {
+            setPageMessage(String(error));
+            setSplits([]);
+            setDeliveryEvents([]);
+            setPacketHashes([]);
+          }
         })
         .finally(() => {
           if (loadRequestRef.current === requestId) setLoadingSplits(false);
@@ -434,8 +443,10 @@ function UpnPage() {
     }
   };
 
-  const apartmentConfigById = new Map(
-    apartmentsConfig.map((apartment) => [apartment.id, apartment]),
+  const apartmentConfigById = new Map<number, Apartment>(
+    apartmentsConfig.flatMap((apartment) =>
+      apartment.id === null ? [] : [[apartment.id, apartment]],
+    ),
   );
   const historyResultsByApartmentId = aggregateHistoryEvents(
     deliveryEvents,
