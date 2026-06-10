@@ -13,6 +13,7 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `rusqlite` (bundled) is used directly - no `tauri-plugin-sql`
 - TanStack Router route tree is auto-generated at `src/routeTree.gen.ts` - do not edit manually
 - No `tailwind.config.js` - Tailwind v4 config is inline via CSS
+- Theme colors are tokenized in `src/index.css`; refined is the CSS fallback/default theme, with crisp and official available through local UI preference state
 - Main DB lives at `%APPDATA%\si.upn-generator\upn-generator.db`
 - Manual backups are user-chosen `.sqlite3` SQLite snapshots created from the live DB
 - Manual backups intentionally blank `smtp_config.password`
@@ -31,8 +32,9 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src-tauri/src/commands/backup.rs` - manual DB backup and restore commands
 - `src/lib/types.ts` - TypeScript types mirroring Rust structs
 - `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
-- `src/routes/settings.tsx` - Settings page (5 tabs, including Data backup/restore)
+- `src/routes/settings.tsx` - Settings page (6 tabs, including Appearance and Data backup/restore)
 - `src/components/settings/` - per-tab setting components
+- `src/lib/theme.tsx` - local theme preference runtime (`refined`, `crisp`, `official`)
 - `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
 - `src-tauri/src/commands/splits.rs` - split calculation logic
 - `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, and email sending

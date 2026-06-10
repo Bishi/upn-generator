@@ -77,7 +77,7 @@ export function WorkflowStatusBar() {
 
   if (!hydrated || !snapshot.period) {
     return (
-      <div className="mb-6 rounded-xl border border-border bg-card px-4 py-3">
+      <div className="mb-6 rounded-xl border border-border bg-card px-4 py-3 shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold">No billing period selected</div>
@@ -87,7 +87,7 @@ export function WorkflowStatusBar() {
           </div>
           <Link
             to="/bills"
-            className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90"
+            className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-card hover:bg-primary/90"
           >
             Go to Bills
           </Link>
@@ -102,7 +102,7 @@ export function WorkflowStatusBar() {
   const upnsReady = billsReady && splitsReady;
 
   return (
-    <div className="mb-6 rounded-xl border border-border bg-card px-4 py-4 shadow-sm">
+    <div className="mb-6 rounded-xl border border-border bg-card px-4 py-4 shadow-card">
       <div className="flex flex-col gap-4">
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -164,8 +164,8 @@ function StatusChip({
         variant="outline"
         className={
           tone === "ready"
-            ? "gap-2 border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-            : "gap-2 border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+            ? "gap-2 border-success/30 bg-success-soft text-success hover:bg-success-soft/80"
+            : "gap-2 border-warning/30 bg-warning-soft text-warning hover:bg-warning-soft/80"
         }
       >
         {icon}

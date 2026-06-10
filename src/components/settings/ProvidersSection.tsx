@@ -113,7 +113,7 @@ export function ProvidersSection() {
                   variant="outline"
                   size="sm"
                   onClick={() => p.id && deleteMutation.mutate(p.id)}
-                  className="gap-1.5 text-destructive hover:text-destructive"
+                  className="gap-1.5 text-danger hover:text-danger"
                 >
                   <Trash2 className="size-3.5" />
                 </Button>
@@ -130,7 +130,7 @@ export function ProvidersSection() {
       </div>
 
       {editing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay">
           <Card className="w-full max-w-xl max-h-[90vh] flex flex-col">
             <CardHeader className="shrink-0">
               <CardTitle>{isNew ? "Add Provider" : "Edit Provider"}</CardTitle>
@@ -161,7 +161,7 @@ export function ProvidersSection() {
                   <select
                     value={editing.split_basis}
                     onChange={(e) => setEditing({ ...editing, split_basis: e.target.value as Provider["split_basis"] })}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   >
                     <option value="m2_percentage">{"m\u00B2"}</option>
                     <option value="occupants">People</option>
@@ -220,7 +220,7 @@ export function ProvidersSection() {
                     <select
                       value={editing.purpose_code}
                       onChange={(e) => setEditing({ ...editing, purpose_code: e.target.value })}
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                     >
                       {PURPOSE_CODES.map((c) => (
                         <option key={c} value={c}>{c}</option>

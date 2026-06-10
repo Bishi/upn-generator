@@ -64,6 +64,10 @@ Enter your outgoing mail server credentials so the app can send UPN slips to ten
 
 Gmail note: you must create an **App Password** in your Google Account security settings. Your regular Gmail password will not work.
 
+### Settings -> Appearance
+
+Choose the app theme. **Refined** is the default and the polished production direction. **Crisp** and **Official** are available for visual testing. The choice is saved on this device only.
+
 ### Settings -> Data
 
 Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, and splits.
@@ -142,12 +146,13 @@ Generate and distribute UPN payment slips. Each apartment card shows the total a
 
 ### Settings
 
-Five tabs for configuring the application:
+Six tabs for configuring the application:
 
 - **Building** - Building address and contact details
 - **Apartments** - List of apartments with names, unit codes, occupants, m2 percentages, and comma-separated email recipients
 - **Providers** - Utility providers with IBANs, purpose text templates, and split basis rules (`People`, `m2`, or `Equal`)
 - **Email** - SMTP settings for sending emails
+- **Appearance** - Local visual theme selector (`Refined`, `Crisp`, `Official`)
 - **Data** - Manual SQLite backup and restore
 
 ---
@@ -161,6 +166,8 @@ All data is stored locally in a SQLite database at:
 ```
 
 Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data but intentionally exclude the saved SMTP password.
+
+The selected appearance theme is stored in local browser/app storage under `upn-generator.theme`. It is not included in SQLite backups. If the value is missing or invalid, the app falls back to the refined theme.
 
 Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings.
 

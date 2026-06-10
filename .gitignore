@@ -16,6 +16,12 @@ dist
 dist-ssr
 *.local
 
+# Local design references
+docs/design/
+
+# Local agent/session config
+.claude/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
