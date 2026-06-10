@@ -154,6 +154,13 @@ fn mime_matches_extension(mime_type: &str, ext: &str) -> bool {
     }
 }
 
+fn is_generic_pdf_mime(mime_type: &str, ext: &str) -> bool {
+    ext == "pdf"
+        && mime_type
+            .trim()
+            .eq_ignore_ascii_case("application/octet-stream")
+}
+
 fn magic_matches_extension(bytes: &[u8], ext: &str) -> bool {
     match ext {
         "pdf" => bytes.starts_with(b"%PDF-"),
@@ -166,6 +173,13 @@ fn magic_matches_extension(bytes: &[u8], ext: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn pdf_has_eof_marker(bytes: &[u8]) -> bool {
+    let tail_start = bytes.len().saturating_sub(1024);
+    bytes[tail_start..]
+        .windows(b"%%EOF".len())
+        .any(|window| window == b"%%EOF")
 }
 
 fn sanitize_filename(filename: &str) -> String {
@@ -455,6 +469,9 @@ fn validate_attachment(attachment: &MailAttachment) -> Result<String, String> {
     }
     if !mime_matches_extension(&attachment.mime_type, &ext) {
         return Err("Attachment MIME type does not match its file type.".to_string());
+    }
+    if is_generic_pdf_mime(&attachment.mime_type, &ext) && !pdf_has_eof_marker(&attachment.bytes) {
+        return Err("Generic PDF attachment is missing a PDF EOF marker.".to_string());
     }
     Ok(ext)
 }
@@ -972,12 +989,43 @@ mod tests {
     }
 
     #[test]
+    fn validates_generic_pdf_eof_marker() {
+        assert!(pdf_has_eof_marker(b"%PDF-1.7\nbody\n%%EOF\n"));
+        assert!(pdf_has_eof_marker(
+            &[vec![b'a'; 1019], b"%%EOF".to_vec()].concat()
+        ));
+        assert!(!pdf_has_eof_marker(b"%PDF-1.7\nbody"));
+        assert!(!pdf_has_eof_marker(
+            &[b"%%EOF".to_vec(), vec![b'a'; 1025]].concat()
+        ));
+    }
+
+    #[test]
     fn rejects_empty_attachment_mime_type() {
         assert!(mime_matches_extension("application/pdf", "pdf"));
         assert!(mime_matches_extension("application/x-pdf", "pdf"));
         assert!(mime_matches_extension("application/octet-stream", "pdf"));
         assert!(!mime_matches_extension("", "pdf"));
         assert!(!mime_matches_extension("text/plain", "pdf"));
+    }
+
+    #[test]
+    fn validates_generic_pdf_fallback_content() {
+        let valid = MailAttachment {
+            filename: "bill.pdf".to_string(),
+            mime_type: "application/octet-stream".to_string(),
+            bytes: b"%PDF-1.7\nbody\n%%EOF\n".to_vec(),
+        };
+        assert_eq!(validate_attachment(&valid).unwrap(), "pdf");
+
+        let missing_eof = MailAttachment {
+            bytes: b"%PDF-1.7\nbody".to_vec(),
+            ..valid
+        };
+        assert_eq!(
+            validate_attachment(&missing_eof).unwrap_err(),
+            "Generic PDF attachment is missing a PDF EOF marker."
+        );
     }
 
     #[test]

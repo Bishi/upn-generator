@@ -693,7 +693,7 @@ fn write_import_debug_log(log: &str, append: bool) {
                 .append(true)
                 .open(path)
                 .and_then(|mut file| {
-                    writeln!(file, "\n\n{}", log)?;
+                    writeln!(file, "\n{}", log)?;
                     Ok(())
                 });
         } else {
