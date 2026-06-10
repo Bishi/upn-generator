@@ -51,7 +51,7 @@ function RootLayout() {
           <NavLink to="/settings" icon={<Settings className="size-4" />} label="Settings" />
           {version && (
             <div className="mt-4 border-t border-border px-3 pt-3 text-xs leading-relaxed text-muted-foreground">
-              Local backed up
+              Stored locally
               <br />
               Version {version}
             </div>
