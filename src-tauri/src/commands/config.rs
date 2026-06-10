@@ -353,11 +353,15 @@ pub fn save_app_settings(db: State<DbState>, settings: AppSettings) -> Result<Ap
     }
 
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE app_settings SET theme=?1 WHERE id=1",
-        rusqlite::params![&settings.theme],
-    )
-    .map_err(|e| e.to_string())?;
+    let changed = conn
+        .execute(
+            "UPDATE app_settings SET theme=?1 WHERE id=1",
+            rusqlite::params![&settings.theme],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("App settings row is missing.".to_string());
+    }
     Ok(settings)
 }
 

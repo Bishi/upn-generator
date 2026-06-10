@@ -3,6 +3,8 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -617,34 +619,87 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
     }
 }
 
-fn delete_inbox_imports_for_bill(conn: &Connection, bill_id: i64) -> Result<(), String> {
-    let import_ids = {
-        let mut stmt = conn
-            .prepare("SELECT id, bill_ids FROM inbox_imports WHERE status='imported'")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| e.to_string())?;
-        let mut import_ids = Vec::new();
-        for row in rows {
-            let (import_id, bill_ids_json) = row.map_err(|e| e.to_string())?;
-            if serde_json::from_str::<Vec<i64>>(&bill_ids_json)
-                .map(|bill_ids| bill_ids.contains(&bill_id))
-                .unwrap_or(false)
-            {
-                import_ids.push(import_id);
-            }
+fn inbox_import_ids_from_bill_hashes(conn: &Connection, bill_id: i64) -> Result<Vec<i64>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT inbox_import_id
+             FROM inbox_bill_hashes
+             WHERE bill_id=?1 AND inbox_import_id IS NOT NULL",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([bill_id], |row| row.get::<_, i64>(0))
+        .map_err(|e| e.to_string())?;
+    let mut import_ids = Vec::new();
+    for row in rows {
+        import_ids.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(import_ids)
+}
+
+fn inbox_import_ids_from_bill_ids_json(
+    conn: &Connection,
+    bill_id: i64,
+) -> Result<Vec<i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, bill_ids FROM inbox_imports WHERE status='imported'")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut import_ids = Vec::new();
+    for row in rows {
+        let (import_id, bill_ids_json) = row.map_err(|e| e.to_string())?;
+        if serde_json::from_str::<Vec<i64>>(&bill_ids_json)
+            .map(|bill_ids| bill_ids.contains(&bill_id))
+            .unwrap_or(false)
+        {
+            import_ids.push(import_id);
         }
-        import_ids
-    };
+    }
+    Ok(import_ids)
+}
+
+fn delete_inbox_imports_for_bill(conn: &Connection, bill_id: i64) -> Result<(), String> {
+    let mut import_ids = inbox_import_ids_from_bill_hashes(conn, bill_id).unwrap_or_default();
+    if import_ids.is_empty() {
+        import_ids = inbox_import_ids_from_bill_ids_json(conn, bill_id)?;
+    }
 
     for import_id in import_ids {
         conn.execute("DELETE FROM inbox_imports WHERE id=?1", [import_id])
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn import_debug_log_path() -> Option<std::path::PathBuf> {
+    dirs_next::data_dir().map(|d| d.join("si.upn-generator").join("import_debug.log"))
+}
+
+pub(crate) fn reset_import_debug_log() {
+    if let Some(path) = import_debug_log_path() {
+        let _ = std::fs::write(path, "");
+    }
+}
+
+fn write_import_debug_log(log: &str, append: bool) {
+    if let Some(path) = import_debug_log_path() {
+        if append {
+            let _ = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut file| {
+                    writeln!(file, "\n\n{}", log)?;
+                    Ok(())
+                });
+        } else {
+            let _ = std::fs::write(path, log);
+        }
+    }
 }
 
 #[tauri::command]
@@ -1511,20 +1566,13 @@ fn prepare_multi_bill_import_from_text(
     }
 }
 
-fn write_import_debug_log(log: &str) {
-    if let Some(path) =
-        dirs_next::data_dir().map(|d| d.join("si.upn-generator").join("import_debug.log"))
-    {
-        let _ = std::fs::write(path, log);
-    }
-}
-
 pub(crate) fn save_prepared_multi_bill_import(
     conn: &Connection,
     billing_period_id: i64,
     mut prepared: PreparedBillImport,
     providers: &[Provider],
     persist_fallback_raw_text: bool,
+    append_debug_log: bool,
 ) -> Result<Vec<Bill>, String> {
     let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
         .iter()
@@ -1560,7 +1608,7 @@ pub(crate) fn save_prepared_multi_bill_import(
                 "  status=needs_review parse_note=No bill data could be parsed automatically. Review this import manually.\n",
             );
         }
-        write_import_debug_log(&prepared.log);
+        write_import_debug_log(&prepared.log, append_debug_log);
         return Ok(vec![Bill {
             id: Some(id),
             billing_period_id,
@@ -1713,7 +1761,7 @@ pub(crate) fn save_prepared_multi_bill_import(
         });
     }
 
-    write_import_debug_log(&prepared.log);
+    write_import_debug_log(&prepared.log, append_debug_log);
     Ok(results)
 }
 
@@ -1910,6 +1958,45 @@ mod tests {
                 .collect()
         };
         assert_eq!(remaining, vec!["[10]:imported", "[1]:failed"]);
+    }
+
+    #[test]
+    fn delete_inbox_imports_for_bill_uses_bill_hash_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE inbox_imports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bill_ids TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE inbox_bill_hashes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inbox_import_id INTEGER,
+                bill_id INTEGER,
+                bill_hash TEXT NOT NULL
+            );
+            INSERT INTO inbox_imports (bill_ids, status) VALUES ('', 'imported');
+            INSERT INTO inbox_imports (bill_ids, status) VALUES ('', 'imported');
+            INSERT INTO inbox_imports (bill_ids, status) VALUES ('', 'failed');
+            INSERT INTO inbox_bill_hashes (inbox_import_id, bill_id, bill_hash) VALUES (1, 10, 'a');
+            INSERT INTO inbox_bill_hashes (inbox_import_id, bill_id, bill_hash) VALUES (2, 1, 'b');
+            ",
+        )
+        .unwrap();
+
+        delete_inbox_imports_for_bill(&conn, 1).unwrap();
+
+        let remaining: Vec<i64> = {
+            let mut stmt = conn
+                .prepare("SELECT id FROM inbox_imports ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |row| row.get::<_, i64>(0))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        assert_eq!(remaining, vec![1, 3]);
     }
 }
 

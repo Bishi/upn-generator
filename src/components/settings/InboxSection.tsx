@@ -63,7 +63,6 @@ export function InboxSection() {
     mutationFn: () => ipc.testInboxConnection(form, password),
     onSuccess: () => {
       setTestStatus("Connection OK");
-      queryClient.invalidateQueries({ queryKey: ["inbox_config"] });
     },
     onError: (error) => {
       setTestStatus(error instanceof Error ? error.message : String(error));

@@ -10,7 +10,8 @@ use tempfile::Builder as TempFileBuilder;
 
 use super::bills::{
     bill_content_hash, load_bill_import_context, prepare_multi_bill_import_from_path,
-    retain_expected_provider_bills, retain_new_bill_hashes, save_prepared_multi_bill_import,
+    reset_import_debug_log, retain_expected_provider_bills, retain_new_bill_hashes,
+    save_prepared_multi_bill_import,
 };
 use super::config::DbState;
 
@@ -141,7 +142,10 @@ fn mime_matches_extension(mime_type: &str, ext: &str) -> bool {
         return false;
     }
     match ext {
-        "pdf" => mime == "application/pdf",
+        "pdf" => matches!(
+            mime.as_str(),
+            "application/pdf" | "application/x-pdf" | "application/octet-stream"
+        ),
         "jpg" | "jpeg" => mime == "image/jpeg",
         "png" => mime == "image/png",
         "bmp" => mime == "image/bmp" || mime == "image/x-ms-bmp",
@@ -702,6 +706,7 @@ fn import_attachment(
             prepared,
             &context.providers,
             false,
+            true,
         ) {
             Ok(saved) => saved,
             Err(error) => {
@@ -851,6 +856,7 @@ pub fn import_inbox_attachments(
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         load_bill_import_context(&conn, billing_period_id)?
     };
+    reset_import_debug_log();
     let allowlist = parse_allowlist(&credentials.config.sender_allowlist);
     let since = (Local::now().date_naive()
         - ChronoDuration::days(credentials.config.days_to_scan as i64))
@@ -863,7 +869,7 @@ pub fn import_inbox_attachments(
         .map_err(|e| e.to_string())?;
     let uid_validity = mailbox.uid_validity;
     let ids = session
-        .search(format!("SINCE {}", since))
+        .uid_search(format!("SINCE {}", since))
         .map_err(|e| e.to_string())?;
     let mut ids: Vec<u32> = ids.into_iter().collect();
     ids.sort_unstable();
@@ -872,7 +878,7 @@ pub fn import_inbox_attachments(
     for id in ids {
         let id_str = id.to_string();
         let metadata = session
-            .fetch(&id_str, "UID RFC822.SIZE")
+            .uid_fetch(&id_str, "UID RFC822.SIZE")
             .map_err(|e| e.to_string())?;
         let Some(meta) = metadata.iter().next() else {
             continue;
@@ -896,7 +902,7 @@ pub fn import_inbox_attachments(
         }
 
         let messages = session
-            .fetch(&id_str, "UID BODY.PEEK[]")
+            .uid_fetch(&id_str, "UID BODY.PEEK[]")
             .map_err(|e| e.to_string())?;
         let Some(message) = messages.iter().next() else {
             continue;
@@ -968,6 +974,8 @@ mod tests {
     #[test]
     fn rejects_empty_attachment_mime_type() {
         assert!(mime_matches_extension("application/pdf", "pdf"));
+        assert!(mime_matches_extension("application/x-pdf", "pdf"));
+        assert!(mime_matches_extension("application/octet-stream", "pdf"));
         assert!(!mime_matches_extension("", "pdf"));
         assert!(!mime_matches_extension("text/plain", "pdf"));
     }

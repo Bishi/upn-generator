@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "@tanstack/react-router";
 import {
   Calendar,
@@ -55,6 +55,29 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
   } = useBillingPeriodSelection();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [creatingYear, setCreatingYear] = useState<number | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPickerOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [pickerOpen]);
 
   const selectedStatus = selected?.id
     ? snapshot.periodStatuses.get(selected.id) ?? snapshot.selectedStatus
@@ -155,7 +178,7 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
 
   return (
     <div className="relative z-20 flex min-h-[62px] items-center gap-4 border-b border-border bg-card px-6">
-      <div className="relative shrink-0">
+      <div ref={pickerRef} className="relative shrink-0">
         <button
           type="button"
           onClick={() => setPickerOpen((open) => !open)}
