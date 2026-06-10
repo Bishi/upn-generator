@@ -6,7 +6,9 @@ import type { SmtpConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
+import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
 
 const emptyConfig: SmtpConfig = {
   host: "",
@@ -55,18 +57,18 @@ export function SmtpSection() {
     mutation.mutate(form);
   };
 
-  if (isLoading) return <div className="text-sm text-muted-foreground">Loading...</div>;
+  if (isLoading) return <SettingsLoadingCard rows={5} />;
 
   return (
-    <Card className="max-w-lg">
-      <CardHeader>
-        <CardTitle>Email (SMTP) Settings</CardTitle>
-        <CardDescription>
-          Used to send UPN PDFs to apartment tenants. The password is stored in the local app
-          database and is excluded from manual backups.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+    <Card className={`${SETTINGS_PANEL_WIDTH} overflow-hidden`}>
+      <div className="border-b border-border px-5 py-4">
+        <h3 className="font-head text-lg font-semibold">Email (SMTP) Settings</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Used to send UPN PDFs to apartment tenants. The password is stored
+          locally and excluded from manual backups.
+        </p>
+      </div>
+      <CardContent className="p-5">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2 space-y-1.5">
@@ -134,7 +136,7 @@ export function SmtpSection() {
               id="use_tls"
               checked={form.use_tls}
               onChange={(e) => setForm({ ...form, use_tls: e.target.checked })}
-              className="size-4"
+              className="size-4 accent-primary"
             />
             <Label htmlFor="use_tls">Use TLS/STARTTLS</Label>
           </div>

@@ -1,28 +1,35 @@
 import { Check } from "lucide-react";
 import { THEMES, useTheme, type ThemeId } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
+
+const THEME_SWATCHES: Record<ThemeId, [string, string, string]> = {
+  refined: ["#3d7558", "#dff0e8", "#f6ead4"],
+  crisp: ["#2f5bea", "#e9eefe", "#fbefdc"],
+  official: ["#da3a52", "#fbe6ea", "#f7ead3"],
+  "dark-crisp": ["#4a7aef", "#171e2c", "#1a2a50"],
+  "dark-mono": ["#ffffff", "#1a1a1a", "#333333"],
+  "dark-shadow": ["#f5f5fa", "#111118", "#222230"],
+};
 
 export function AppearanceSection() {
   const { theme, setTheme } = useTheme();
 
   return (
-    <Card className="max-w-3xl">
-      <CardHeader>
-        <CardTitle>Appearance</CardTitle>
-        <CardDescription>
-          Switch between tokenized visual themes. This preference is saved only
-          on this device.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-3 sm:grid-cols-3">
+    <Card className={`${SETTINGS_PANEL_WIDTH} overflow-hidden`}>
+      <div className="border-b border-border px-5 py-4">
+        <h3 className="font-head text-lg font-semibold">Appearance</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Switch between tokenized visual themes. This preference is saved in
+          the app database and included in backups.
+        </p>
+      </div>
+      <CardContent className="p-5">
+        <div className="grid gap-3 sm:grid-cols-2">
           {THEMES.map((item) => (
             <ThemeOption
               key={item.id}
@@ -72,9 +79,13 @@ function ThemeOption({
         {description}
       </span>
       <span className="mt-4 flex gap-1.5" aria-hidden="true">
-        <span className="h-2 flex-1 rounded-full bg-primary" />
-        <span className="h-2 flex-1 rounded-full bg-accent-soft" />
-        <span className="h-2 flex-1 rounded-full bg-warning-soft" />
+        {THEME_SWATCHES[id].map((color) => (
+          <span
+            key={color}
+            className="h-2 flex-1 rounded-full"
+            style={{ backgroundColor: color }}
+          />
+        ))}
       </span>
     </button>
   );

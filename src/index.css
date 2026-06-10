@@ -1,3 +1,29 @@
+@import "@fontsource/hanken-grotesk/latin-400.css";
+@import "@fontsource/hanken-grotesk/latin-ext-400.css";
+@import "@fontsource/hanken-grotesk/latin-500.css";
+@import "@fontsource/hanken-grotesk/latin-ext-500.css";
+@import "@fontsource/hanken-grotesk/latin-600.css";
+@import "@fontsource/hanken-grotesk/latin-ext-600.css";
+@import "@fontsource/hanken-grotesk/latin-700.css";
+@import "@fontsource/hanken-grotesk/latin-ext-700.css";
+@import "@fontsource/hanken-grotesk/latin-800.css";
+@import "@fontsource/hanken-grotesk/latin-ext-800.css";
+@import "@fontsource/spectral/latin-400.css";
+@import "@fontsource/spectral/latin-ext-400.css";
+@import "@fontsource/spectral/latin-400-italic.css";
+@import "@fontsource/spectral/latin-ext-400-italic.css";
+@import "@fontsource/spectral/latin-500.css";
+@import "@fontsource/spectral/latin-ext-500.css";
+@import "@fontsource/spectral/latin-600.css";
+@import "@fontsource/spectral/latin-ext-600.css";
+@import "@fontsource/spectral/latin-700.css";
+@import "@fontsource/spectral/latin-ext-700.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-ext-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/ibm-plex-mono/latin-ext-500.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-ext-600.css";
 @import "tailwindcss";
 
 @theme {
@@ -18,17 +44,21 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  --color-border-2: var(--border-2);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
+  --color-accent-strong: var(--accent-strong);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-2: var(--accent-soft-2);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
   --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning-soft: var(--warning-soft);
+  --color-warning-dot: var(--warning-dot);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --radius-sm: var(--app-radius-sm);
@@ -84,10 +114,23 @@ html {
   --app-radius-xl: 20px;
   --app-shadow-card: 0 1px 2px rgba(29, 27, 23, 0.03), 0 2px 8px rgba(29, 27, 23, 0.05);
   --app-shadow-pop: 0 16px 40px -10px rgba(29, 27, 23, 0.22);
-  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --font-body-system: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-head-system: var(--font-body-system);
+  --font-mono-system: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --font-body-design: "Hanken Grotesk", var(--font-body-system);
+  --font-head-design: "Spectral", Georgia, var(--font-body-system);
+  --font-mono-design: "IBM Plex Mono", var(--font-mono-system);
+  --font-body: var(--font-body-design);
+  --font-head: var(--font-head-design);
+  --font-mono: var(--font-mono-design);
   font-feature-settings: "tnum" 1, "lnum" 1;
   color-scheme: light;
+}
+
+[data-font-mode="system"] {
+  --font-body: var(--font-body-system);
+  --font-head: var(--font-head-system);
+  --font-mono: var(--font-mono-system);
 }
 
 [data-theme="crisp"] {
@@ -180,10 +223,155 @@ html {
   --app-shadow-pop: 0 14px 36px -10px rgba(26, 25, 22, 0.2);
 }
 
+[data-theme="dark-crisp"] {
+  --background: #0f1520;
+  --foreground: #e8edf5;
+  --card: #171e2c;
+  --card-foreground: #e8edf5;
+  --popover: #171e2c;
+  --popover-foreground: #e8edf5;
+  --primary: #4a7aef;
+  --primary-foreground: #ffffff;
+  --secondary: #1d2535;
+  --secondary-foreground: #5a6a88;
+  --muted: #232c3e;
+  --muted-foreground: #9aaac0;
+  --accent: #162240;
+  --accent-foreground: #7aabf8;
+  --destructive: #d04858;
+  --destructive-foreground: #ffffff;
+  --border: #263040;
+  --border-2: #324055;
+  --input: #324055;
+  --ring: #4a7aef;
+  --surface-2: #1d2535;
+  --surface-3: #232c3e;
+  --accent-strong: #4a7aef;
+  --accent-strong-hover: #7aabf8;
+  --accent-soft: #162240;
+  --accent-soft-2: #1a2a50;
+  --success: #2ea870;
+  --success-foreground: #ffffff;
+  --success-soft: #0e2818;
+  --warning: #c88030;
+  --warning-foreground: #ffffff;
+  --warning-soft: #281808;
+  --warning-dot: #d89040;
+  --danger: #d04858;
+  --danger-soft: #280a10;
+  --overlay: rgba(0, 0, 0, 0.65);
+  --app-radius-sm: 8px;
+  --app-radius-md: 10px;
+  --app-radius-lg: 12px;
+  --app-radius-xl: 16px;
+  --app-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --app-shadow-pop: 0 16px 40px -10px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+[data-theme="dark-mono"] {
+  --background: #111111;
+  --foreground: #f2f2f2;
+  --card: #1a1a1a;
+  --card-foreground: #f2f2f2;
+  --popover: #1a1a1a;
+  --popover-foreground: #f2f2f2;
+  --primary: #ffffff;
+  --primary-foreground: #111111;
+  --secondary: #222222;
+  --secondary-foreground: #606060;
+  --muted: #2a2a2a;
+  --muted-foreground: #a0a0a0;
+  --accent: #2a2a2a;
+  --accent-foreground: #f2f2f2;
+  --destructive: #9e4048;
+  --destructive-foreground: #ffffff;
+  --border: #2e2e2e;
+  --border-2: #3e3e3e;
+  --input: #3e3e3e;
+  --ring: #ffffff;
+  --surface-2: #222222;
+  --surface-3: #2a2a2a;
+  --accent-strong: #ffffff;
+  --accent-strong-hover: #e0e0e0;
+  --accent-soft: #2a2a2a;
+  --accent-soft-2: #333333;
+  --success: #6a9e6a;
+  --success-foreground: #ffffff;
+  --success-soft: #182218;
+  --warning: #9e7840;
+  --warning-foreground: #ffffff;
+  --warning-soft: #221a08;
+  --warning-dot: #b89050;
+  --danger: #9e4048;
+  --danger-soft: #220a0e;
+  --overlay: rgba(0, 0, 0, 0.65);
+  --app-radius-sm: 7px;
+  --app-radius-md: 8px;
+  --app-radius-lg: 10px;
+  --app-radius-xl: 14px;
+  --app-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --app-shadow-pop: 0 16px 40px -10px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+
+[data-theme="dark-shadow"] {
+  --background: #0a0a0f;
+  --foreground: #f5f5fa;
+  --card: #111118;
+  --card-foreground: #f5f5fa;
+  --popover: #111118;
+  --popover-foreground: #f5f5fa;
+  --primary: #f5f5fa;
+  --primary-foreground: #0a0a0f;
+  --secondary: #18181f;
+  --secondary-foreground: #50505e;
+  --muted: #222230;
+  --muted-foreground: #8e8ea0;
+  --accent: #1a1a24;
+  --accent-foreground: #f5f5fa;
+  --destructive: #9e3040;
+  --destructive-foreground: #ffffff;
+  --border: #1e1e2c;
+  --border-2: #2c2c3c;
+  --input: #2c2c3c;
+  --ring: #f5f5fa;
+  --surface-2: #18181f;
+  --surface-3: #222230;
+  --accent-strong: #f5f5fa;
+  --accent-strong-hover: #e0e0ea;
+  --accent-soft: #1a1a24;
+  --accent-soft-2: #22222e;
+  --success: #3e9e62;
+  --success-foreground: #ffffff;
+  --success-soft: #0a1e12;
+  --warning: #9e7828;
+  --warning-foreground: #ffffff;
+  --warning-soft: #1a1206;
+  --warning-dot: #b89040;
+  --danger: #9e3040;
+  --danger-soft: #1a080e;
+  --overlay: rgba(0, 0, 0, 0.65);
+  --app-radius-sm: 6px;
+  --app-radius-md: 7px;
+  --app-radius-lg: 8px;
+  --app-radius-xl: 10px;
+  --app-shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --app-shadow-pop: 0 20px 48px -10px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
 body {
   font-family: var(--font-body);
   background-color: var(--background);
   color: var(--foreground);
+}
+
+h1,
+h2,
+h3,
+.font-head {
+  font-family: var(--font-head);
 }
 
 .font-mono {
@@ -197,6 +385,14 @@ body {
 option {
   background-color: var(--card);
   color: var(--card-foreground);
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 * {

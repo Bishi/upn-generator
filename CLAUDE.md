@@ -13,12 +13,15 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `rusqlite` (bundled) is used directly - no `tauri-plugin-sql`
 - TanStack Router route tree is auto-generated at `src/routeTree.gen.ts` - do not edit manually
 - No `tailwind.config.js` - Tailwind v4 config is inline via CSS
-- Theme colors are tokenized in `src/index.css`; refined is the CSS fallback/default theme, with crisp and official available through local UI preference state
+- Theme colors are tokenized in `src/index.css`; refined is the CSS fallback/default theme, and the selected theme is stored in the SQLite `app_settings` singleton row so it is included in backups
 - Main DB lives at `%APPDATA%\si.upn-generator\upn-generator.db`
 - Manual backups are user-chosen `.sqlite3` SQLite snapshots created from the live DB
-- Manual backups intentionally blank `smtp_config.password`
+- Manual backups intentionally blank `smtp_config.password` and `inbox_config.password`
 - `building` table always has exactly 1 row (`id=1`)
 - `smtp_config` table always has exactly 1 row (`id=1`)
+- `app_settings` table always has exactly 1 row (`id=1`) for database-backed UI preferences such as theme
+- `inbox_config` table always has exactly 1 row (`id=1`) for manual IMAP inbox import settings
+- Inbox imports are manual, read-only IMAP scans using `EXAMINE` and `BODY.PEEK`; attachments are parsed from temporary files and raw extracted text is not persisted for inbox imports
 - Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
 - Apartment `contact_email` remains the persisted field name and supports comma-separated recipients
 - Provider split logic is configured per provider via `split_basis` (`occupants`, `m2_percentage`, or `equal_apartments`)
@@ -32,10 +35,11 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - `src-tauri/src/commands/backup.rs` - manual DB backup and restore commands
 - `src/lib/types.ts` - TypeScript types mirroring Rust structs
 - `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
-- `src/routes/settings.tsx` - Settings page (6 tabs, including Appearance and Data backup/restore)
+- `src/routes/settings.tsx` - Settings page (5 horizontal tabs; Delivery contains Email/Inbox, App contains Appearance/Data)
 - `src/components/settings/` - per-tab setting components
-- `src/lib/theme.tsx` - local theme preference runtime (`refined`, `crisp`, `official`)
+- `src/lib/theme.tsx` - database-backed theme preference runtime
 - `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
+- `src-tauri/src/commands/inbox.rs` - read-only IMAP inbox configuration, connection test, and attachment import commands
 - `src-tauri/src/commands/splits.rs` - split calculation logic
 - `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, and email sending
 - `src/routes/bills.tsx` - Bills page
@@ -62,9 +66,9 @@ UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 m
 - Phase 1.5 complete - UI polish, seed data, bills page redesign, multi-bill PDF import
 - Phase 2 complete - Bill import with parser pipeline, OCR image import, manual entry, debug log
 - Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
-- Phase 4 next - Email delivery + security hardening (SMTP send works; keyring for password storage is still pending)
+- Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send and read-only inbox import work; keyring for password storage is still pending)
 
-Current status: **v0.4.14. Phases 2 and 3 are largely complete, including provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer import debug logging, multi-recipient apartment emails, and a manual SQLite backup/restore workflow.**
+Current status: **v0.4.14. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, multi-recipient apartment emails, a manual SQLite backup/restore workflow, and manual read-only inbox attachment import.**
 
 ## Documentation
 
@@ -73,6 +77,45 @@ After implementing a feature or completing a plan, update docs as needed:
 - `CLAUDE.md` - phase status, architecture decisions, key files
 - `README.md` - user-facing features and workflows
 - `STATUS.md` - current released version/tag and release snapshot when preparing a release
+
+## Workflow Rules
+
+### Code Reviews
+
+When asked to review a commit, uncommitted changes, a branch, or a PR, treat it as a code-reading task unless the user explicitly asks for verification. Do not run lint, typecheck, tests, or builds for a review by default.
+
+Review findings must be concrete defects grounded in source or diff context. If the concern is only "verify this", "check whether that", or "consider maybe", trace it to a yes/no defect before reporting it, or leave it out.
+
+### Understand Before Building
+
+For credentials, imports, exports, backups, settings, privacy-sensitive data, new database storage, and security-sensitive behavior, answer these before writing code:
+
+1. What is this feature for?
+2. Is "off" or "not configured" a valid state?
+3. What data is stored, exported, backed up, restored, or intentionally excluded?
+4. What constraints might be missing from the initial request?
+
+If the answers are unclear and the choice would change data handling, security posture, or user workflow, stop and ask before implementing.
+
+### Deferred Work
+
+If a plan intentionally defers something to a later phase, call it out clearly before implementation. State what is not being built, why it is deferred, and what decision or request would bring it into scope.
+
+### Verification
+
+Use targeted checks while iterating, then run broader checks before calling work complete. Match verification to the risk of the change:
+
+- Rust command, database, parsing, backup, or import changes: run `cargo check`; run relevant `cargo test` when behavior or validation logic changed.
+- Frontend or IPC shape changes: run `npm.cmd run build`.
+- Documentation-only changes: no build is required unless the docs describe behavior that should be verified.
+
+In PowerShell, use `npm.cmd ...` instead of bare `npm ...`; bare `npm` can resolve to `npm.ps1` and fail under Windows execution policy.
+
+### Implementation Checklists
+
+- Rust IPC changes must keep command registration, Rust types, `src/lib/ipc.ts`, and `src/lib/types.ts` in sync.
+- Database schema changes must check migrations, backup/restore behavior, and factory reset behavior.
+- UPN rendering changes must remain visually close to real Slovenian bank UPN forms and should be compared with `file-examples/`.
 
 ## Versioning & Releases
 

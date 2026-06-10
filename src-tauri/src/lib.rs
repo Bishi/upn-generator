@@ -7,9 +7,13 @@ use commands::bills::{
     get_billing_periods, get_bills, import_bill, import_bills, save_bill,
 };
 use commands::config::{
-    delete_apartment, delete_provider, get_apartments, get_building, get_providers,
-    get_smtp_config, reset_all_data, save_apartment, save_building, save_provider,
-    save_smtp_config, DbState,
+    delete_apartment, delete_provider, get_apartments, get_app_settings, get_building,
+    get_providers, get_smtp_config, reset_all_data, save_apartment, save_app_settings,
+    save_building, save_provider, save_smtp_config, DbState,
+};
+use commands::inbox::{
+    get_inbox_config, import_inbox_attachments, save_inbox_config, save_inbox_password,
+    test_inbox_connection,
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
@@ -18,15 +22,27 @@ use commands::upn::{
 };
 use db::migrations;
 use rusqlite::Connection;
+use std::path::PathBuf;
 use std::sync::Mutex;
+
+fn db_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("UPN_GENERATOR_DB_PATH") {
+        return PathBuf::from(path);
+    }
+
+    dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("si.upn-generator")
+        .join("upn-generator.db")
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app_dir = dirs_next::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("si.upn-generator");
-    std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
-    let db_path = app_dir.join("upn-generator.db");
+    let db_path = db_path();
+    if let Some(app_dir) = db_path.parent() {
+        std::fs::create_dir_all(app_dir).expect("Failed to create app data directory");
+    }
+    println!("Using UPN Generator DB: {}", db_path.display());
 
     let conn = Connection::open(&db_path).expect("Failed to open database");
     migrations::run_migrations(&conn).expect("Failed to run migrations");
@@ -50,6 +66,13 @@ pub fn run() {
             delete_provider,
             get_smtp_config,
             save_smtp_config,
+            get_inbox_config,
+            save_inbox_config,
+            save_inbox_password,
+            test_inbox_connection,
+            import_inbox_attachments,
+            get_app_settings,
+            save_app_settings,
             reset_all_data,
             // Bills
             get_billing_periods,

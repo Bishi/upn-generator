@@ -1,13 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
-import { DatabaseBackup, RotateCcw } from "lucide-react";
+import { DatabaseBackup, RotateCcw, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { ipc } from "@/lib/ipc";
 import { setStoredBillingPeriod } from "@/lib/billing-period-selection";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
 
 function backupFilename() {
   const now = new Date();
@@ -115,50 +116,70 @@ export function DataSection() {
   };
 
   return (
-    <Card className="max-w-2xl">
-      <CardHeader>
-        <CardTitle>Data Backup</CardTitle>
-        <CardDescription>
-          Create a manual SQLite backup of the app database or restore from a previous backup
-          file. Backup files include billing and tenant data, but the SMTP password is excluded on
-          purpose.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="flex flex-wrap gap-3">
-          <Button
-            type="button"
-            className="gap-2"
-            disabled={backupMutation.isPending || restoreMutation.isPending}
-            onClick={handleCreateBackup}
-          >
-            <DatabaseBackup className="size-4" />
-            {backupMutation.isPending ? "Creating Backup..." : "Create Backup"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="gap-2"
-            disabled={backupMutation.isPending || restoreMutation.isPending}
-            onClick={handleRestoreBackup}
-          >
-            <RotateCcw className="size-4" />
-            {restoreMutation.isPending ? "Restoring..." : "Restore Backup"}
-          </Button>
-        </div>
-
-        <div className="space-y-2 text-sm text-muted-foreground">
-          <p>Backups are saved wherever you choose in the file dialog.</p>
-          <p>
-            Suggested file format: <span className="font-mono">.sqlite3</span>
+    <div className={`${SETTINGS_PANEL_WIDTH} grid gap-4`}>
+      <Card className="overflow-hidden">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="font-head text-lg font-semibold">Data Backup</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Create a manual SQLite backup or restore from a previous backup file.
           </p>
-          <p>Restore fully replaces current app data with the selected backup.</p>
-          <p>After restore, re-enter the SMTP password before sending emails.</p>
         </div>
+        <CardContent className="space-y-5 p-5">
+          <div className="flex items-center gap-3 rounded-lg border border-border bg-surface-2 p-4">
+            <span className="grid size-10 place-items-center rounded-md bg-success-soft text-success">
+              <ShieldCheck className="size-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold">Backed up locally</div>
+              <div className="text-xs text-muted-foreground">
+                SQLite snapshots include app data and selected appearance theme.
+              </div>
+            </div>
+          </div>
 
-        <div className="space-y-3 border-t pt-6">
+          <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              className="gap-2"
+              disabled={backupMutation.isPending || restoreMutation.isPending}
+              onClick={handleCreateBackup}
+            >
+              <DatabaseBackup className="size-4" />
+              {backupMutation.isPending ? "Creating Backup..." : "Create Backup"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              disabled={backupMutation.isPending || restoreMutation.isPending}
+              onClick={handleRestoreBackup}
+            >
+              <RotateCcw className="size-4" />
+              {restoreMutation.isPending ? "Restoring..." : "Restore Backup"}
+            </Button>
+          </div>
+
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>Backups are saved wherever you choose in the file dialog.</p>
+            <p>
+              Suggested file format: <span className="font-mono">.sqlite3</span>
+            </p>
+            <p>Restore fully replaces current app data with the selected backup.</p>
+            <p>After restore, re-enter the SMTP password before sending emails.</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="font-head text-lg font-semibold text-danger">Dev Factory Reset</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Reset seeded data for local testing.
+          </p>
+        </div>
+        <CardContent className="p-5">
+          <div className="space-y-3">
           <div>
-            <p className="text-sm font-medium text-danger">Dev Factory Reset</p>
             <p className="text-sm text-muted-foreground">
               Resets building, apartments, providers, SMTP, billing periods, bills, and splits
               back to the seeded defaults.
@@ -197,7 +218,8 @@ export function DataSection() {
               resetMutation.error?.message}
           </div>
         )}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -82,6 +83,44 @@ function findStoredPeriod(periods: BillingPeriod[], stored: StoredSelection | nu
   );
 }
 
+async function periodHasWorkflowData(period: BillingPeriod) {
+  if (period.id == null) return false;
+
+  const [bills, splits] = await Promise.all([
+    ipc.getBills(period.id),
+    ipc.getSplits(period.id),
+  ]);
+
+  return bills.length > 0 || splits.length > 0;
+}
+
+async function resolveInitialBillingPeriod(periods: BillingPeriod[]) {
+  const ordered = sortPeriods(periods);
+  const stored = findStoredPeriod(ordered, readStoredSelection());
+
+  if (stored && (await periodHasWorkflowData(stored))) {
+    return stored;
+  }
+
+  const activity = await Promise.all(
+    ordered.map(async (period) => ({
+      period,
+      hasData: await periodHasWorkflowData(period),
+    })),
+  );
+  const latestWithData = activity.find(({ hasData }) => hasData)?.period ?? null;
+  if (latestWithData) return latestWithData;
+
+  const now = new Date();
+  const currentPeriod =
+    ordered.find(
+      (period) =>
+        period.year === now.getFullYear() && period.month === now.getMonth() + 1,
+    ) ?? null;
+
+  return currentPeriod ?? ordered[0] ?? null;
+}
+
 export function setStoredBillingPeriod(period: BillingPeriod | null) {
   if (typeof window === "undefined") return;
   if (!period) {
@@ -109,6 +148,11 @@ export function BillingPeriodSelectionProvider({
   const [allPeriods, setAllPeriods] = useState<BillingPeriod[]>([]);
   const [selectedYear, setSelectedYearState] = useState(new Date().getFullYear());
   const [selected, setSelectedState] = useState<BillingPeriod | null>(null);
+  const selectedRef = useRef<BillingPeriod | null>(null);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   const applySelection = useCallback((period: BillingPeriod | null) => {
     if (!period) {
@@ -124,18 +168,19 @@ export function BillingPeriodSelectionProvider({
     const periods = await ipc.getBillingPeriods();
     setAllPeriods(periods);
 
-    setSelectedState((currentSelected) => {
-      const next =
-        (currentSelected
-          ? periods.find((period) => period.id === currentSelected.id) ?? null
-          : null) ?? resolveStoredBillingPeriod(periods);
+    const currentSelected = selectedRef.current;
+    const next =
+      (currentSelected
+        ? periods.find((period) => period.id === currentSelected.id) ?? null
+        : null) ?? (await resolveInitialBillingPeriod(periods));
 
-      if (next) {
-        setSelectedYearState(next.year);
-        setStoredBillingPeriod(next);
-      }
-      return next;
-    });
+    if (next) {
+      setSelectedState(next);
+      setSelectedYearState(next.year);
+      setStoredBillingPeriod(next);
+    } else {
+      setSelectedState(null);
+    }
 
     return periods;
   }, []);

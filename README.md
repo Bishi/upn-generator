@@ -2,7 +2,7 @@
 
 Desktop application for the building manager at Kamniska ulica 36, Ljubljana.
 
-Each month: import the combined utility bill PDF or a photographed/scanned image, split costs across apartments, and generate UPN payment slips for each tenant.
+Each month: import the combined utility bill PDF, a photographed/scanned image, or bill attachments from an email inbox, split costs across apartments, and generate UPN payment slips for each tenant.
 
 The app opens on the **Bills** page, which is the main landing page for the monthly workflow.
 
@@ -50,7 +50,7 @@ Utility providers are pre-configured with the correct IBANs, payment purpose tem
 | ZLM d.o.o. | Cleaning | SI56 0201 1025 7890 131 |
 | Dimnikarstvo Energetski Servis d.o.o. | Chimney service | SI56 6100 0000 5243 585 |
 
-### Settings -> Email (SMTP)
+### Settings -> Delivery -> Email (SMTP)
 
 Enter your outgoing mail server credentials so the app can send UPN slips to tenants. Typical Gmail settings:
 
@@ -64,15 +64,30 @@ Enter your outgoing mail server credentials so the app can send UPN slips to ten
 
 Gmail note: you must create an **App Password** in your Google Account security settings. Your regular Gmail password will not work.
 
-### Settings -> Appearance
+### Settings -> Delivery -> Inbox
 
-Choose the app theme. **Refined** is the default and the polished production direction. **Crisp** and **Official** are available for visual testing. The choice is saved on this device only.
+Enter your incoming IMAP mailbox settings so the app can manually import bill attachments from email. Typical Gmail settings:
 
-### Settings -> Data
+| Field | Value |
+|-------|-------|
+| Server | `imap.gmail.com` |
+| Port | `993` |
+| Username | Your Gmail address |
+| Password | App password (not your regular Gmail password) |
+| Folder | `INBOX` |
+| TLS | Enabled |
 
-Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, and splits.
+Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. The mailbox scan window controls how far back messages are searched; imported attachments must still match the selected billing period and a configured provider that is still missing for that month.
 
-Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, the SMTP password is not included in backups, so after restore you must enter it again in **Settings -> Email** before sending emails.
+### Settings -> App -> Appearance
+
+Choose the app theme. **Refined** is the default and the polished production direction. The selected theme is saved in the app database and included in manual backups.
+
+### Settings -> App -> Data
+
+Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme.
+
+Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, saved SMTP and inbox passwords are not included in backups, so after restore you must enter them again in **Settings -> Delivery** before sending emails or importing from the inbox.
 
 ---
 
@@ -87,9 +102,11 @@ Go to the **Bills** page.
 
 ### Step 2 - Import bills
 
-Select the month and click **Import Bills**.
+Select the month and click **Import Bills** to choose a local file, or click **Import from Inbox** to scan the configured mailbox for bill attachments.
 
 The app supports importing a single combined PDF or a supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`). PDFs can contain all bills together; image imports are OCR'd on Windows before the same provider-detection pipeline runs.
+
+Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing period, skips unknown providers, skips configured providers that already have a bill in that month, avoids duplicate attachments and duplicate parsed bill content by hash, and deletes its temporary attachment file when that attachment has finished importing.
 
 | Provider | Service | Detection method |
 |----------|---------|-----------------|
@@ -134,7 +151,7 @@ Each apartment card shows its line items and the total amount due.
 
 ### Bills
 
-Overview of all imported bills by year and month. Import PDFs or image scans, add manual entries, edit or delete rows.
+Overview of all imported bills by year and month. Import PDFs, image scans, or inbox attachments, add manual entries, edit or delete rows.
 
 ### Splits
 
@@ -146,14 +163,13 @@ Generate and distribute UPN payment slips. Each apartment card shows the total a
 
 ### Settings
 
-Six tabs for configuring the application:
+Five tabs for configuring the application:
 
 - **Building** - Building address and contact details
 - **Apartments** - List of apartments with names, unit codes, occupants, m2 percentages, and comma-separated email recipients
 - **Providers** - Utility providers with IBANs, purpose text templates, and split basis rules (`People`, `m2`, or `Equal`)
-- **Email** - SMTP settings for sending emails
-- **Appearance** - Local visual theme selector (`Refined`, `Crisp`, `Official`)
-- **Data** - Manual SQLite backup and restore
+- **Delivery** - SMTP settings for sending emails and IMAP settings for manual read-only bill attachment import
+- **App** - Database-backed visual theme selector plus manual SQLite backup and restore
 
 ---
 
@@ -165,11 +181,9 @@ All data is stored locally in a SQLite database at:
 %APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data but intentionally exclude the saved SMTP password.
+Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, and inbox import history, but intentionally exclude saved SMTP and inbox passwords.
 
-The selected appearance theme is stored in local browser/app storage under `upn-generator.theme`. It is not included in SQLite backups. If the value is missing or invalid, the app falls back to the refined theme.
-
-Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings.
+Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings. Inbox imports connect directly to the IMAP server you configure, store only import metadata, and do not persist raw extracted text from inbox attachments.
 
 ---
 
@@ -183,7 +197,7 @@ A parse log is written on every import:
 %APPDATA%\si.upn-generator\import_debug.log
 ```
 
-Open it to see the raw extracted text and what each detection phase found or missed. For image imports, this log shows the OCR text that was parsed.
+Open it to see the raw extracted text and what each detection phase found or missed. For local image imports, this log shows the OCR text that was parsed. For inbox imports, raw extracted text and detailed payment fields are redacted from the debug log.
 
 **UPN preview does not open**
 
@@ -191,4 +205,8 @@ Make sure a PDF viewer is installed (for example Adobe Acrobat or Microsoft Edge
 
 **Email not sending**
 
-Check the SMTP settings under **Settings -> Email**. For Gmail, you must use an **App Password** - your regular account password will be rejected.
+Check the SMTP settings under **Settings -> Delivery**. For Gmail, you must use an **App Password** - your regular account password will be rejected.
+
+**Inbox import not connecting**
+
+Check the IMAP settings under **Settings -> Delivery**. For Gmail, use `imap.gmail.com`, port `993`, TLS enabled, and an **App Password**.

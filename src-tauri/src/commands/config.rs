@@ -323,6 +323,48 @@ pub fn save_smtp_config(db: State<DbState>, config: SmtpConfig) -> Result<(), St
     Ok(())
 }
 
+// --- App Settings ---
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AppSettings {
+    pub theme: String,
+}
+
+fn is_valid_theme(theme: &str) -> bool {
+    matches!(
+        theme,
+        "refined" | "crisp" | "official" | "dark-crisp" | "dark-mono" | "dark-shadow"
+    )
+}
+
+#[tauri::command]
+pub fn get_app_settings(db: State<DbState>) -> Result<AppSettings, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.query_row("SELECT theme FROM app_settings WHERE id=1", [], |row| {
+        Ok(AppSettings { theme: row.get(0)? })
+    })
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_app_settings(db: State<DbState>, settings: AppSettings) -> Result<AppSettings, String> {
+    if !is_valid_theme(&settings.theme) {
+        return Err("Invalid theme.".to_string());
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let changed = conn
+        .execute(
+            "UPDATE app_settings SET theme=?1 WHERE id=1",
+            rusqlite::params![&settings.theme],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("App settings row is missing.".to_string());
+    }
+    Ok(settings)
+}
+
 #[tauri::command]
 pub fn reset_all_data(db: State<DbState>) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
