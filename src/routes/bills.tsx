@@ -9,8 +9,22 @@ import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Bill, InboxConfig, InboxImportResult, InboxPreviewCandidate, InboxPreviewSession } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
+import {
+  BillingEmptyState,
+  BillingTable,
+  BillingTableFooterRow,
+  BillingTableFrame,
+  BillingTableHeaderCell,
+  BillingTableHeaderRow,
+  SummaryChip,
+  SummaryStrip,
+  billingTableBodyRowClass,
+  billingTableCellClass,
+  billingTableNumericCellClass,
+} from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/bills")({
   component: BillsPage,
@@ -130,7 +144,13 @@ function BillRow({
 
   return (
     <Fragment>
-      <tr className={`border-b border-border transition-colors hover:bg-accent/20 ${bill.parse_note ? "bg-warning-soft/70" : ""}`}>
+      <tr
+        className={cn(
+          billingTableBodyRowClass,
+          "hover:bg-accent/20",
+          bill.parse_note && "bg-warning-soft/70",
+        )}
+      >
         <td className="w-[68px] p-0 align-middle">
           <div className="grid min-h-16 place-items-center">
             {bill.parse_note ? (
@@ -150,9 +170,9 @@ function BillRow({
             </div>
           </div>
         </td>
-        <td className="px-3 py-2 text-xs font-mono">{bill.reference}</td>
-        <td className="px-3 py-2 text-sm">{bill.due_date}</td>
-        <td className="px-3 py-2">
+        <td className={`${billingTableCellClass} text-xs font-mono`}>{bill.reference}</td>
+        <td className={`${billingTableCellClass} text-sm`}>{bill.due_date}</td>
+        <td className={billingTableCellClass}>
           {bill.parse_note ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
               <AlertTriangle className="size-3" />
@@ -164,10 +184,10 @@ function BillRow({
             </span>
           )}
         </td>
-        <td className="px-3 py-2 text-right text-sm font-mono font-semibold">
+        <td className={`${billingTableNumericCellClass} text-sm font-semibold`}>
           {formatEur(bill.amount_cents)} €
         </td>
-        <td className="px-3 py-2">
+        <td className={billingTableCellClass}>
           <div className="flex justify-end gap-1">
             <button
               onClick={() => setEditing(true)}
@@ -736,11 +756,11 @@ function InboxImportDrawer({
                   <span className="rounded-md bg-danger-soft px-3 py-1 text-xs font-semibold text-danger">{failedCount} failed</span>
                 )}
               </div>
-              <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
-                <table className="w-full text-sm">
-                  <thead className="bg-surface-2 text-left text-xs text-muted-foreground">
-                    <tr>
-                      <th className="w-14 p-0 align-middle">
+              <BillingTableFrame>
+                <BillingTable>
+                  <thead>
+                    <BillingTableHeaderRow>
+                      <BillingTableHeaderCell className="w-14 p-0 align-middle">
                         <div className="flex h-11 items-center justify-center">
                           {defaultSelectedIds.length > 0 && (
                             <input
@@ -753,12 +773,12 @@ function InboxImportDrawer({
                             />
                           )}
                         </div>
-                      </th>
-                      <th className="px-3 py-3">Attachment</th>
-                      <th className="px-3 py-3">Bill</th>
-                      <th className="w-28 px-3 py-3 text-right">Amount</th>
-                      <th className="w-40 px-6 py-3 text-right">Status</th>
-                    </tr>
+                      </BillingTableHeaderCell>
+                      <BillingTableHeaderCell>Attachment</BillingTableHeaderCell>
+                      <BillingTableHeaderCell>Bill</BillingTableHeaderCell>
+                      <BillingTableHeaderCell className="w-28 text-right">Amount</BillingTableHeaderCell>
+                      <BillingTableHeaderCell className="w-40 px-6 text-right">Status</BillingTableHeaderCell>
+                    </BillingTableHeaderRow>
                   </thead>
                   <tbody>
                     {preview.candidates.length === 0 ? (
@@ -824,7 +844,7 @@ function InboxImportDrawer({
 
                         if (candidate.bills.length === 0) {
                           return (
-                            <tr key={candidate.id} className={`border-t border-border align-top ${groupClass}`}>
+                            <tr key={candidate.id} className={`border-b border-border align-top ${groupClass}`}>
                               {selectionCell("")}
                               {attachmentCell}
                               <td className="px-3 py-4 align-top">
@@ -839,7 +859,7 @@ function InboxImportDrawer({
                         return (
                           <Fragment key={candidate.id}>
                             {candidate.bills.map((bill, index) => (
-                              <tr key={`${candidate.id}-bill-${index}`} className={`border-t border-border align-top ${groupClass}`}>
+                              <tr key={`${candidate.id}-bill-${index}`} className={`border-b border-border align-top ${groupClass}`}>
                                 {selectionCell(String(index + 1))}
                                 {attachmentCell}
                                 <td className="px-3 py-4 align-top">
@@ -860,8 +880,8 @@ function InboxImportDrawer({
                       })
                     )}
                   </tbody>
-                </table>
-              </div>
+                </BillingTable>
+              </BillingTableFrame>
             </div>
           )}
 
@@ -1181,62 +1201,56 @@ function BillsPage() {
       )}
 
       {selected && showBillsTable && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+        <SummaryStrip>
           <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
             Imported from
           </span>
           {cleanCount > 0 && (
-            <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
+            <SummaryChip className="bg-success-soft text-success">
               <CheckCircle2 className="size-3.5" />
               {cleanCount} file{cleanCount === 1 ? "" : "s"} clean
-            </span>
+            </SummaryChip>
           )}
           {reviewBills.map((bill) => (
-            <span
+            <SummaryChip
               key={bill.id ?? bill.source_filename}
-              className="inline-flex items-center gap-2 rounded-md bg-warning-soft px-3 py-1 text-xs text-warning"
+              className="bg-warning-soft text-warning font-normal"
               title={bill.parse_note}
             >
               <AlertTriangle className="size-3.5" />
               <span className="font-semibold text-foreground">{bill.source_filename}</span>
               <span className="text-muted-foreground">needs review</span>
-            </span>
+            </SummaryChip>
           ))}
-        </div>
+        </SummaryStrip>
       )}
 
       {selected && (
-        <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
+        <BillingTableFrame minHeight>
           {showBillsLoading ? (
-            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Loading bills...
-              </div>
-            </div>
+            <BillingEmptyState
+              loading
+              loadingLabel="Loading bills..."
+              title="No bills yet for this billing month"
+              detail="Use the buttons above to import PDF or image invoices, or add a bill manually."
+            />
           ) : showBillsSettling || bills.length === 0 ? (
-            <div className="relative min-h-[268px] px-6 py-8 text-center">
-              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
-                <div className="mx-auto max-w-md space-y-2">
-                  <div className="text-sm font-medium">No bills yet for this billing month</div>
-                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
-                    Use the buttons above to import PDF or image invoices, or add a bill manually.
-                  </div>
-                </div>
-              </div>
-            </div>
+            <BillingEmptyState
+              title="No bills yet for this billing month"
+              detail="Use the buttons above to import PDF or image invoices, or add a bill manually."
+            />
           ) : (
-            <table className="w-full text-sm">
+            <BillingTable>
               <thead>
-                <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
-                  <th className="w-[68px] p-0"></th>
-                  <th className="py-3.5 pr-3 pb-2.5">Provider</th>
-                  <th className="px-3 pt-3.5 pb-2.5">Reference</th>
-                  <th className="px-3 pt-3.5 pb-2.5">Due Date</th>
-                  <th className="px-3 pt-3.5 pb-2.5">Detection</th>
-                  <th className="px-3 pt-3.5 pb-2.5 text-right">Amount</th>
-                  <th className="px-3 pt-3.5 pb-2.5"></th>
-                </tr>
+                <BillingTableHeaderRow>
+                  <BillingTableHeaderCell className="w-[68px] p-0" />
+                  <BillingTableHeaderCell className="pl-0">Provider</BillingTableHeaderCell>
+                  <BillingTableHeaderCell>Reference</BillingTableHeaderCell>
+                  <BillingTableHeaderCell>Due Date</BillingTableHeaderCell>
+                  <BillingTableHeaderCell>Detection</BillingTableHeaderCell>
+                  <BillingTableHeaderCell className="text-right">Amount</BillingTableHeaderCell>
+                  <BillingTableHeaderCell />
+                </BillingTableHeaderRow>
               </thead>
               <tbody>
                 {bills.map((b) => (
@@ -1249,7 +1263,7 @@ function BillsPage() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="bg-surface-2 font-medium">
+                <BillingTableFooterRow>
                   <td />
                   <td
                     className="py-2 pr-3 text-xs text-muted-foreground"
@@ -1257,15 +1271,15 @@ function BillsPage() {
                     Total ({bills.length} bills)
                   </td>
                   <td colSpan={3}></td>
-                  <td className="px-3 py-2 text-right font-mono">
+                  <td className={billingTableNumericCellClass}>
                     {formatEur(totalCents)} €
                   </td>
                   <td></td>
-                </tr>
+                </BillingTableFooterRow>
               </tfoot>
-            </table>
+            </BillingTable>
           )}
-        </div>
+        </BillingTableFrame>
       )}
 
       {selected && showBillsTable && (

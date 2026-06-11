@@ -23,8 +23,23 @@ import type {
 } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
+import {
+  BillingEmptyState,
+  BillingTable,
+  BillingTableFooterRow,
+  BillingTableFrame,
+  BillingTableHeaderCell,
+  BillingTableHeaderRow,
+  SummaryChip,
+  SummaryStrip,
+  billingTableBodyRowClass,
+  billingTableCellClass,
+  billingTableNumericCellClass,
+  billingTableTallCellClass,
+} from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/upn")({
   component: UpnPage,
@@ -208,10 +223,10 @@ function ApartmentRows({
   return (
     <Fragment>
       <tr
-        className="cursor-pointer border-b border-border hover:bg-accent/10"
+        className={cn(billingTableBodyRowClass, "cursor-pointer")}
         onClick={onToggle}
       >
-        <td className="px-3 py-3">
+        <td className={billingTableTallCellClass}>
           <button
             type="button"
             onClick={(event) => {
@@ -234,7 +249,7 @@ function ApartmentRows({
             </div>
           </button>
         </td>
-        <td className="px-3 py-3">
+        <td className={billingTableTallCellClass}>
           {hasRecipient ? (
             <span className="font-mono text-xs text-muted-foreground">
               {contactEmail}
@@ -246,7 +261,7 @@ function ApartmentRows({
             </span>
           )}
         </td>
-        <td className="px-3 py-3 text-right">
+        <td className={`${billingTableTallCellClass} text-right`}>
           {emailResult ? (
             <span
               className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${statusClass(
@@ -270,10 +285,10 @@ function ApartmentRows({
             </span>
           )}
         </td>
-        <td className="px-3 py-3 text-right font-mono font-semibold">
+        <td className={`${billingTableTallCellClass} text-right font-mono font-semibold`}>
           {formatEur(total)} €
         </td>
-        <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
+        <td className={billingTableTallCellClass} onClick={(event) => event.stopPropagation()}>
           <Button
             variant="ghost"
             size="sm"
@@ -302,10 +317,10 @@ function ApartmentRows({
               </div>
             </td>
             <td />
-            <td className="px-3 py-2 text-right font-mono text-sm text-muted-foreground">
+            <td className={`${billingTableNumericCellClass} text-sm text-muted-foreground`}>
               {formatEur(split.split_amount_cents)} €
             </td>
-            <td className="px-3 py-2">
+            <td className={billingTableCellClass}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -374,9 +389,9 @@ function UpnPage() {
 
   const sendEmails = async () => {
     if (!selected?.id) return;
-      setPageMessage(null);
-      setSending(true);
-      try {
+    setPageMessage(null);
+    setSending(true);
+    try {
       const results = await sendPeriodEmails(selected.id);
       setEmailResults(results);
       const [events, hashes] = await Promise.all([
@@ -394,8 +409,8 @@ function UpnPage() {
 
   const downloadAll = async () => {
     if (!selected?.id) return;
-      setDownloading(true);
-      try {
+    setDownloading(true);
+    try {
       const result = await downloadPeriodUpnPdfs(selected.id);
       if (!result) return;
       setPageMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
@@ -494,24 +509,24 @@ function UpnPage() {
       )}
 
       {showUpnTable && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
-          <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
+        <SummaryStrip>
+          <SummaryChip className="bg-success-soft text-success">
             <CheckCircle2 className="size-3.5" />
             {readyRecipientCount} ready
             <span className="font-normal text-muted-foreground">recipient on file</span>
-          </span>
+          </SummaryChip>
           {missingRecipientCount > 0 && (
-            <span className="inline-flex items-center gap-2 rounded-md bg-warning-soft px-3 py-1 text-xs font-semibold text-warning">
+            <SummaryChip className="bg-warning-soft text-warning">
               <AlertTriangle className="size-3.5" />
               {missingRecipientCount} missing email
-            </span>
+            </SummaryChip>
           )}
-          <span className="inline-flex items-center gap-2 rounded-md bg-surface-3 px-3 py-1 text-xs font-semibold text-muted-foreground">
+          <SummaryChip className="bg-surface-3 text-muted-foreground">
             <Files className="size-3.5" />
             {totalSlipCount} slips
             <span className="font-normal">across {apartments.length} packets</span>
-          </span>
-        </div>
+          </SummaryChip>
+        </SummaryStrip>
       )}
 
       {!selected && (
@@ -524,48 +539,35 @@ function UpnPage() {
         (showUpnLoading ||
           showUpnSettling ||
           (!snapshot.loading && splits.length === 0)) && (
-        <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
-          {showUpnLoading ? (
-            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Loading UPN data...
-              </div>
-            </div>
-          ) : (
-            <div className="relative min-h-[268px] px-6 py-8 text-center">
-              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
-                <div className="mx-auto max-w-md space-y-2">
-                  <div className="text-sm font-medium">No UPNs yet for this billing month</div>
-                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
-                    Calculate splits first, then return here to preview and send UPN forms.
-                  </div>
-                </div>
-              </div>
-              <div className="absolute inset-x-6 bottom-14 flex justify-center">
-                <Link
-                  to="/splits"
-                  className={buttonVariants({ variant: "outline" })}
-                >
-                  Go to Splits
-                </Link>
-              </div>
-            </div>
-          )}
-        </div>
+        <BillingTableFrame minHeight>
+          <BillingEmptyState
+            loading={showUpnLoading}
+            loadingLabel="Loading UPN data..."
+            title="No UPNs yet for this billing month"
+            detail="Calculate splits first, then return here to preview and send UPN forms."
+            action={
+              <Link
+                to="/splits"
+                className={buttonVariants({ variant: "outline" })}
+              >
+                Go to Splits
+              </Link>
+            }
+          />
+        </BillingTableFrame>
       )}
 
       {showUpnTable && (
-        <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
-          <table className="w-full text-sm">
+        <BillingTableFrame>
+          <BillingTable>
             <thead>
-              <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
-                <th className="px-3 pt-3.5 pb-2.5">Apartment</th>
-                <th className="px-3 pt-3.5 pb-2.5">Recipient</th>
-                <th className="px-3 pt-3.5 pb-2.5 text-right">Status</th>
-                <th className="px-3 pt-3.5 pb-2.5 text-right">Total</th>
-                <th className="w-32 px-3 pt-3.5 pb-2.5"></th>
-              </tr>
+              <BillingTableHeaderRow>
+                <BillingTableHeaderCell>Apartment</BillingTableHeaderCell>
+                <BillingTableHeaderCell>Recipient</BillingTableHeaderCell>
+                <BillingTableHeaderCell className="text-right">Status</BillingTableHeaderCell>
+                <BillingTableHeaderCell className="text-right">Total</BillingTableHeaderCell>
+                <BillingTableHeaderCell className="w-32" />
+              </BillingTableHeaderRow>
             </thead>
             <tbody>
               {apartments.map(([aptId, { label, unitCode, contactEmail, splits: aptSplits }]) => (
@@ -592,20 +594,20 @@ function UpnPage() {
               ))}
             </tbody>
             <tfoot>
-              <tr className="bg-surface-2 font-semibold">
-                <td colSpan={3} className="px-3 py-2 text-xs text-muted-foreground">
+              <BillingTableFooterRow>
+                <td colSpan={3} className={`${billingTableCellClass} text-xs text-muted-foreground`}>
                   {apartments.length} packet{apartments.length === 1 ? "" : "s"}
                 </td>
-                <td className="px-3 py-2 text-right font-mono">
+                <td className={billingTableNumericCellClass}>
                   {formatEur(
                     splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
                   )} €
                 </td>
                 <td />
-              </tr>
+              </BillingTableFooterRow>
             </tfoot>
-          </table>
-        </div>
+          </BillingTable>
+        </BillingTableFrame>
       )}
 
       {emailResults.length > 0 && (
