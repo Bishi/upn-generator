@@ -292,17 +292,14 @@ function SplitsPage() {
                 <th className="min-w-48 px-3 pt-3.5 pb-2.5 text-left">
                   Bill
                 </th>
-                <th className="border-r border-border-2 px-3 pt-3.5 pb-2.5 text-right">
-                  Total
-                </th>
                 {apartments.map(([id, apt]) => (
                   <th key={id} className="px-3 pt-3.5 pb-2.5 text-right whitespace-nowrap">
                     <div>{apt.label}</div>
-                    <div className="text-[11px] font-normal text-muted-foreground">
-                      {apt.unitCode || "No code"}
-                    </div>
                   </th>
                 ))}
+                <th className="px-3 pt-3.5 pb-2.5 text-right">
+                  Total
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -324,9 +321,6 @@ function SplitsPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="border-r border-border-2 px-3 py-2 text-right font-mono font-medium">
-                    {formatEur(info.total)} €
-                  </td>
                   {apartments.map(([aptId]) => {
                     const cell = matrix.get(billId)?.get(aptId);
                     return (
@@ -344,22 +338,25 @@ function SplitsPage() {
                       </td>
                     );
                   })}
+                  <td className="px-3 py-2 text-right font-mono font-medium">
+                    {formatEur(info.total)} €
+                  </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t border-border bg-surface-2 font-semibold">
                 <td className="px-3 py-2">Total per Apartment</td>
-                <td className="border-r border-border-2 px-3 py-2 text-right font-mono">
-                  {formatEur(
-                    splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
-                  )} €
-                </td>
                 {apartments.map(([aptId]) => (
                   <td key={aptId} className="px-3 py-2 text-right font-mono">
                     {formatEur(apartmentTotals.get(aptId) ?? 0)} €
                   </td>
                 ))}
+                <td className="px-3 py-2 text-right font-mono">
+                  {formatEur(
+                    splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
+                  )} €
+                </td>
               </tr>
             </tfoot>
           </table>
@@ -397,7 +394,7 @@ function MethodChip({
 
   return (
     <span className={`inline-flex items-center gap-2 rounded-md px-3 py-1 text-xs ${toneClass}`}>
-      <span className="rounded-full bg-card px-2 py-0.5 font-semibold">{label}</span>
+      <span className="rounded-full bg-card px-2 font-semibold leading-4">{label}</span>
       <span>{detail}</span>
     </span>
   );
