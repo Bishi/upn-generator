@@ -190,6 +190,66 @@ export interface InboxImportResult {
   error: string | null;
 }
 
+export interface InboxPreviewNotice {
+  status:
+    | "skipped_duplicate_bill"
+    | "skipped_unknown_provider"
+    | "skipped_already_present"
+    | "skipped_not_expected"
+    | string;
+  message: string;
+}
+
+export interface InboxPreviewBillSummary {
+  provider_id: number | null;
+  provider_name: string | null;
+  creditor_name: string;
+  amount_cents: number;
+  reference: string;
+  due_date: string;
+  invoice_number: string;
+  purpose_text: string;
+  parse_note: string;
+  status: string;
+}
+
+export interface InboxPreviewCandidate {
+  id: string;
+  sender: string;
+  subject: string;
+  received_date: string | null;
+  attachment_filename: string;
+  attachment_sha256: string;
+  status:
+    | "ready"
+    | "skipped_duplicate"
+    | "skipped_duplicate_bill"
+    | "skipped_wrong_period"
+    | "skipped_unknown_period"
+    | "skipped_unknown_provider"
+    | "skipped_already_present"
+    | "skipped_not_expected"
+    | "empty"
+    | "failed";
+  selectable: boolean;
+  importable_count: number;
+  skipped_reason: string | null;
+  error: string | null;
+  bills: InboxPreviewBillSummary[];
+  notices: InboxPreviewNotice[];
+}
+
+export interface InboxPreviewSession {
+  session_id: string;
+  billing_period_id: number;
+  days_to_scan: number;
+  username: string;
+  folder: string;
+  sender_allowlist: string;
+  received_date_source: "imap_internal_date";
+  candidates: InboxPreviewCandidate[];
+}
+
 // Helpers
 
 export function formatEur(cents: number): string {

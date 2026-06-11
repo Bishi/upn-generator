@@ -19,11 +19,11 @@ Tauri desktop app (Windows) for splitting apartment utility bills and generating
 - Manual backups intentionally blank `smtp_config.password` and `inbox_config.password`
 - SMTP and IMAP passwords are stored in Windows Credential Manager under stable app targets and matched against the configured username before use; legacy DB password columns remain only for schema compatibility and are cleared after successful credential writes
 - `building` table always has exactly 1 row (`id=1`)
-- `smtp_config` table always has exactly 1 row (`id=1`)
-- SMTP email safety is stored on `smtp_config`; the recipient allowlist defaults enabled and empty so bulk UPN sends are blocked until test recipients are listed or the allowlist is disabled
+- `smtp_config` table always has exactly 1 row (`id=1`); seeded defaults use Gmail SMTP host/port/TLS, `kamniska.racuni@gmail.com` username/from/allowlist, and blank password
+- SMTP email safety is stored on `smtp_config`; the recipient allowlist defaults enabled with `kamniska.racuni@gmail.com` as the seeded test recipient so bulk UPN sends remain limited until more recipients are listed or the allowlist is disabled
 - `app_settings` table always has exactly 1 row (`id=1`) for database-backed UI preferences such as theme
-- `inbox_config` table always has exactly 1 row (`id=1`) for manual IMAP inbox import settings
-- Inbox imports are manual, read-only IMAP scans using `EXAMINE` and `BODY.PEEK`; attachments are parsed from temporary files and raw extracted text is not persisted for inbox imports
+- `inbox_config` table always has exactly 1 row (`id=1`) for manual IMAP inbox import settings; seeded defaults use Gmail IMAP host/port/TLS/INBOX, `kamniska.racuni@gmail.com` username, and blank password
+- Inbox imports are manual, read-only IMAP scans using `EXAMINE` and `BODY.PEEK`; the Bills page previews fetched attachments before import, attachments are staged only in short-lived temp files, and raw extracted text is not persisted for inbox imports
 - Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
 - Apartment `contact_email` remains the persisted field name and supports comma-separated recipients
 - UPN email delivery history is stored per recipient in `upn_delivery_events`; SMTP and inbox passwords are write-only settings backed by Windows Credential Manager and excluded from backups
@@ -72,7 +72,7 @@ UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 m
 - Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
 - Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send, read-only inbox import, and Windows Credential Manager password storage work)
 
-Current status: **v0.5.0. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, guarded multi-recipient apartment emails with persisted delivery history, a manual SQLite backup/restore workflow, manual read-only inbox attachment import, and Windows Credential Manager storage for mail passwords.**
+Current status: **v0.5.0. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, guarded multi-recipient apartment emails with persisted delivery history, a manual SQLite backup/restore workflow, preview-first read-only inbox attachment import, and Windows Credential Manager storage for mail passwords.**
 
 ## Documentation
 

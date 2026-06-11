@@ -10,6 +10,7 @@ import type {
   EmailResult,
   InboxConfig,
   InboxImportResult,
+  InboxPreviewSession,
   Provider,
   ResetAllDataResult,
   SmtpConfig,
@@ -71,6 +72,18 @@ export const ipc = {
     invoke<Bill[]>("import_bills", { filePath, billingPeriodId }),
   importInboxAttachments: (billingPeriodId: number) =>
     invoke<InboxImportResult[]>("import_inbox_attachments", { billingPeriodId }),
+  previewInboxAttachments: (billingPeriodId: number, daysToScan: number) =>
+    invoke<InboxPreviewSession>("preview_inbox_attachments", {
+      billingPeriodId,
+      daysToScan,
+    }),
+  importInboxPreviewSelection: (sessionId: string, candidateIds: string[]) =>
+    invoke<InboxImportResult[]>("import_inbox_preview_selection", {
+      sessionId,
+      candidateIds,
+    }),
+  clearInboxPreviewSession: (sessionId: string) =>
+    invoke<void>("clear_inbox_preview_session", { sessionId }),
   saveBill: (bill: Bill) => invoke<Bill>("save_bill", { bill }),
   deleteBill: (id: number) => invoke<void>("delete_bill", { id }),
 

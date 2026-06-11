@@ -331,22 +331,22 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
 
         CREATE TABLE IF NOT EXISTS smtp_config (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            host TEXT NOT NULL DEFAULT '',
+            host TEXT NOT NULL DEFAULT 'smtp.gmail.com',
             port INTEGER NOT NULL DEFAULT 587,
-            username TEXT NOT NULL DEFAULT '',
-            from_email TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT 'kamniska.racuni@gmail.com',
+            from_email TEXT NOT NULL DEFAULT 'kamniska.racuni@gmail.com',
             use_tls INTEGER NOT NULL DEFAULT 1,
             allowlist_enabled INTEGER NOT NULL DEFAULT 1,
-            recipient_allowlist TEXT NOT NULL DEFAULT ''
+            recipient_allowlist TEXT NOT NULL DEFAULT 'kamniska.racuni@gmail.com'
         );
 
         INSERT OR IGNORE INTO smtp_config (id) VALUES (1);
 
         CREATE TABLE IF NOT EXISTS inbox_config (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            host TEXT NOT NULL DEFAULT '',
+            host TEXT NOT NULL DEFAULT 'imap.gmail.com',
             port INTEGER NOT NULL DEFAULT 993,
-            username TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT 'kamniska.racuni@gmail.com',
             password TEXT NOT NULL DEFAULT '',
             use_tls INTEGER NOT NULL DEFAULT 1,
             folder TEXT NOT NULL DEFAULT 'INBOX',
@@ -537,11 +537,17 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
         DELETE FROM providers;
         UPDATE building SET name='', address='', city='', postal_code='' WHERE id=1;
         UPDATE smtp_config
-        SET host='', port=587, username='', from_email='', use_tls=1, password='',
-            allowlist_enabled=1, recipient_allowlist=''
+        SET host='smtp.gmail.com', port=587,
+            username='kamniska.racuni@gmail.com',
+            from_email='kamniska.racuni@gmail.com',
+            use_tls=1, password='',
+            allowlist_enabled=1,
+            recipient_allowlist='kamniska.racuni@gmail.com'
         WHERE id=1;
         UPDATE inbox_config
-        SET host='', port=993, username='', password='', use_tls=1, folder='INBOX',
+        SET host='imap.gmail.com', port=993,
+            username='kamniska.racuni@gmail.com',
+            password='', use_tls=1, folder='INBOX',
             days_to_scan=45, sender_allowlist=''
         WHERE id=1;
         UPDATE app_settings SET theme='refined' WHERE id=1;
