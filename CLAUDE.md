@@ -72,7 +72,7 @@ UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 m
 - Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
 - Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send, read-only inbox import, and Windows Credential Manager password storage work)
 
-Current status: **v0.4.14. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, guarded multi-recipient apartment emails with persisted delivery history, a manual SQLite backup/restore workflow, manual read-only inbox attachment import, and Windows Credential Manager storage for mail passwords.**
+Current status: **v0.5.0. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, review-state warnings, year/month navigation improvements, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, guarded multi-recipient apartment emails with persisted delivery history, a manual SQLite backup/restore workflow, manual read-only inbox attachment import, and Windows Credential Manager storage for mail passwords.**
 
 ## Documentation
 
@@ -132,7 +132,7 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
 
 ```bash
-git tag v0.4.14 && git push origin main && git push origin v0.4.14
+git tag v0.5.0 && git push origin main && git push origin v0.5.0
 ```
 
 Every push to `main` must be accompanied by a version bump and a tag. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state.
