@@ -270,7 +270,10 @@ fn collect_attachments(mail: &ParsedMail<'_>) -> Vec<MailAttachment> {
     attachments
 }
 
-fn load_credentials(db: &State<DbState>) -> Result<InboxCredentials, String> {
+fn load_credentials(
+    db: &State<DbState>,
+    require_password: bool,
+) -> Result<InboxCredentials, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut credentials_row = conn
         .query_row(
@@ -300,12 +303,20 @@ fn load_credentials(db: &State<DbState>) -> Result<InboxCredentials, String> {
         MailCredentialKind::Imap,
         &credentials_row.config.username,
     )?;
-    credentials_row.password = credentials::resolve_password(
-        MailCredentialKind::Imap,
-        &credentials_row.config.username,
-        "",
-    )
-    .unwrap_or_default();
+    credentials_row.password = if require_password {
+        credentials::resolve_password(
+            MailCredentialKind::Imap,
+            &credentials_row.config.username,
+            "",
+        )?
+    } else {
+        credentials::resolve_password(
+            MailCredentialKind::Imap,
+            &credentials_row.config.username,
+            "",
+        )
+        .unwrap_or_default()
+    };
     Ok(credentials_row)
 }
 
@@ -812,7 +823,7 @@ fn import_attachment(
 
 #[tauri::command]
 pub fn get_inbox_config(db: State<DbState>) -> Result<InboxConfig, String> {
-    Ok(load_credentials(&db)?.config)
+    Ok(load_credentials(&db, false)?.config)
 }
 
 #[tauri::command]
@@ -869,7 +880,7 @@ pub fn import_inbox_attachments(
     db: State<DbState>,
     billing_period_id: i64,
 ) -> Result<Vec<InboxImportResult>, String> {
-    let credentials = load_credentials(&db)?;
+    let credentials = load_credentials(&db, true)?;
     validate_config(&credentials.config, true, &credentials.password)?;
     let context = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;

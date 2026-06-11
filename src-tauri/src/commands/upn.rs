@@ -1604,9 +1604,8 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
 
     let attempt_id = next_attempt_id();
     let allowlist = parse_allowlist(&recipient_allowlist);
-    let smtp_pass = { credentials::resolve_password(MailCredentialKind::Smtp, &smtp_user, "")? };
-    let mailer = build_mailer(&smtp_host, smtp_port, &smtp_user, &smtp_pass, use_tls);
     let from_addr = smtp_from.parse::<Mailbox>();
+    let mut mailer: Option<Result<SmtpTransport, String>> = None;
     let mut results = Vec::new();
 
     for (apt_id, apt_label, raw_email, recipients) in &apartments {
@@ -1666,7 +1665,14 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
                 ));
             }
         } else if !allowed_valid.is_empty() {
-            match (&from_addr, &mailer) {
+            let mailer = mailer.get_or_insert_with(|| {
+                credentials::resolve_password(MailCredentialKind::Smtp, &smtp_user, "").and_then(
+                    |smtp_pass| {
+                        build_mailer(&smtp_host, smtp_port, &smtp_user, &smtp_pass, use_tls)
+                    },
+                )
+            });
+            match (&from_addr, mailer.as_ref()) {
                 (Ok(from_addr), Ok(mailer)) => {
                     let subject = format!("Poloznice za {}/{}", month, year);
                     let body = format!(

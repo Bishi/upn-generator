@@ -189,7 +189,7 @@ pub fn delete_mail_credentials() -> Result<(), String> {
 mod windows_credential {
     use super::StoredCredential;
     use std::ptr::null_mut;
-    use windows::core::{Error, PCWSTR, PWSTR};
+    use windows::core::{PCWSTR, PWSTR};
     use windows::Win32::Security::Credentials::{
         CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
         CRED_TYPE_GENERIC,
@@ -240,10 +240,16 @@ mod windows_credential {
         let stored = unsafe {
             let credential_ref = &*credential;
             let username = pwstr_to_string(credential_ref.UserName);
-            let bytes = std::slice::from_raw_parts(
-                credential_ref.CredentialBlob,
-                credential_ref.CredentialBlobSize as usize,
-            );
+            let bytes = if credential_ref.CredentialBlob.is_null()
+                || credential_ref.CredentialBlobSize == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    credential_ref.CredentialBlob,
+                    credential_ref.CredentialBlobSize as usize,
+                )
+            };
             let password = match String::from_utf8(bytes.to_vec()) {
                 Ok(password) => password,
                 Err(error) => {
@@ -285,7 +291,7 @@ mod windows_credential {
         match unsafe { CredDeleteW(PCWSTR(target_w.as_ptr()), CRED_TYPE_GENERIC, None) } {
             Ok(()) => Ok(()),
             Err(error) if error.code().0 as u32 == HRESULT_FROM_WIN32_ERROR_NOT_FOUND => Ok(()),
-            Err(error) => Err(Error::from(error.code()).to_string()),
+            Err(error) => Err(error.to_string()),
         }
     }
 }

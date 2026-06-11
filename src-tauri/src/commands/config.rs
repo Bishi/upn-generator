@@ -391,7 +391,7 @@ pub fn save_app_settings(db: State<DbState>, settings: AppSettings) -> Result<Ap
 
 #[tauri::command]
 pub fn reset_all_data(db: State<DbState>) -> Result<(), String> {
-    credentials::delete_mail_credentials()?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    migrations::reset_to_defaults(&conn)
+    migrations::reset_to_defaults(&conn)?;
+    credentials::delete_mail_credentials()
 }
