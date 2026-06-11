@@ -66,7 +66,7 @@ export function DataSection() {
 
   const resetMutation = useMutation({
     mutationFn: ipc.resetAllData,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       setStoredBillingPeriod(null);
       setResetConfirm("");
       await Promise.all([
@@ -79,6 +79,12 @@ export function DataSection() {
         queryClient.invalidateQueries({ queryKey: ["splits"] }),
         queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
       ]);
+      if (result.credential_cleanup_warning) {
+        await message(result.credential_cleanup_warning, {
+          title: "Reset Completed With Warning",
+          kind: "warning",
+        });
+      }
       window.location.reload();
     },
   });

@@ -72,6 +72,10 @@ export interface BackupFileInfo {
   path: string;
 }
 
+export interface ResetAllDataResult {
+  credential_cleanup_warning: string | null;
+}
+
 // Billing periods
 
 export interface BillingPeriod {

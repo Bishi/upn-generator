@@ -358,6 +358,11 @@ pub struct AppSettings {
     pub theme: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResetAllDataResult {
+    pub credential_cleanup_warning: Option<String>,
+}
+
 fn is_valid_theme(theme: &str) -> bool {
     matches!(
         theme,
@@ -390,13 +395,17 @@ pub fn save_app_settings(db: State<DbState>, settings: AppSettings) -> Result<Ap
 }
 
 #[tauri::command]
-pub fn reset_all_data(db: State<DbState>) -> Result<(), String> {
+pub fn reset_all_data(db: State<DbState>) -> Result<ResetAllDataResult, String> {
     {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         migrations::reset_to_defaults(&conn)?;
     }
-    if let Err(error) = credentials::delete_mail_credentials() {
-        eprintln!("Could not delete saved mail credentials after reset: {error}");
-    }
-    Ok(())
+    let credential_cleanup_warning = credentials::delete_mail_credentials().err().map(|error| {
+        format!(
+            "App data was reset, but saved Windows mail credentials could not be deleted: {error}"
+        )
+    });
+    Ok(ResetAllDataResult {
+        credential_cleanup_warning,
+    })
 }
