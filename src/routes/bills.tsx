@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
@@ -19,7 +20,7 @@ export const Route = createFileRoute("/bills")({
 function ReviewIndicator({ note }: { note: string }) {
   return (
     <span
-      className="mt-0.5 inline-flex size-2.5 shrink-0 cursor-help rounded-full bg-warning ring-1 ring-warning/60"
+      className="inline-flex size-2.5 shrink-0 cursor-help rounded-full bg-warning ring-1 ring-warning/60"
       title={note}
       aria-label={note}
     />
@@ -131,14 +132,16 @@ function BillRow({
   return (
     <Fragment>
       <tr className={`border-b border-border transition-colors hover:bg-accent/20 ${bill.parse_note ? "bg-warning-soft/70" : ""}`}>
-        <td className="px-3 py-2 text-center">
-          {bill.parse_note ? (
-            <ReviewIndicator note={bill.parse_note} />
-          ) : (
-            <CheckCircle2 className="mx-auto size-4 text-success" />
-          )}
+        <td className="w-[68px] p-0 align-middle">
+          <div className="grid min-h-16 place-items-center">
+            {bill.parse_note ? (
+              <ReviewIndicator note={bill.parse_note} />
+            ) : (
+              <CheckCircle2 className="block size-4 text-success" />
+            )}
+          </div>
         </td>
-        <td className="px-3 py-2 text-sm max-w-60">
+        <td className="py-3 pr-3 align-middle text-sm max-w-60">
           <div>
             <div className="truncate font-semibold">
               {bill.provider_name ?? (bill.creditor_name || bill.source_filename)}
@@ -163,7 +166,7 @@ function BillRow({
           )}
         </td>
         <td className="px-3 py-2 text-right text-sm font-mono font-semibold">
-          {formatEur(bill.amount_cents)} EUR
+          {formatEur(bill.amount_cents)} €
         </td>
         <td className="px-3 py-2">
           <div className="flex justify-end gap-1">
@@ -213,9 +216,9 @@ function previewStatusLabel(status: InboxPreviewCandidate["status"]): string {
     case "ready":
       return "Ready";
     case "skipped_duplicate":
-      return "Duplicate attachment";
+      return "Duplicate";
     case "skipped_duplicate_bill":
-      return "Duplicate bill";
+      return "Duplicate";
     case "skipped_wrong_period":
       return "Wrong period";
     case "skipped_unknown_period":
@@ -326,6 +329,92 @@ function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: strin
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function InboxStatusChip({ candidate }: { candidate: InboxPreviewCandidate }) {
+  const [open, setOpen] = useState(false);
+  const [popoverPosition, setPopoverPosition] = useState<{ top: number; right: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const detail = candidate.error ?? candidate.skipped_reason ?? candidate.notices[0]?.message ?? null;
+  const hasNotices = candidate.notices.length > 0;
+  const isReady = candidate.status === "ready" && !hasNotices;
+  const isFailed = candidate.status === "failed";
+  const label = candidate.status === "ready" && hasNotices ? "Review" : previewStatusLabel(candidate.status);
+  const className = isReady ? "bg-success-soft text-success" : isFailed ? "bg-danger-soft text-danger" : hasNotices ? "bg-warning-soft text-warning" : "bg-surface-3 text-muted-foreground";
+
+  useEffect(() => {
+    if (!open) return;
+    const updatePosition = () => {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPopoverPosition({
+        top: rect.bottom + 8,
+        right: window.innerWidth - rect.right,
+      });
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+    };
+    updatePosition();
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open]);
+
+  if (!detail) {
+    return (
+      <span className={`inline-flex whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold ${className}`}>
+        {label}
+      </span>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="relative inline-flex">
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`Show ${label.toLowerCase()} reason`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {label}
+        <ChevronDown className="size-3" />
+      </button>
+      {open && popoverPosition
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              role="dialog"
+              aria-label="Inbox preview status reason"
+              className="fixed z-[70] w-64 rounded-md border border-border bg-card p-3 text-left shadow-pop"
+              style={{ top: popoverPosition.top, right: popoverPosition.right }}
+            >
+              <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Reason</div>
+              <div className="break-words text-xs leading-relaxed text-muted-foreground">{detail}</div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
@@ -510,7 +599,7 @@ function InboxImportDrawer({
               </button>
               <input
                 aria-label="Scan window days"
-                className="h-6 w-10 border-x border-border bg-transparent text-center font-mono text-xs font-bold text-foreground outline-none disabled:opacity-50"
+                className="input-no-spinner h-6 w-10 border-x border-border bg-transparent text-center font-mono text-xs font-bold text-foreground outline-none disabled:opacity-50"
                 type="number"
                 min={1}
                 max={90}
@@ -548,7 +637,7 @@ function InboxImportDrawer({
                 <h3 className="font-head text-xl font-semibold">Ready to scan</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   Will scan the last <span className="font-semibold text-foreground">{daysToScan} days</span> of {config?.folder || "INBOX"} for PDF and image attachments
-                  {senderEntries.length > 0 ? <> from <span className="font-semibold text-foreground">{senderEntries.length} senders</span></> : null}. Only bills for <span className="font-semibold text-foreground">{periodLabel}</span> will be offered.
+                  {senderEntries.length > 0 ? <> from <span className="font-semibold text-foreground">{senderEntries.length} senders</span></> : null}. Only bills for the <span className="font-semibold text-foreground">{periodLabel}</span> billing month will be offered.
                 </p>
               </div>
               <Button onClick={fetchPreview} disabled={!billingPeriodId || loadingConfig || loadingPreview || importing} className="h-10 px-6">
@@ -588,27 +677,30 @@ function InboxImportDrawer({
                 <table className="w-full text-sm">
                   <thead className="bg-surface-2 text-left text-xs text-muted-foreground">
                     <tr>
-                      <th className="w-11 px-4 py-2 align-middle">
-                        {readyCount > 0 && (
-                          <input
-                            aria-label="Select all ready inbox preview bills"
-                            type="checkbox"
-                            className="size-4 accent-primary"
-                            checked={allReadySelected}
-                            onChange={(event) => toggleAllReady(event.target.checked)}
-                            disabled={importing}
-                          />
-                        )}
+                      <th className="w-14 p-0 align-middle">
+                        <div className="flex h-11 items-center justify-center">
+                          {readyCount > 0 && (
+                            <input
+                              aria-label="Select all ready inbox preview bills"
+                              type="checkbox"
+                              className="block size-4 accent-primary"
+                              checked={allReadySelected}
+                              onChange={(event) => toggleAllReady(event.target.checked)}
+                              disabled={importing}
+                            />
+                          )}
+                        </div>
                       </th>
-                      <th className="px-3 py-2">Attachment</th>
-                      <th className="px-3 py-2">Bill</th>
-                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-3">Attachment</th>
+                      <th className="px-3 py-3">Bill</th>
+                      <th className="w-28 px-3 py-3 text-right">Amount</th>
+                      <th className="w-40 px-6 py-3 text-right">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {preview.candidates.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-4 py-6 text-sm text-muted-foreground">
+                        <td colSpan={5} className="px-4 py-6 text-sm text-muted-foreground">
                           <div className="text-center font-medium">No supported bill attachments found in this scan window.</div>
                           {scanSummary && (
                             <div className="mx-auto mt-4 grid max-w-2xl gap-2 rounded-md bg-surface-2 p-3 text-left text-xs">
@@ -633,7 +725,7 @@ function InboxImportDrawer({
                       </tr>
                     ) : (
                       preview.candidates.map((candidate) => {
-                        const groupClass = candidate.selectable ? "bg-card" : "bg-surface-2/40 opacity-70";
+                        const groupClass = candidate.selectable ? "bg-card" : "bg-surface-2/40";
                         const toggleCandidate = (checked: boolean) => {
                           const next = new Set(selectedIds);
                           if (checked) next.add(candidate.id);
@@ -641,43 +733,29 @@ function InboxImportDrawer({
                           setSelectedIds(next);
                         };
                         const selectionCell = (keySuffix: string) => (
-                          <td className="px-4 py-3">
-                            <input
-                              aria-label={`Select ${candidate.attachment_filename}${keySuffix ? ` bill ${keySuffix}` : ""}`}
-                              type="checkbox"
-                              className="size-4 accent-primary"
-                              checked={selectedIds.has(candidate.id)}
-                              disabled={!candidate.selectable || importing}
-                              onChange={(event) => toggleCandidate(event.target.checked)}
-                            />
+                          <td className="w-14 p-0 align-middle">
+                            <div className="flex justify-center">
+                              <input
+                                aria-label={`Select ${candidate.attachment_filename}${keySuffix ? ` bill ${keySuffix}` : ""}`}
+                                type="checkbox"
+                                className="block size-4 accent-primary"
+                                checked={selectedIds.has(candidate.id)}
+                                disabled={!candidate.selectable || importing}
+                                onChange={(event) => toggleCandidate(event.target.checked)}
+                              />
+                            </div>
                           </td>
                         );
                         const attachmentCell = (
-                          <td className="max-w-64 px-3 py-3">
+                          <td className="max-w-64 px-3 py-4 align-top">
                             <div className="truncate font-semibold">{candidate.attachment_filename}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.sender || "Unknown sender"}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.subject || "No subject"}</div>
                           </td>
                         );
                         const statusCell = (
-                          <td className="px-3 py-3">
-                            <span className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${candidate.status === "ready" ? "bg-success-soft text-success" : candidate.status === "failed" ? "bg-danger-soft text-danger" : "bg-surface-3 text-muted-foreground"}`}>
-                              {previewStatusLabel(candidate.status)}
-                            </span>
-                            {(candidate.skipped_reason || candidate.error) && (
-                              <div className="mt-2 max-w-56 text-xs text-muted-foreground">
-                                {candidate.error ?? candidate.skipped_reason}
-                              </div>
-                            )}
-                            {candidate.notices.length > 0 && (
-                              <div className="mt-2 space-y-1">
-                                {candidate.notices.map((notice, index) => (
-                                  <div key={`${candidate.id}-notice-${index}`} className="text-xs text-warning">
-                                    {notice.message}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                          <td className="w-40 px-6 py-4 text-right align-top">
+                            <InboxStatusChip candidate={candidate} />
                           </td>
                         );
 
@@ -686,9 +764,10 @@ function InboxImportDrawer({
                             <tr key={candidate.id} className={`border-t border-border align-top ${groupClass}`}>
                               {selectionCell("")}
                               {attachmentCell}
-                              <td className="px-3 py-3">
+                              <td className="px-3 py-4 align-top">
                                 <span className="text-xs text-muted-foreground">No importable bills</span>
                               </td>
+                              <td className="px-3 py-4 text-right align-top text-xs text-muted-foreground">-</td>
                               {statusCell}
                             </tr>
                           );
@@ -700,15 +779,15 @@ function InboxImportDrawer({
                               <tr key={`${candidate.id}-bill-${index}`} className={`border-t border-border align-top ${groupClass}`}>
                                 {selectionCell(String(index + 1))}
                                 {attachmentCell}
-                                <td className="px-3 py-3">
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</span>
-                                    <span className="font-mono text-xs">{formatEur(bill.amount_cents)} EUR</span>
-                                  </div>
+                                <td className="px-3 py-4 align-top">
+                                  <div className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</div>
                                   <div className="mt-1 truncate text-xs text-muted-foreground">{bill.reference || "No reference"} / {bill.due_date || "No due date"}</div>
                                   {bill.parse_note && (
                                     <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
                                   )}
+                                </td>
+                                <td className="px-3 py-4 text-right align-top">
+                                  <span className="font-mono text-xs">{formatEur(bill.amount_cents)} €</span>
                                 </td>
                                 {statusCell}
                               </tr>
@@ -829,13 +908,13 @@ function BillsPage() {
   const { selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
   const [bills, setBills] = useState<Bill[]>(() => snapshot.bills);
-  const [loadingBills, setLoadingBills] = useState(() => snapshot.bills.length === 0);
+  const [loadingBills, setLoadingBills] = useState(() => snapshot.loading);
   const [importing, setImporting] = useState(false);
   const [inboxDrawerOpen, setInboxDrawerOpen] = useState(false);
   const [inboxResults, setInboxResults] = useState<InboxImportResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const loadedPeriodIdRef = useRef<number | null>(snapshot.bills.length > 0 ? selected?.id ?? null : null);
+  const loadedPeriodIdRef = useRef<number | null>(snapshot.loading ? null : selected?.id ?? null);
 
   const loadBills = async (periodId: number) => {
     const bs = await ipc.getBills(periodId);
@@ -850,7 +929,7 @@ function BillsPage() {
       return;
     }
 
-    if (loadedPeriodIdRef.current !== selected.id || bills.length === 0) {
+    if (loadedPeriodIdRef.current !== selected.id) {
       setLoadingBills(true);
     }
     void ipc
@@ -1082,19 +1161,10 @@ function BillsPage() {
 
       {selected && (
         <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
-          {loadingBills ? (
+          {bills.length === 0 ? (
             <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
               <div className="max-w-md space-y-2">
-                <div className="text-sm font-medium">Loading bills...</div>
-                <div className="text-sm text-muted-foreground">
-                  Preparing this billing period.
-                </div>
-              </div>
-            </div>
-          ) : bills.length === 0 ? (
-            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-              <div className="max-w-md space-y-2">
-                <div className="text-sm font-medium">No bills yet for this period</div>
+                <div className="text-sm font-medium">No bills yet for this billing month</div>
                 <div className="text-sm text-muted-foreground">
                   Use the buttons above to import PDF or image invoices, or add a bill manually.
                 </div>
@@ -1104,8 +1174,8 @@ function BillsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
-                  <th className="w-8 px-3 pt-3.5 pb-2.5"></th>
-                  <th className="px-3 pt-3.5 pb-2.5">Provider</th>
+                  <th className="w-[68px] p-0"></th>
+                  <th className="py-3.5 pr-3 pb-2.5">Provider</th>
                   <th className="px-3 pt-3.5 pb-2.5">Reference</th>
                   <th className="px-3 pt-3.5 pb-2.5">Due Date</th>
                   <th className="px-3 pt-3.5 pb-2.5">Detection</th>
@@ -1127,13 +1197,13 @@ function BillsPage() {
                 <tr className="bg-surface-2 font-medium">
                   <td />
                   <td
-                    className="px-3 py-2 text-xs text-muted-foreground"
+                    className="py-2 pr-3 text-xs text-muted-foreground"
                   >
                     Total ({bills.length} bills)
                   </td>
                   <td colSpan={3}></td>
                   <td className="px-3 py-2 text-right font-mono">
-                    {formatEur(totalCents)} EUR
+                    {formatEur(totalCents)} €
                   </td>
                   <td></td>
                 </tr>

@@ -411,6 +411,18 @@ h3,
   will-change: transform;
 }
 
+.input-no-spinner {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.input-no-spinner::-webkit-inner-spin-button,
+.input-no-spinner::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-drawer-scrim-in,
   .animate-drawer-slide-in {

@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { Save } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Building } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,9 +21,11 @@ const emptyBuilding: Building = {
 
 export function BuildingSection() {
   const queryClient = useQueryClient();
+  const snapshot = useWorkflowSnapshotContext();
   const { data: building, isLoading } = useQuery({
     queryKey: ["building"],
     queryFn: ipc.getBuilding,
+    initialData: snapshot.building ?? undefined,
   });
 
   const [form, setForm] = useState<Building>(emptyBuilding);

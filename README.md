@@ -83,7 +83,7 @@ Enter your incoming IMAP mailbox settings so the app can manually import bill at
 | Folder | `INBOX` |
 | TLS | Enabled |
 
-Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. On the Bills page, **Import from Inbox** opens a preview step where you can override the scan window for that run, inspect parsed attachments, and import only selected ready candidates. Previewing does not create bills or inbox audit rows; imported attachments must still match the selected billing period and a configured provider that is still missing for that month.
+Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. On the Bills page, **Import from Inbox** opens a preview step where you can override the scan window for that run, inspect parsed attachments, and import only selected ready candidates. Previewing does not create bills or inbox audit rows; imported attachments must still match the selected billing month and a configured provider that is still missing for that month.
 
 The default database stores the IMAP server, port, TLS setting, folder, scan window, `kamniska.racuni@gmail.com` as the username, and an empty sender allowlist. Enter the app password before importing from the inbox.
 
@@ -103,20 +103,20 @@ Use **Restore Backup** to replace the current app data with a previously saved b
 
 ## Monthly Workflow
 
-### Step 1 - Create a billing period
+### Step 1 - Create a billing month
 
 Go to the **Bills** page.
 
-- First time using a new year: click **Add Year**, enter the year (for example `2026`) - all 12 months are created at once.
+- First time using a new year: click **Add Year**, enter the year (for example `2026`) - all 12 billing months are created at once.
 - In subsequent months, the periods already exist; just select the correct month.
 
 ### Step 2 - Import bills
 
-Select the month and click **Import Bills** to choose a local file, or click **Import from Inbox** to scan the configured mailbox for bill attachments.
+Select the billing month and click **Import Bills** to choose a local file, or click **Import from Inbox** to scan the configured mailbox for bill attachments. For example, bills titled `02.2026` belong in the February 2026 billing month, even when the provider charges for January usage.
 
 The app supports importing a single combined PDF or a supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`). PDFs can contain all bills together; image imports are OCR'd on Windows before the same provider-detection pipeline runs.
 
-Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing period, skips unknown providers, skips configured providers that already have a bill in that month, avoids duplicate attachments and duplicate parsed bill content by hash, and deletes its temporary attachment file when that attachment has finished importing.
+Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing month, skips unknown providers, skips configured providers that already have a bill in that month, avoids duplicate attachments and duplicate parsed bill content by hash, and deletes its temporary attachment file when that attachment has finished importing.
 
 | Provider | Service | Detection method |
 |----------|---------|-----------------|

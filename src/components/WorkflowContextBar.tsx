@@ -200,10 +200,10 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
 
       <div className="shrink-0 min-w-36 text-right">
         <div className="text-[10px] font-medium text-muted-foreground">
-          Total this period
+          Total this billing month
         </div>
         <div className="font-mono text-sm font-semibold">
-          {selectedStatus.bills ? `${formatEur(selectedStatus.totalCents)} EUR` : "-"}
+          {selectedStatus.bills ? `${formatEur(selectedStatus.totalCents)} €` : "-"}
         </div>
       </div>
     </div>

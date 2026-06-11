@@ -271,7 +271,7 @@ function ApartmentRows({
           )}
         </td>
         <td className="px-3 py-3 text-right font-mono font-semibold">
-          {formatEur(total)} EUR
+          {formatEur(total)} €
         </td>
         <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
           <Button
@@ -303,7 +303,7 @@ function ApartmentRows({
             </td>
             <td />
             <td className="px-3 py-2 text-right font-mono text-sm text-muted-foreground">
-              {formatEur(split.split_amount_cents)} EUR
+              {formatEur(split.split_amount_cents)} €
             </td>
             <td className="px-3 py-2">
               <Button
@@ -335,10 +335,8 @@ function UpnPage() {
   const [apartmentsConfig, setApartmentsConfig] = useState<Apartment[]>(
     () => snapshot.apartments,
   );
-  const [loadingApartments, setLoadingApartments] = useState(
-    () => snapshot.apartments.length === 0,
-  );
-  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.splits.length === 0);
+  const [loadingApartments, setLoadingApartments] = useState(() => snapshot.loading);
+  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.loading);
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
@@ -346,18 +344,20 @@ function UpnPage() {
   const [packetHashes, setPacketHashes] = useState<UpnPacketHash[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const loadedPeriodIdRef = useRef<number | null>(
-    snapshot.splits.length > 0 ? selected?.id ?? null : null,
-  );
+  const loadedPeriodIdRef = useRef<number | null>(snapshot.loading ? null : selected?.id ?? null);
+  const loadedApartmentsRef = useRef(!snapshot.loading);
   const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (apartmentsConfig.length === 0) setLoadingApartments(true);
+    if (!loadedApartmentsRef.current) setLoadingApartments(true);
     void ipc
       .getApartments()
       .then((apartments) => {
-        if (!cancelled) setApartmentsConfig(apartments);
+        if (!cancelled) {
+          setApartmentsConfig(apartments);
+          loadedApartmentsRef.current = true;
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingApartments(false);
@@ -371,7 +371,7 @@ function UpnPage() {
     const requestId = ++loadRequestRef.current;
     if (selected?.id) {
       setEmailResults([]);
-      if (loadedPeriodIdRef.current !== selected.id || splits.length === 0) {
+      if (loadedPeriodIdRef.current !== selected.id) {
         setLoadingSplits(true);
       }
       void Promise.all([
@@ -537,24 +537,15 @@ function UpnPage() {
 
       {selected && splits.length === 0 && (
         <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground min-h-[132px] flex items-center justify-center">
-          {loadingUpnData ? (
-            <div className="text-center">
-              <div className="text-sm font-medium text-foreground">Loading UPN data...</div>
-              <div className="text-sm text-muted-foreground">
-                Preparing apartment packets for this period.
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3 w-full">
-              <span>No splits found. Go to Splits and click Recalculate first.</span>
-              <Link
-                to="/splits"
-                className={buttonVariants()}
-              >
-                Go to Splits
-              </Link>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-3 w-full">
+            <span>No splits found. Go to Splits and click Recalculate first.</span>
+            <Link
+              to="/splits"
+              className={buttonVariants()}
+            >
+              Go to Splits
+            </Link>
+          </div>
         </div>
       )}
 
@@ -602,7 +593,7 @@ function UpnPage() {
                 <td className="px-3 py-2 text-right font-mono">
                   {formatEur(
                     splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
-                  )} EUR
+                  )} €
                 </td>
                 <td />
               </tr>

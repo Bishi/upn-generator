@@ -82,7 +82,7 @@ export function InboxSection() {
       <div className="border-b border-border px-5 py-4">
         <h3 className="font-head text-lg font-semibold">Inbox (IMAP) Settings</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Used to read incoming bill attachments for configured providers that are still missing in the selected month.
+          Used to read incoming bill attachments for configured providers that are still missing in the selected billing month.
           The password is stored in Windows Credential Manager.
         </p>
       </div>
@@ -176,7 +176,7 @@ export function InboxSection() {
                 }
               />
               <p className="text-xs text-muted-foreground">
-                Looks back this many days, then imports only configured missing providers for the selected billing period.
+                Looks back this many days, then imports only configured missing providers for the selected billing month.
               </p>
             </div>
           </div>
