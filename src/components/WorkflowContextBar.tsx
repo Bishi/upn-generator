@@ -10,14 +10,13 @@ import {
   Plus,
   Send,
 } from "lucide-react";
-import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { ipc } from "@/lib/ipc";
 import { formatEur, type BillingPeriod } from "@/lib/types";
 import {
   EMPTY_PERIOD_STATUS,
   type PeriodStatus,
-  useWorkflowSnapshot,
+  type WorkflowSnapshot,
 } from "@/lib/workflow-snapshot";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +36,7 @@ const SHORT_MONTHS = [
 ];
 
 type WorkflowContextBarProps = {
-  snapshot: ReturnType<typeof useWorkflowSnapshot>;
+  snapshot: WorkflowSnapshot;
 };
 
 type StepState = "done" | "now" | "todo" | "blocked";
@@ -87,13 +86,11 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
           periods.find((period) => period.year === year && period.month === 1) ??
           null;
         if (next) setSelected(next);
-        notifyWorkflowStatusChanged();
-        await snapshot.refresh();
       } finally {
         setCreatingYear(null);
       }
     },
-    [loadPeriods, selected, setSelected, snapshot],
+    [loadPeriods, selected, setSelected],
   );
 
   const yearTabs = useMemo(() => {
@@ -160,12 +157,12 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
           type="button"
           onClick={() => setPickerOpen((open) => !open)}
           className={cn(
-            "inline-flex h-8 items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-shadow",
+            "inline-grid h-8 w-32 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-shadow",
             pickerOpen && "shadow-[0_0_0_3px_var(--accent-soft-2)]",
           )}
         >
           <Calendar className="size-3.5" />
-          {periodLabel}
+          <span className="truncate text-center">{periodLabel}</span>
           <ChevronDown className={cn("size-3 transition-transform", pickerOpen && "rotate-180")} />
         </button>
         {pickerOpen && (
@@ -301,7 +298,6 @@ function PeriodPicker({
               <span className="flex gap-1">
                 <StatusDot active={status.bills} selected={isSelected} />
                 <StatusDot active={status.splits} selected={isSelected} />
-                <StatusDot active={status.sent} selected={isSelected} />
               </span>
             </button>
           );
@@ -311,7 +307,6 @@ function PeriodPicker({
       <div className="mt-3 flex items-center gap-3 border-t border-border pt-3 text-[11px] text-muted-foreground">
         <LegendDot label="Bills" />
         <LegendDot label="Splits" />
-        <LegendDot label="Sent" />
         <span className="ml-auto flex items-center gap-1.5">
           <span className="size-1.5 rounded-full bg-border-2" />
           Pending

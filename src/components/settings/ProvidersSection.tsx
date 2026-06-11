@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Plus, Save, Trash2, X } from "lucide-react";
+import { Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { serviceIconFor } from "@/lib/service-icons";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
@@ -60,6 +60,29 @@ function cloneProvider(provider: Provider) {
   return { ...provider };
 }
 
+function providersEqual(a: Provider | null, b: Provider | null) {
+  if (!a || !b) return a === b;
+
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.service_type === b.service_type &&
+    a.creditor_name === b.creditor_name &&
+    a.creditor_address === b.creditor_address &&
+    a.creditor_city === b.creditor_city &&
+    a.creditor_postal_code === b.creditor_postal_code &&
+    a.creditor_iban === b.creditor_iban &&
+    a.purpose_code === b.purpose_code &&
+    a.match_pattern === b.match_pattern &&
+    a.amount_pattern === b.amount_pattern &&
+    a.reference_pattern === b.reference_pattern &&
+    a.due_date_pattern === b.due_date_pattern &&
+    a.invoice_number_pattern === b.invoice_number_pattern &&
+    a.purpose_text_template === b.purpose_text_template &&
+    a.split_basis === b.split_basis
+  );
+}
+
 export function ProvidersSection() {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
@@ -71,6 +94,7 @@ export function ProvidersSection() {
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<Provider | null>(null);
+  const [baseline, setBaseline] = useState<Provider | null>(null);
   const [isNew, setIsNew] = useState(false);
 
   const splitBasisCounts = providers.reduce(
@@ -92,59 +116,80 @@ export function ProvidersSection() {
   useEffect(() => {
     if (isNew) return;
     if (selectedProvider) {
+      const draft = cloneProvider(selectedProvider);
       setSelectedId(selectedProvider.id);
-      setEditing(cloneProvider(selectedProvider));
+      setEditing(draft);
+      setBaseline(cloneProvider(selectedProvider));
     } else {
       setSelectedId(null);
       setEditing(null);
+      setBaseline(null);
     }
   }, [isNew, selectedProvider]);
 
   const saveMutation = useMutation({
     mutationFn: ipc.saveProvider,
-    onSuccess: (savedProvider) => {
-      queryClient.invalidateQueries({ queryKey: ["providers"] });
+    onSuccess: async (savedProvider) => {
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(savedProvider.id);
-      setEditing(cloneProvider(savedProvider));
+      const draft = cloneProvider(savedProvider);
+      setEditing(draft);
+      setBaseline(cloneProvider(savedProvider));
       setIsNew(false);
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: ipc.deleteProvider,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["providers"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(null);
       setEditing(null);
+      setBaseline(null);
       setIsNew(false);
     },
   });
 
   const handleSelect = (provider: Provider) => {
+    const draft = cloneProvider(provider);
     setSelectedId(provider.id);
-    setEditing(cloneProvider(provider));
+    setEditing(draft);
+    setBaseline(cloneProvider(provider));
     setIsNew(false);
   };
 
   const handleNew = () => {
+    const draft = newProvider();
     setSelectedId(null);
-    setEditing(newProvider());
+    setEditing(draft);
+    setBaseline(cloneProvider(draft));
     setIsNew(true);
   };
 
   const handleSave = (event: FormEvent) => {
     event.preventDefault();
-    if (editing) saveMutation.mutate(editing);
+    if (editing && !providersEqual(editing, baseline)) saveMutation.mutate(editing);
   };
 
   const handleDiscard = () => {
     if (isNew) {
       setIsNew(false);
-      setEditing(selectedProvider ? cloneProvider(selectedProvider) : null);
+      if (selectedProvider) {
+        const draft = cloneProvider(selectedProvider);
+        setEditing(draft);
+        setBaseline(cloneProvider(selectedProvider));
+      } else {
+        setEditing(null);
+        setBaseline(null);
+      }
       return;
     }
-    if (selectedProvider) setEditing(cloneProvider(selectedProvider));
+    if (baseline) setEditing(cloneProvider(baseline));
   };
+
+  const isDirty = !providersEqual(editing, baseline);
 
   if (isLoading) return <SettingsLoadingCard className="max-w-none" rows={3} />;
 
@@ -228,6 +273,7 @@ export function ProvidersSection() {
         <ProviderDetail
           provider={editing}
           isNew={isNew}
+          isDirty={isDirty}
           isSaving={saveMutation.isPending}
           isDeleting={deleteMutation.isPending}
           onChange={setEditing}
@@ -243,6 +289,7 @@ export function ProvidersSection() {
 function ProviderDetail({
   provider,
   isNew,
+  isDirty,
   isSaving,
   isDeleting,
   onChange,
@@ -252,6 +299,7 @@ function ProviderDetail({
 }: {
   provider: Provider | null;
   isNew: boolean;
+  isDirty: boolean;
   isSaving: boolean;
   isDeleting: boolean;
   onChange: (provider: Provider) => void;
@@ -414,11 +462,21 @@ function ProviderDetail({
         </CardContent>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-4">
-          <Button type="submit" disabled={isSaving} className="gap-2">
-            <Save className="size-4" />
-            {isSaving ? "Saving..." : isNew ? "Save provider" : "Save changes"}
+          <Button type="submit" disabled={!isDirty || isSaving || isDeleting} className="gap-2">
+            {isSaving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            {isNew ? "Save provider" : "Save changes"}
           </Button>
-          <Button type="button" variant="outline" onClick={onDiscard} className="gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={(!isNew && !isDirty) || isSaving || isDeleting}
+            onClick={onDiscard}
+            className="gap-2"
+          >
             <X className="size-4" />
             Discard
           </Button>
@@ -430,7 +488,11 @@ function ProviderDetail({
               disabled={isDeleting}
               onClick={onDelete}
             >
-              <Trash2 className="size-4" />
+              {isDeleting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
               Delete
             </Button>
           )}

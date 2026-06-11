@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
-import { DatabaseBackup, RotateCcw, ShieldCheck } from "lucide-react";
+import { DatabaseBackup, Loader2, RotateCcw, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { ipc } from "@/lib/ipc";
 import { setStoredBillingPeriod } from "@/lib/billing-period-selection";
@@ -51,7 +51,6 @@ export function DataSection() {
         queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
         queryClient.invalidateQueries({ queryKey: ["bills"] }),
         queryClient.invalidateQueries({ queryKey: ["splits"] }),
-        queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
       ]);
       await message(
         "Backup restored. SMTP and IMAP passwords are not included in backup files. Saved Windows credentials are kept when their usernames still match.",
@@ -77,7 +76,6 @@ export function DataSection() {
         queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
         queryClient.invalidateQueries({ queryKey: ["bills"] }),
         queryClient.invalidateQueries({ queryKey: ["splits"] }),
-        queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
       ]);
       if (result.credential_cleanup_warning) {
         await message(result.credential_cleanup_warning, {
@@ -152,8 +150,12 @@ export function DataSection() {
               disabled={backupMutation.isPending || restoreMutation.isPending}
               onClick={handleCreateBackup}
             >
-              <DatabaseBackup className="size-4" />
-              {backupMutation.isPending ? "Creating Backup..." : "Create Backup"}
+              {backupMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <DatabaseBackup className="size-4" />
+              )}
+              Create Backup
             </Button>
             <Button
               type="button"
@@ -162,8 +164,12 @@ export function DataSection() {
               disabled={backupMutation.isPending || restoreMutation.isPending}
               onClick={handleRestoreBackup}
             >
-              <RotateCcw className="size-4" />
-              {restoreMutation.isPending ? "Restoring..." : "Restore Backup"}
+              {restoreMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RotateCcw className="size-4" />
+              )}
+              Restore Backup
             </Button>
           </div>
 
@@ -214,8 +220,12 @@ export function DataSection() {
             }
             onClick={() => resetMutation.mutate()}
           >
-            <RotateCcw className="size-4" />
-            {resetMutation.isPending ? "Resetting..." : "Reset All Data"}
+            {resetMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RotateCcw className="size-4" />
+            )}
+            Reset All Data
           </Button>
         </div>
 

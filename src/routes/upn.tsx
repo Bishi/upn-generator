@@ -331,93 +331,46 @@ function ApartmentRows({
 function UpnPage() {
   const { selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
-  const [splits, setSplits] = useState<SplitRow[]>(() => snapshot.splits);
-  const [apartmentsConfig, setApartmentsConfig] = useState<Apartment[]>(
-    () => snapshot.apartments,
-  );
-  const [loadingApartments, setLoadingApartments] = useState(() => snapshot.loading);
-  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.loading);
+  const splits = snapshot.splits;
+  const apartmentsConfig = snapshot.apartments;
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [deliveryEvents, setDeliveryEvents] = useState<UpnDeliveryEvent[]>([]);
   const [packetHashes, setPacketHashes] = useState<UpnPacketHash[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
-  const [apartmentLoadError, setApartmentLoadError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const loadedPeriodIdRef = useRef<number | null>(snapshot.loading ? null : selected?.id ?? null);
-  const loadedApartmentsRef = useRef(!snapshot.loading);
   const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!loadedApartmentsRef.current) setLoadingApartments(true);
-    void ipc
-      .getApartments()
-      .then((apartments) => {
-        if (!cancelled) {
-          setApartmentsConfig(apartments);
-          setApartmentLoadError(null);
-          loadedApartmentsRef.current = true;
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setApartmentLoadError(String(error));
-          loadedApartmentsRef.current = true;
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingApartments(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     const requestId = ++loadRequestRef.current;
     if (selected?.id) {
       setEmailResults([]);
-      if (loadedPeriodIdRef.current !== selected.id) {
-        setLoadingSplits(true);
-      }
       void Promise.all([
-        ipc.getSplits(selected.id),
         ipc.getUpnDeliveryEvents(selected.id),
         ipc.getUpnPacketHashes(selected.id),
       ])
-        .then(([rows, events, hashes]) => {
+        .then(([events, hashes]) => {
           if (loadRequestRef.current !== requestId) return;
-          setSplits(rows);
           setDeliveryEvents(events);
           setPacketHashes(hashes);
-          loadedPeriodIdRef.current = selected.id;
           setPageMessage(null);
         })
         .catch((error) => {
           if (loadRequestRef.current === requestId) {
             setPageMessage(String(error));
-            setSplits([]);
             setDeliveryEvents([]);
             setPacketHashes([]);
-            loadedPeriodIdRef.current = selected.id;
           }
-        })
-        .finally(() => {
-          if (loadRequestRef.current === requestId) setLoadingSplits(false);
         });
     } else {
-      loadedPeriodIdRef.current = null;
-      setSplits([]);
       setDeliveryEvents([]);
       setPacketHashes([]);
-      setLoadingSplits(false);
     }
     return () => {
       loadRequestRef.current += 1;
     };
-  }, [selected]);
+  }, [selected?.id]);
 
   const sendEmails = async () => {
     if (!selected?.id) return;
@@ -487,19 +440,20 @@ function UpnPage() {
   ).length;
   const missingRecipientCount = Math.max(0, apartments.length - readyRecipientCount);
   const selectedPeriodId = selected?.id ?? null;
-  const splitsLoadedForSelected = loadedPeriodIdRef.current === selectedPeriodId;
-  const splitsLoadPending = selectedPeriodId !== null && !splitsLoadedForSelected;
-  const apartmentsLoadPending = !loadedApartmentsRef.current;
-  const loadingUpnData =
-    loadingSplits || loadingApartments || splitsLoadPending || apartmentsLoadPending;
+  const workflowError = pageMessage ?? snapshot.error;
+  const selectedStatusKnown =
+    selectedPeriodId !== null && snapshot.periodStatuses.has(selectedPeriodId);
   const showUpnLoading =
     selectedPeriodId !== null &&
-    loadingUpnData &&
+    snapshot.loading &&
     (splits.length > 0 || apartments.length > 0 || snapshot.selectedStatus.splits);
   const showUpnSettling =
-    selectedPeriodId !== null && loadingUpnData && !showUpnLoading;
+    selectedPeriodId !== null &&
+    snapshot.loading &&
+    !showUpnLoading &&
+    selectedStatusKnown;
   const showUpnTable =
-    selectedPeriodId !== null && !loadingUpnData && splitsLoadedForSelected && apartments.length > 0;
+    selectedPeriodId !== null && !snapshot.loading && apartments.length > 0;
 
   return (
     <BillingPageShell
@@ -510,30 +464,32 @@ function UpnPage() {
           <Button
             variant="outline"
             onClick={downloadAll}
-            disabled={!selected || showUpnLoading || splits.length === 0 || downloading}
+            disabled={!selected || snapshot.loading || splits.length === 0 || downloading}
           >
-            <Download className="size-4 mr-2" />
-            {downloading ? "Saving..." : "Download All PDFs"}
+            {downloading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            Download All PDFs
           </Button>
           <Button
             onClick={sendEmails}
-            disabled={!selected || showUpnLoading || splits.length === 0 || sending}
+            disabled={!selected || snapshot.loading || splits.length === 0 || sending}
           >
-            <Mail className="size-4 mr-2" />
-            {sending ? "Sending..." : "Send All Emails"}
+            {sending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Mail className="size-4" />
+            )}
+            Send All Emails
           </Button>
         </>
       }
     >
-      {pageMessage && (
+      {workflowError && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
-          {pageMessage}
-        </div>
-      )}
-
-      {apartmentLoadError && (
-        <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
-          {apartmentLoadError}
+          {workflowError}
         </div>
       )}
 
@@ -567,24 +523,33 @@ function UpnPage() {
       {selected &&
         (showUpnLoading ||
           showUpnSettling ||
-          (splitsLoadedForSelected && splits.length === 0)) && (
-        <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground min-h-[132px] flex items-center justify-center">
+          (!snapshot.loading && splits.length === 0)) && (
+        <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
           {showUpnLoading ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className="size-4 animate-spin" />
-              Loading UPN data...
+            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading UPN data...
+              </div>
             </div>
-          ) : showUpnSettling ? (
-            <div aria-busy="true" className="min-h-[1px]" />
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3 w-full">
-              <span>No splits found. Go to Splits and click Recalculate first.</span>
-              <Link
-                to="/splits"
-                className={buttonVariants()}
-              >
-                Go to Splits
-              </Link>
+            <div className="relative min-h-[268px] px-6 py-8 text-center">
+              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
+                <div className="mx-auto max-w-md space-y-2">
+                  <div className="text-sm font-medium">No UPNs yet for this billing month</div>
+                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
+                    Calculate splits first, then return here to preview and send UPN forms.
+                  </div>
+                </div>
+              </div>
+              <div className="absolute inset-x-6 bottom-14 flex justify-center">
+                <Link
+                  to="/splits"
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  Go to Splits
+                </Link>
+              </div>
             </div>
           )}
         </div>

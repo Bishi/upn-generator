@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Check, Plus, Save, Trash2, X } from "lucide-react";
+import { Check, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Apartment } from "@/lib/types";
@@ -31,6 +31,25 @@ function cloneApartment(apartment: Apartment) {
   return { ...apartment };
 }
 
+function apartmentsEqual(a: Apartment | null, b: Apartment | null) {
+  if (!a || !b) return a === b;
+
+  return (
+    a.id === b.id &&
+    a.building_id === b.building_id &&
+    a.label === b.label &&
+    a.unit_code === b.unit_code &&
+    a.occupant_count === b.occupant_count &&
+    a.contact_email === b.contact_email &&
+    a.payer_name === b.payer_name &&
+    a.payer_address === b.payer_address &&
+    a.payer_city === b.payer_city &&
+    a.payer_postal_code === b.payer_postal_code &&
+    a.m2_percentage === b.m2_percentage &&
+    a.is_active === b.is_active
+  );
+}
+
 export function ApartmentsSection() {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
@@ -46,6 +65,7 @@ export function ApartmentsSection() {
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<Apartment | null>(null);
+  const [baseline, setBaseline] = useState<Apartment | null>(null);
   const [isNew, setIsNew] = useState(false);
 
   const activeApartments = apartments.filter((apartment) => apartment.is_active);
@@ -67,64 +87,85 @@ export function ApartmentsSection() {
   useEffect(() => {
     if (isNew) return;
     if (selectedApartment) {
+      const draft = cloneApartment(selectedApartment);
       setSelectedId(selectedApartment.id);
-      setEditing(cloneApartment(selectedApartment));
+      setEditing(draft);
+      setBaseline(cloneApartment(selectedApartment));
     } else {
       setSelectedId(null);
       setEditing(null);
+      setBaseline(null);
     }
   }, [isNew, selectedApartment]);
 
   const saveMutation = useMutation({
     mutationFn: ipc.saveApartment,
-    onSuccess: (savedApartment) => {
-      queryClient.invalidateQueries({ queryKey: ["apartments"] });
+    onSuccess: async (savedApartment) => {
+      await queryClient.invalidateQueries({ queryKey: ["apartments"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(savedApartment.id);
-      setEditing(cloneApartment(savedApartment));
+      const draft = cloneApartment(savedApartment);
+      setEditing(draft);
+      setBaseline(cloneApartment(savedApartment));
       setIsNew(false);
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: ipc.deleteApartment,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apartments"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["apartments"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(null);
       setEditing(null);
+      setBaseline(null);
       setIsNew(false);
     },
   });
 
   const handleSelect = (apartment: Apartment) => {
+    const draft = cloneApartment(apartment);
     setSelectedId(apartment.id);
-    setEditing(cloneApartment(apartment));
+    setEditing(draft);
+    setBaseline(cloneApartment(apartment));
     setIsNew(false);
   };
 
   const handleNew = () => {
-    setSelectedId(null);
-    setEditing({
+    const draft = {
       ...newApartment(),
       payer_address: building?.address ?? "",
       payer_city: building?.city ?? "Ljubljana",
       payer_postal_code: building?.postal_code ?? "1000",
-    });
+    };
+    setSelectedId(null);
+    setEditing(draft);
+    setBaseline(cloneApartment(draft));
     setIsNew(true);
   };
 
   const handleSave = (event: FormEvent) => {
     event.preventDefault();
-    if (editing) saveMutation.mutate(editing);
+    if (editing && !apartmentsEqual(editing, baseline)) saveMutation.mutate(editing);
   };
 
   const handleDiscard = () => {
     if (isNew) {
       setIsNew(false);
-      setEditing(selectedApartment ? cloneApartment(selectedApartment) : null);
+      if (selectedApartment) {
+        const draft = cloneApartment(selectedApartment);
+        setEditing(draft);
+        setBaseline(cloneApartment(selectedApartment));
+      } else {
+        setEditing(null);
+        setBaseline(null);
+      }
       return;
     }
-    if (selectedApartment) setEditing(cloneApartment(selectedApartment));
+    if (baseline) setEditing(cloneApartment(baseline));
   };
+
+  const isDirty = !apartmentsEqual(editing, baseline);
 
   if (isLoading) return <SettingsLoadingCard className="max-w-none" rows={3} />;
 
@@ -216,6 +257,7 @@ export function ApartmentsSection() {
         <ApartmentDetail
           apartment={editing}
           isNew={isNew}
+          isDirty={isDirty}
           isSaving={saveMutation.isPending}
           isDeleting={deleteMutation.isPending}
           onChange={setEditing}
@@ -231,6 +273,7 @@ export function ApartmentsSection() {
 function ApartmentDetail({
   apartment,
   isNew,
+  isDirty,
   isSaving,
   isDeleting,
   onChange,
@@ -240,6 +283,7 @@ function ApartmentDetail({
 }: {
   apartment: Apartment | null;
   isNew: boolean;
+  isDirty: boolean;
   isSaving: boolean;
   isDeleting: boolean;
   onChange: (apartment: Apartment) => void;
@@ -386,11 +430,21 @@ function ApartmentDetail({
         </CardContent>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-4">
-          <Button type="submit" disabled={isSaving} className="gap-2">
-            <Save className="size-4" />
-            {isSaving ? "Saving..." : isNew ? "Save apartment" : "Save changes"}
+          <Button type="submit" disabled={!isDirty || isSaving || isDeleting} className="gap-2">
+            {isSaving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            {isNew ? "Save apartment" : "Save changes"}
           </Button>
-          <Button type="button" variant="outline" onClick={onDiscard} className="gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={(!isNew && !isDirty) || isSaving || isDeleting}
+            onClick={onDiscard}
+            className="gap-2"
+          >
             <X className="size-4" />
             Discard
           </Button>
@@ -402,7 +456,11 @@ function ApartmentDetail({
               disabled={isDeleting}
               onClick={onDelete}
             >
-              <Trash2 className="size-4" />
+              {isDeleting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
               Delete
             </Button>
           )}

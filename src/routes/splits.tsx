@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Loader2, RefreshCw, Check, X } from "lucide-react";
-import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
@@ -135,60 +134,17 @@ function EditableCell({
 function SplitsPage() {
   const { selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
-  const [splits, setSplits] = useState<SplitRow[]>(() => snapshot.splits);
-  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.loading);
+  const splits = snapshot.splits;
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const loadRequestRef = useRef(0);
-  const loadedPeriodIdRef = useRef<number | null>(snapshot.loading ? null : selected?.id ?? null);
-
-  const loadSplits = async (periodId: number) => {
-    const rows = await ipc.getSplits(periodId);
-    setSplits(rows);
-  };
-
-  useEffect(() => {
-    const requestId = ++loadRequestRef.current;
-    if (!selected?.id) {
-      loadedPeriodIdRef.current = null;
-      setSplits([]);
-      setLoadingSplits(false);
-      return;
-    }
-
-    if (loadedPeriodIdRef.current !== selected.id) {
-      setLoadingSplits(true);
-    }
-    void ipc
-      .getSplits(selected.id)
-      .then((rows) => {
-        if (loadRequestRef.current !== requestId) return;
-        setSplits(rows);
-        setError(null);
-        loadedPeriodIdRef.current = selected.id;
-      })
-      .catch((e) => {
-        if (loadRequestRef.current !== requestId) return;
-        setError(String(e));
-        setSplits([]);
-        loadedPeriodIdRef.current = selected.id;
-      })
-      .finally(() => {
-        if (loadRequestRef.current === requestId) setLoadingSplits(false);
-      });
-    return () => {
-      loadRequestRef.current += 1;
-    };
-  }, [selected]);
 
   const recalculate = async () => {
     if (!selected?.id) return;
     setError(null);
     setCalculating(true);
     try {
-      const rows = await ipc.calculateSplits(selected.id);
-      setSplits(rows);
-      notifyWorkflowStatusChanged();
+      await ipc.calculateSplits(selected.id);
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -198,8 +154,9 @@ function SplitsPage() {
 
   const saveOverride = async (splitId: number, cents: number) => {
     await ipc.saveSplit({ id: splitId, bill_id: 0, apartment_id: 0, amount_cents: cents });
-    if (selected?.id) await loadSplits(selected.id);
-    notifyWorkflowStatusChanged();
+    if (selected?.id) {
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
   };
 
   const { apartments, bills, matrix } = buildMatrix(splits);
@@ -228,15 +185,19 @@ function SplitsPage() {
     );
   }
   const selectedPeriodId = selected?.id ?? null;
-  const splitsLoadedForSelected = loadedPeriodIdRef.current === selectedPeriodId;
-  const splitsLoadPending = selectedPeriodId !== null && !splitsLoadedForSelected;
+  const workflowError = error ?? snapshot.error;
+  const selectedStatusKnown =
+    selectedPeriodId !== null && snapshot.periodStatuses.has(selectedPeriodId);
   const showSplitsLoading =
     selectedPeriodId !== null &&
-    (loadingSplits || splitsLoadPending) &&
+    snapshot.loading &&
     (splits.length > 0 || snapshot.selectedStatus.splits);
   const showSplitsSettling =
-    selectedPeriodId !== null && (loadingSplits || splitsLoadPending) && !showSplitsLoading;
-  const showSplitsTable = splitsLoadedForSelected && splits.length > 0;
+    selectedPeriodId !== null &&
+    snapshot.loading &&
+    !showSplitsLoading &&
+    selectedStatusKnown;
+  const showSplitsTable = selectedPeriodId !== null && !snapshot.loading && splits.length > 0;
 
   return (
     <BillingPageShell
@@ -244,14 +205,18 @@ function SplitsPage() {
       subtitle={null}
       actions={
         <Button onClick={recalculate} disabled={!selected || calculating}>
-          <RefreshCw className={`size-4 mr-2 ${calculating ? "animate-spin" : ""}`} />
-          {calculating ? "Calculating..." : "Recalculate"}
+          {calculating ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCw className="size-4" />
+          )}
+          Recalculate
         </Button>
       }
     >
-      {error && (
+      {workflowError && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
-          {error}
+          {workflowError}
         </div>
       )}
 
@@ -288,32 +253,34 @@ function SplitsPage() {
       )}
 
       {selected && (showSplitsLoading || showSplitsSettling || splits.length === 0) && (
-        <div className="min-h-[268px] overflow-auto rounded-lg border border-border bg-card shadow-card">
-          <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-            {showSplitsLoading ? (
+        <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
+          {showSplitsLoading ? (
+            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
                 Loading splits...
               </div>
-            ) : showSplitsSettling ? (
-              <div aria-busy="true" className="min-h-[1px]" />
-            ) : (
-              <div className="max-w-md space-y-3">
-                <div className="text-sm font-medium">No splits yet for this billing month</div>
-                <div className="text-sm text-muted-foreground">
-                  Import bills first, then use the Recalculate button above.
-                </div>
-                <div>
-                  <Link
-                    to="/bills"
-                    className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
-                  >
-                    Go to Bills
-                  </Link>
+            </div>
+          ) : (
+            <div className="relative min-h-[268px] px-6 py-8 text-center">
+              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
+                <div className="mx-auto max-w-md space-y-2">
+                  <div className="text-sm font-medium">No splits yet for this billing month</div>
+                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
+                    Import bills first, then use the Recalculate button above.
+                  </div>
                 </div>
               </div>
-            )}
-          </div>
+              <div className="absolute inset-x-6 bottom-14 flex justify-center">
+                <Link
+                  to="/bills"
+                  className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+                >
+                  Go to Bills
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -3,7 +3,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
-import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
@@ -971,53 +970,11 @@ function InboxImportDrawer({
 function BillsPage() {
   const { selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
-  const [bills, setBills] = useState<Bill[]>(() => snapshot.bills);
-  const [loadingBills, setLoadingBills] = useState(() => snapshot.loading);
+  const bills = snapshot.bills;
   const [importing, setImporting] = useState(false);
   const [inboxDrawerOpen, setInboxDrawerOpen] = useState(false);
   const [inboxResults, setInboxResults] = useState<InboxImportResult[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const loadRequestRef = useRef(0);
-  const loadedPeriodIdRef = useRef<number | null>(snapshot.loading ? null : selected?.id ?? null);
-
-  const loadBills = async (periodId: number) => {
-    const bs = await ipc.getBills(periodId);
-    setBills(bs);
-  };
-
-  useEffect(() => {
-    const requestId = ++loadRequestRef.current;
-    if (!selected?.id) {
-      loadedPeriodIdRef.current = null;
-      setBills([]);
-      setLoadingBills(false);
-      return;
-    }
-
-    if (loadedPeriodIdRef.current !== selected.id) {
-      setLoadingBills(true);
-    }
-    void ipc
-      .getBills(selected.id)
-      .then((bs) => {
-        if (loadRequestRef.current !== requestId) return;
-        setBills(bs);
-        setError(null);
-        loadedPeriodIdRef.current = selected.id;
-      })
-      .catch((e) => {
-        if (loadRequestRef.current !== requestId) return;
-        setError(String(e));
-        setBills([]);
-        loadedPeriodIdRef.current = selected.id;
-      })
-      .finally(() => {
-        if (loadRequestRef.current === requestId) setLoadingBills(false);
-      });
-    return () => {
-      loadRequestRef.current += 1;
-    };
-  }, [selected]);
 
   const importFiles = async () => {
     if (!selected?.id) return;
@@ -1042,8 +999,7 @@ function BillsPage() {
           setError(`Failed to import ${path}: ${e}`);
         }
       }
-      await loadBills(selected.id);
-      notifyWorkflowStatusChanged();
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
     } finally {
       setImporting(false);
     }
@@ -1052,8 +1008,7 @@ function BillsPage() {
   const handleInboxImported = async (results: InboxImportResult[]) => {
     setInboxResults(results);
     if (selected?.id) {
-      await loadBills(selected.id);
-      notifyWorkflowStatusChanged();
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
     }
   };
 
@@ -1081,20 +1036,21 @@ function BillsPage() {
       provider_name: null,
     };
     await ipc.saveBill(blank);
-    await loadBills(selected.id);
-    notifyWorkflowStatusChanged();
+    await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
   };
 
   const saveBill = async (bill: Bill) => {
     await ipc.saveBill(bill);
-    if (selected?.id) await loadBills(selected.id);
-    notifyWorkflowStatusChanged();
+    if (selected?.id) {
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
   };
 
   const deleteBill = async (id: number) => {
     await ipc.deleteBill(id);
-    if (selected?.id) await loadBills(selected.id);
-    notifyWorkflowStatusChanged();
+    if (selected?.id) {
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
   };
 
   const totalCents = bills.reduce((s, b) => s + b.amount_cents, 0);
@@ -1103,16 +1059,20 @@ function BillsPage() {
   const inboxImported = inboxResults.filter((result) => result.status === "imported");
   const inboxSkipped = inboxResults.filter((result) => result.status.startsWith("skipped_"));
   const inboxFailed = inboxResults.filter((result) => result.status === "failed");
+  const workflowError = error ?? snapshot.error;
   const selectedPeriodId = selected?.id ?? null;
-  const billsLoadedForSelected = loadedPeriodIdRef.current === selectedPeriodId;
-  const billsLoadPending = selectedPeriodId !== null && !billsLoadedForSelected;
+  const selectedStatusKnown =
+    selectedPeriodId !== null && snapshot.periodStatuses.has(selectedPeriodId);
   const showBillsLoading =
     selectedPeriodId !== null &&
-    (loadingBills || billsLoadPending) &&
+    snapshot.loading &&
     (bills.length > 0 || snapshot.selectedStatus.bills);
   const showBillsSettling =
-    selectedPeriodId !== null && (loadingBills || billsLoadPending) && !showBillsLoading;
-  const showBillsTable = billsLoadedForSelected && bills.length > 0;
+    selectedPeriodId !== null &&
+    snapshot.loading &&
+    !showBillsLoading &&
+    selectedStatusKnown;
+  const showBillsTable = selectedPeriodId !== null && !snapshot.loading && bills.length > 0;
 
   return (
     <BillingPageShell
@@ -1122,16 +1082,20 @@ function BillsPage() {
         selected ? (
           <>
             <Button variant="outline" onClick={addBlankBill}>
-              <Plus className="size-4 mr-2" />
+              <Plus className="size-4" />
               Add Bill
             </Button>
             <Button variant="outline" onClick={() => setInboxDrawerOpen(true)}>
-              <Mail className="size-4 mr-2" />
+              <Mail className="size-4" />
               Import from Inbox
             </Button>
             <Button onClick={importFiles} disabled={importing}>
-              <FilePlus className="size-4 mr-2" />
-              {importing ? "Importing..." : "Import Bills"}
+              {importing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <FilePlus className="size-4" />
+              )}
+              Import Bills
             </Button>
           </>
         ) : (
@@ -1155,9 +1119,9 @@ function BillsPage() {
         </div>
       )}
 
-      {error && (
+      {workflowError && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
-          {error}
+          {workflowError}
         </div>
       )}
 
@@ -1250,14 +1214,14 @@ function BillsPage() {
                 Loading bills...
               </div>
             </div>
-          ) : showBillsSettling ? (
-            <div aria-busy="true" className="min-h-[268px]" />
-          ) : bills.length === 0 ? (
-            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-              <div className="max-w-md space-y-2">
-                <div className="text-sm font-medium">No bills yet for this billing month</div>
-                <div className="text-sm text-muted-foreground">
-                  Use the buttons above to import PDF or image invoices, or add a bill manually.
+          ) : showBillsSettling || bills.length === 0 ? (
+            <div className="relative min-h-[268px] px-6 py-8 text-center">
+              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
+                <div className="mx-auto max-w-md space-y-2">
+                  <div className="text-sm font-medium">No bills yet for this billing month</div>
+                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
+                    Use the buttons above to import PDF or image invoices, or add a bill manually.
+                  </div>
                 </div>
               </div>
             </div>
