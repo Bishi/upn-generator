@@ -358,6 +358,7 @@ function InboxImportDrawer({
   const importedCount = results.filter((result) => result.status === "imported").length;
   const resultSkippedCount = results.filter((result) => result.status.startsWith("skipped_")).length;
   const resultFailedCount = results.filter((result) => result.status === "failed").length;
+  const scanSummary = preview?.scan_summary;
 
   return (
     <div className="fixed inset-0 z-50">
@@ -448,8 +449,27 @@ function InboxImportDrawer({
                   <tbody>
                     {preview.candidates.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-4 py-6 text-center text-sm text-muted-foreground">
-                          No supported bill attachments found in this scan window.
+                        <td colSpan={4} className="px-4 py-6 text-sm text-muted-foreground">
+                          <div className="text-center font-medium">No supported bill attachments found in this scan window.</div>
+                          {scanSummary && (
+                            <div className="mx-auto mt-4 grid max-w-2xl gap-2 rounded-md bg-surface-2 p-3 text-left text-xs">
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <div>Messages matched: <span className="font-semibold text-foreground">{scanSummary.messages_matched}</span></div>
+                                <div>Messages fetched: <span className="font-semibold text-foreground">{scanSummary.messages_fetched}</span></div>
+                                <div>Sender-filtered: <span className="font-semibold text-foreground">{scanSummary.messages_skipped_sender}</span></div>
+                                <div>Oversize messages: <span className="font-semibold text-foreground">{scanSummary.messages_skipped_oversize}</span></div>
+                                <div>Supported attachments: <span className="font-semibold text-foreground">{scanSummary.supported_attachments_found}</span></div>
+                                <div>No supported attachments: <span className="font-semibold text-foreground">{scanSummary.messages_without_supported_attachments}</span></div>
+                                <div>Unsupported attachments: <span className="font-semibold text-foreground">{scanSummary.unsupported_attachments_found}</span></div>
+                              </div>
+                              {scanSummary.senders_seen.length > 0 && (
+                                <div className="truncate">Senders seen: <span className="text-foreground">{scanSummary.senders_seen.join(", ")}</span></div>
+                              )}
+                              {scanSummary.unsupported_attachment_names.length > 0 && (
+                                <div className="truncate">Unsupported files: <span className="text-foreground">{scanSummary.unsupported_attachment_names.join(", ")}</span></div>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ) : (

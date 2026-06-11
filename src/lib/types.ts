@@ -239,6 +239,18 @@ export interface InboxPreviewCandidate {
   notices: InboxPreviewNotice[];
 }
 
+export interface InboxPreviewScanSummary {
+  messages_matched: number;
+  messages_fetched: number;
+  messages_skipped_sender: number;
+  messages_skipped_oversize: number;
+  messages_without_supported_attachments: number;
+  supported_attachments_found: number;
+  unsupported_attachments_found: number;
+  unsupported_attachment_names: string[];
+  senders_seen: string[];
+}
+
 export interface InboxPreviewSession {
   session_id: string;
   billing_period_id: number;
@@ -247,6 +259,7 @@ export interface InboxPreviewSession {
   folder: string;
   sender_allowlist: string;
   received_date_source: "imap_internal_date";
+  scan_summary: InboxPreviewScanSummary;
   candidates: InboxPreviewCandidate[];
 }
 

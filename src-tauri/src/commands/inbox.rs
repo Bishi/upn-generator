@@ -27,6 +27,7 @@ const MAX_SUBJECT_LEN: usize = 240;
 const MAX_ERROR_LEN: usize = 500;
 const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
 const MAX_MESSAGE_BYTES: u32 = 30 * 1024 * 1024;
+const MAX_SCAN_SUMMARY_ITEMS: usize = 8;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InboxConfig {
@@ -98,7 +99,21 @@ pub struct InboxPreviewSession {
     pub folder: String,
     pub sender_allowlist: String,
     pub received_date_source: String,
+    pub scan_summary: InboxPreviewScanSummary,
     pub candidates: Vec<InboxPreviewCandidate>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct InboxPreviewScanSummary {
+    pub messages_matched: i32,
+    pub messages_fetched: i32,
+    pub messages_skipped_sender: i32,
+    pub messages_skipped_oversize: i32,
+    pub messages_without_supported_attachments: i32,
+    pub supported_attachments_found: i32,
+    pub unsupported_attachments_found: i32,
+    pub unsupported_attachment_names: Vec<String>,
+    pub senders_seen: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +127,12 @@ struct MailAttachment {
     filename: String,
     mime_type: String,
     bytes: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+struct AttachmentScan {
+    attachments: Vec<MailAttachment>,
+    unsupported_filenames: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +267,25 @@ fn supported_extension(filename: &str) -> Option<String> {
     }
 }
 
+fn format_billing_period(month: i32, year: i32) -> String {
+    let month_name = match month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
+        _ => return format!("{:02}.{}", month, year),
+    };
+    format!("{} {}", month_name, year)
+}
+
 fn mime_matches_extension(mime_type: &str, ext: &str) -> bool {
     let mime = mime_type.to_ascii_lowercase();
     if mime.trim().is_empty() {
@@ -351,8 +391,8 @@ fn attachment_filename(part: &ParsedMail<'_>) -> Option<String> {
         .or_else(|| part.ctype.params.get("name").cloned())
 }
 
-fn collect_attachments(mail: &ParsedMail<'_>) -> Vec<MailAttachment> {
-    let mut attachments = Vec::new();
+fn collect_attachment_scan(mail: &ParsedMail<'_>) -> AttachmentScan {
+    let mut scan = AttachmentScan::default();
     for part in mail.parts() {
         if !part.subparts.is_empty() {
             continue;
@@ -367,17 +407,23 @@ fn collect_attachments(mail: &ParsedMail<'_>) -> Vec<MailAttachment> {
             continue;
         };
         if supported_extension(&filename).is_none() {
+            scan.unsupported_filenames
+                .push(sanitize_filename(&filename));
             continue;
         }
         if let Ok(bytes) = part.get_body_raw() {
-            attachments.push(MailAttachment {
+            scan.attachments.push(MailAttachment {
                 filename,
                 mime_type: part.ctype.mimetype.clone(),
                 bytes,
             });
         }
     }
-    attachments
+    scan
+}
+
+fn collect_attachments(mail: &ParsedMail<'_>) -> Vec<MailAttachment> {
+    collect_attachment_scan(mail).attachments
 }
 
 fn load_credentials(
@@ -729,15 +775,16 @@ fn analyze_staged_attachment(
         Some((source_month, source_year)) => Some((
             "skipped_wrong_period",
             format!(
-                "Attachment appears to be for {:02}.{}, but the selected billing period is {:02}.{}.",
-                source_month, source_year, context.month, context.year
+                "Attachment appears to be for {}, but the selected billing period is {}.",
+                format_billing_period(source_month, source_year),
+                format_billing_period(context.month, context.year)
             ),
         )),
         None => Some((
             "skipped_unknown_period",
             format!(
-                "Attachment billing period could not be detected for selected period {:02}.{}.",
-                context.month, context.year
+                "Attachment billing period could not be detected for selected period {}.",
+                format_billing_period(context.month, context.year)
             ),
         )),
     };
@@ -1150,6 +1197,7 @@ fn preview_failure_candidate(
 fn session_response(
     session_id: String,
     data: &InboxPreviewSessionData,
+    scan_summary: InboxPreviewScanSummary,
     candidates: Vec<InboxPreviewCandidate>,
 ) -> InboxPreviewSession {
     InboxPreviewSession {
@@ -1160,6 +1208,7 @@ fn session_response(
         folder: data.folder.clone(),
         sender_allowlist: data.sender_allowlist.clone(),
         received_date_source: "imap_internal_date".to_string(),
+        scan_summary,
         candidates,
     }
 }
@@ -1262,6 +1311,7 @@ pub fn preview_inbox_attachments(
         candidates: HashMap::new(),
     };
     let mut preview_candidates = Vec::new();
+    let mut scan_summary = InboxPreviewScanSummary::default();
 
     let mut imap_session = connect_tls(&credentials.config, &credentials.password)?;
     let scan_result = (|| -> Result<(), String> {
@@ -1274,11 +1324,12 @@ pub fn preview_inbox_attachments(
             .map_err(|e| e.to_string())?;
         let mut ids: Vec<u32> = ids.into_iter().collect();
         ids.sort_unstable();
+        scan_summary.messages_matched = ids.len() as i32;
 
         for id in ids {
             let id_str = id.to_string();
             let metadata = imap_session
-                .fetch(&id_str, "UID RFC822.SIZE INTERNALDATE")
+                .fetch(&id_str, "(UID RFC822.SIZE INTERNALDATE)")
                 .map_err(|e| e.to_string())?;
             let Some(meta) = metadata.iter().next() else {
                 continue;
@@ -1286,6 +1337,7 @@ pub fn preview_inbox_attachments(
             let message_uid = meta.uid;
             let received_date = meta.internal_date().map(|date| date.to_rfc3339());
             if meta.size.unwrap_or(0) > MAX_MESSAGE_BYTES {
+                scan_summary.messages_skipped_oversize += 1;
                 let message = MessageContext {
                     folder: credentials.config.folder.clone(),
                     uid_validity,
@@ -1307,7 +1359,7 @@ pub fn preview_inbox_attachments(
             }
 
             let messages = imap_session
-                .fetch(&id_str, "UID BODY.PEEK[]")
+                .fetch(&id_str, "(UID BODY.PEEK[])")
                 .map_err(|e| e.to_string())?;
             let Some(message) = messages.iter().next() else {
                 continue;
@@ -1315,9 +1367,17 @@ pub fn preview_inbox_attachments(
             let Some(body) = message.body() else {
                 continue;
             };
+            scan_summary.messages_fetched += 1;
             let parsed = mailparse::parse_mail(body).map_err(|e| e.to_string())?;
             let sender = parsed_sender(&parsed);
+            if !sender.is_empty()
+                && !scan_summary.senders_seen.contains(&sender)
+                && scan_summary.senders_seen.len() < MAX_SCAN_SUMMARY_ITEMS
+            {
+                scan_summary.senders_seen.push(sender.clone());
+            }
             if !allowlist.is_empty() && !allowlist.contains(&sender) {
+                scan_summary.messages_skipped_sender += 1;
                 continue;
             }
             let message_context = MessageContext {
@@ -1329,7 +1389,23 @@ pub fn preview_inbox_attachments(
                 subject: truncate_chars(&header_value(&parsed, "Subject"), MAX_SUBJECT_LEN),
                 received_date,
             };
-            for attachment in collect_attachments(&parsed) {
+            let attachment_scan = collect_attachment_scan(&parsed);
+            scan_summary.supported_attachments_found += attachment_scan.attachments.len() as i32;
+            scan_summary.unsupported_attachments_found +=
+                attachment_scan.unsupported_filenames.len() as i32;
+            for filename in attachment_scan.unsupported_filenames {
+                if !scan_summary
+                    .unsupported_attachment_names
+                    .contains(&filename)
+                    && scan_summary.unsupported_attachment_names.len() < MAX_SCAN_SUMMARY_ITEMS
+                {
+                    scan_summary.unsupported_attachment_names.push(filename);
+                }
+            }
+            if attachment_scan.attachments.is_empty() {
+                scan_summary.messages_without_supported_attachments += 1;
+            }
+            for attachment in attachment_scan.attachments {
                 let safe_filename = sanitize_filename(&attachment.filename);
                 let attachment_sha256 = sha256_hex(&attachment.bytes);
                 let candidate_id = preview_token("candidate");
@@ -1419,7 +1495,12 @@ pub fn preview_inbox_attachments(
     }
     logout_result?;
 
-    let response = session_response(session_id.clone(), &session_data, preview_candidates);
+    let response = session_response(
+        session_id.clone(),
+        &session_data,
+        scan_summary,
+        preview_candidates,
+    );
     preview_state
         .sessions
         .lock()
@@ -1559,7 +1640,7 @@ pub fn import_inbox_attachments(
         for id in ids {
             let id_str = id.to_string();
             let metadata = session
-                .fetch(&id_str, "UID RFC822.SIZE INTERNALDATE")
+                .fetch(&id_str, "(UID RFC822.SIZE INTERNALDATE)")
                 .map_err(|e| e.to_string())?;
             let Some(meta) = metadata.iter().next() else {
                 continue;
@@ -1585,7 +1666,7 @@ pub fn import_inbox_attachments(
             }
 
             let messages = session
-                .fetch(&id_str, "UID BODY.PEEK[]")
+                .fetch(&id_str, "(UID BODY.PEEK[])")
                 .map_err(|e| e.to_string())?;
             let Some(message) = messages.iter().next() else {
                 continue;
