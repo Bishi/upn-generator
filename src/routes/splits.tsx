@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw, Check, X } from "lucide-react";
+import { Loader2, RefreshCw, Check, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -150,6 +150,7 @@ function SplitsPage() {
   useEffect(() => {
     const requestId = ++loadRequestRef.current;
     if (!selected?.id) {
+      loadedPeriodIdRef.current = null;
       setSplits([]);
       setLoadingSplits(false);
       return;
@@ -219,6 +220,16 @@ function SplitsPage() {
       (apartmentTotals.get(s.apartment_id) ?? 0) + s.split_amount_cents,
     );
   }
+  const selectedPeriodId = selected?.id ?? null;
+  const splitsLoadedForSelected = loadedPeriodIdRef.current === selectedPeriodId;
+  const splitsLoadPending = selectedPeriodId !== null && !splitsLoadedForSelected;
+  const showSplitsLoading =
+    selectedPeriodId !== null &&
+    (loadingSplits || splitsLoadPending) &&
+    (splits.length > 0 || snapshot.selectedStatus.splits);
+  const showSplitsSettling =
+    selectedPeriodId !== null && (loadingSplits || splitsLoadPending) && !showSplitsLoading;
+  const showSplitsTable = splitsLoadedForSelected && splits.length > 0;
 
   return (
     <BillingPageShell
@@ -237,7 +248,7 @@ function SplitsPage() {
         </div>
       )}
 
-      {!loadingSplits && splits.length > 0 && (
+      {showSplitsTable && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
           <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
             Split method
@@ -269,28 +280,37 @@ function SplitsPage() {
         </p>
       )}
 
-      {selected && splits.length === 0 && (
+      {selected && (showSplitsLoading || showSplitsSettling || splits.length === 0) && (
         <div className="min-h-[268px] overflow-auto rounded-lg border border-border bg-card shadow-card">
           <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-            <div className="max-w-md space-y-3">
-              <div className="text-sm font-medium">No splits yet for this billing month</div>
-              <div className="text-sm text-muted-foreground">
-                Import bills first, then use the Recalculate button above.
+            {showSplitsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading splits...
               </div>
-              <div>
-                <Link
-                  to="/bills"
-                  className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
-                >
-                  Go to Bills
-                </Link>
+            ) : showSplitsSettling ? (
+              <div aria-busy="true" className="min-h-[1px]" />
+            ) : (
+              <div className="max-w-md space-y-3">
+                <div className="text-sm font-medium">No splits yet for this billing month</div>
+                <div className="text-sm text-muted-foreground">
+                  Import bills first, then use the Recalculate button above.
+                </div>
+                <div>
+                  <Link
+                    to="/bills"
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+                  >
+                    Go to Bills
+                  </Link>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
 
-      {!loadingSplits && splits.length > 0 && (
+      {showSplitsTable && (
         <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-card">
           <table className="w-full min-w-max text-sm">
             <thead>
@@ -372,7 +392,7 @@ function SplitsPage() {
         </div>
       )}
 
-      {!loadingSplits && splits.length > 0 && (
+      {showSplitsTable && (
         <div className="flex justify-end">
           <Link
             to="/upn"

@@ -924,6 +924,7 @@ function BillsPage() {
   useEffect(() => {
     const requestId = ++loadRequestRef.current;
     if (!selected?.id) {
+      loadedPeriodIdRef.current = null;
       setBills([]);
       setLoadingBills(false);
       return;
@@ -1031,6 +1032,16 @@ function BillsPage() {
   const inboxImported = inboxResults.filter((result) => result.status === "imported");
   const inboxSkipped = inboxResults.filter((result) => result.status.startsWith("skipped_"));
   const inboxFailed = inboxResults.filter((result) => result.status === "failed");
+  const selectedPeriodId = selected?.id ?? null;
+  const billsLoadedForSelected = loadedPeriodIdRef.current === selectedPeriodId;
+  const billsLoadPending = selectedPeriodId !== null && !billsLoadedForSelected;
+  const showBillsLoading =
+    selectedPeriodId !== null &&
+    (loadingBills || billsLoadPending) &&
+    (bills.length > 0 || snapshot.selectedStatus.bills);
+  const showBillsSettling =
+    selectedPeriodId !== null && (loadingBills || billsLoadPending) && !showBillsLoading;
+  const showBillsTable = billsLoadedForSelected && bills.length > 0;
 
   return (
     <BillingPageShell
@@ -1134,7 +1145,7 @@ function BillsPage() {
         </div>
       )}
 
-      {selected && bills.length > 0 && (
+      {selected && showBillsTable && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
           <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
             Imported from
@@ -1161,7 +1172,16 @@ function BillsPage() {
 
       {selected && (
         <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
-          {bills.length === 0 ? (
+          {showBillsLoading ? (
+            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading bills...
+              </div>
+            </div>
+          ) : showBillsSettling ? (
+            <div aria-busy="true" className="min-h-[268px]" />
+          ) : bills.length === 0 ? (
             <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
               <div className="max-w-md space-y-2">
                 <div className="text-sm font-medium">No bills yet for this billing month</div>
@@ -1213,7 +1233,7 @@ function BillsPage() {
         </div>
       )}
 
-      {selected && !loadingBills && bills.length > 0 && (
+      {selected && showBillsTable && (
         <div className="flex justify-end">
           <Link
             to="/splits"

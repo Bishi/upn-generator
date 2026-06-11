@@ -399,6 +399,7 @@ function UpnPage() {
           if (loadRequestRef.current === requestId) setLoadingSplits(false);
         });
     } else {
+      loadedPeriodIdRef.current = null;
       setSplits([]);
       setDeliveryEvents([]);
       setPacketHashes([]);
@@ -476,7 +477,20 @@ function UpnPage() {
     hasSendableRecipient(apartment.contactEmail),
   ).length;
   const missingRecipientCount = Math.max(0, apartments.length - readyRecipientCount);
-  const loadingUpnData = loadingSplits || loadingApartments;
+  const selectedPeriodId = selected?.id ?? null;
+  const splitsLoadedForSelected = loadedPeriodIdRef.current === selectedPeriodId;
+  const splitsLoadPending = selectedPeriodId !== null && !splitsLoadedForSelected;
+  const apartmentsLoadPending = !loadedApartmentsRef.current;
+  const loadingUpnData =
+    loadingSplits || loadingApartments || splitsLoadPending || apartmentsLoadPending;
+  const showUpnLoading =
+    selectedPeriodId !== null &&
+    loadingUpnData &&
+    (splits.length > 0 || apartments.length > 0 || snapshot.selectedStatus.splits);
+  const showUpnSettling =
+    selectedPeriodId !== null && loadingUpnData && !showUpnLoading;
+  const showUpnTable =
+    selectedPeriodId !== null && !loadingUpnData && splitsLoadedForSelected && apartments.length > 0;
 
   return (
     <BillingPageShell
@@ -487,14 +501,14 @@ function UpnPage() {
           <Button
             variant="outline"
             onClick={downloadAll}
-            disabled={!selected || splits.length === 0 || downloading}
+            disabled={!selected || showUpnLoading || splits.length === 0 || downloading}
           >
             <Download className="size-4 mr-2" />
             {downloading ? "Saving..." : "Download All PDFs"}
           </Button>
           <Button
             onClick={sendEmails}
-            disabled={!selected || splits.length === 0 || sending}
+            disabled={!selected || showUpnLoading || splits.length === 0 || sending}
           >
             <Mail className="size-4 mr-2" />
             {sending ? "Sending..." : "Send All Emails"}
@@ -508,7 +522,7 @@ function UpnPage() {
         </div>
       )}
 
-      {!loadingUpnData && apartments.length > 0 && (
+      {showUpnTable && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
           <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
             <CheckCircle2 className="size-3.5" />
@@ -535,21 +549,33 @@ function UpnPage() {
         </p>
       )}
 
-      {selected && splits.length === 0 && (
+      {selected &&
+        (showUpnLoading ||
+          showUpnSettling ||
+          (splitsLoadedForSelected && splits.length === 0)) && (
         <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground min-h-[132px] flex items-center justify-center">
-          <div className="flex flex-wrap items-center justify-between gap-3 w-full">
-            <span>No splits found. Go to Splits and click Recalculate first.</span>
-            <Link
-              to="/splits"
-              className={buttonVariants()}
-            >
-              Go to Splits
-            </Link>
-          </div>
+          {showUpnLoading ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className="size-4 animate-spin" />
+              Loading UPN data...
+            </div>
+          ) : showUpnSettling ? (
+            <div aria-busy="true" className="min-h-[1px]" />
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3 w-full">
+              <span>No splits found. Go to Splits and click Recalculate first.</span>
+              <Link
+                to="/splits"
+                className={buttonVariants()}
+              >
+                Go to Splits
+              </Link>
+            </div>
+          )}
         </div>
       )}
 
-      {!loadingUpnData && apartments.length > 0 && (
+      {showUpnTable && (
         <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
           <table className="w-full text-sm">
             <thead>
