@@ -11,6 +11,7 @@ import type {
   InboxConfig,
   InboxImportResult,
   Provider,
+  ResetAllDataResult,
   SmtpConfig,
   SplitRow,
   UpnDeliveryEvent,
@@ -52,7 +53,7 @@ export const ipc = {
   getAppSettings: () => invoke<AppSettings>("get_app_settings"),
   saveAppSettings: (settings: AppSettings) =>
     invoke<AppSettings>("save_app_settings", { settings }),
-  resetAllData: () => invoke<void>("reset_all_data"),
+  resetAllData: () => invoke<ResetAllDataResult>("reset_all_data"),
 
   // Billing periods
   getBillingPeriods: () => invoke<BillingPeriod[]>("get_billing_periods"),
@@ -99,5 +100,4 @@ export const ipc = {
     invoke<UpnPacketHash[]>("get_upn_packet_hashes", { billingPeriodId }),
   saveSmtpPassword: (password: string) =>
     invoke<void>("save_smtp_password", { password }),
-  getSmtpPassword: () => invoke<string>("get_smtp_password"),
 };

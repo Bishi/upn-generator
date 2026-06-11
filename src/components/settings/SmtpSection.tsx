@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { SmtpConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ const emptyConfig: SmtpConfig = {
   use_tls: true,
   allowlist_enabled: true,
   recipient_allowlist: "",
+  password_configured: false,
 };
 
 export function SmtpSection() {
@@ -38,12 +39,6 @@ export function SmtpSection() {
     if (data) setForm(data);
   }, [data]);
 
-  useEffect(() => {
-    ipc.getSmtpPassword().then((p) => {
-      if (p) setPassword(p);
-    }).catch(() => {});
-  }, []);
-
   const mutation = useMutation({
     mutationFn: async (cfg: SmtpConfig) => {
       await ipc.saveSmtpConfig(cfg);
@@ -51,6 +46,7 @@ export function SmtpSection() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
+      setPassword("");
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },
@@ -78,8 +74,8 @@ export function SmtpSection() {
       <div className="border-b border-border px-5 py-4">
         <h3 className="font-head text-lg font-semibold">Email (SMTP) Settings</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Used to send UPN PDFs to apartment tenants. The password is stored
-          locally and excluded from manual backups.
+          Used to send UPN PDFs to apartment tenants. The password is stored in
+          Windows Credential Manager and excluded from manual backups.
         </p>
       </div>
       <CardContent className="p-5">
@@ -131,7 +127,7 @@ export function SmtpSection() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="SMTP password"
+                placeholder={form.password_configured ? "Password saved" : "SMTP password"}
                 className="pr-10"
               />
               <button
@@ -142,17 +138,27 @@ export function SmtpSection() {
                 {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
             </div>
-            <p className="text-xs text-muted-foreground">Leave blank to keep the existing password.</p>
+            <p className="text-xs text-muted-foreground">
+              Leave blank to keep the existing password. The saved password is never loaded back into this form.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="use_tls"
-              checked={form.use_tls}
-              onChange={(e) => setForm({ ...form, use_tls: e.target.checked })}
-              className="size-4 accent-primary"
-            />
-            <Label htmlFor="use_tls">Use TLS/STARTTLS</Label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                id="use_tls"
+                checked={form.use_tls}
+                onChange={(e) => setForm({ ...form, use_tls: e.target.checked })}
+                className="size-4 accent-primary"
+              />
+              Use STARTTLS/TLS
+            </label>
+            {form.password_configured && !password && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
+                <CheckCircle2 className="size-3.5" />
+                Password saved
+              </span>
+            )}
           </div>
           <div className="rounded-md border border-border bg-surface-2 p-4">
             <div className="mb-3 flex items-start gap-2">

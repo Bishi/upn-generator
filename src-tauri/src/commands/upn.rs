@@ -15,6 +15,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::credentials::{self, MailCredentialKind};
+
 use super::config::{DbState, SmtpConfig};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1354,9 +1356,12 @@ fn build_mailer(
 ) -> Result<SmtpTransport, String> {
     let creds = Credentials::new(smtp_user.to_string(), smtp_pass.to_string());
     if use_tls {
-        SmtpTransport::relay(smtp_host)
-            .map_err(|e| e.to_string())
-            .map(|builder| builder.port(smtp_port as u16).credentials(creds).build())
+        let builder = if smtp_port == 465 {
+            SmtpTransport::relay(smtp_host).map_err(|e| e.to_string())?
+        } else {
+            SmtpTransport::starttls_relay(smtp_host).map_err(|e| e.to_string())?
+        };
+        Ok(builder.port(smtp_port as u16).credentials(creds).build())
     } else {
         Ok(SmtpTransport::builder_dangerous(smtp_host)
             .port(smtp_port as u16)
@@ -1508,19 +1513,16 @@ pub fn open_preview_apartment_upns(
 
 #[tauri::command]
 pub fn save_smtp_password(db: State<DbState>, password: String) -> Result<(), String> {
+    if password.is_empty() {
+        return Ok(());
+    }
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("UPDATE smtp_config SET password=?1 WHERE id=1", [&password])
+    let username = conn
+        .query_row("SELECT username FROM smtp_config WHERE id=1", [], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn get_smtp_password(db: State<DbState>) -> Result<String, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.query_row("SELECT password FROM smtp_config WHERE id=1", [], |r| {
-        r.get(0)
-    })
-    .map_err(|e| e.to_string())
+    credentials::save_password(&conn, MailCredentialKind::Smtp, &username, &password)
 }
 
 #[tauri::command]
@@ -1531,13 +1533,12 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         smtp_user,
         smtp_from,
         use_tls,
-        smtp_pass,
         allowlist_enabled,
         recipient_allowlist,
     ) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT host, port, username, from_email, use_tls, password,
+            "SELECT host, port, username, from_email, use_tls,
                     allowlist_enabled, recipient_allowlist
              FROM smtp_config WHERE id=1",
             [],
@@ -1548,9 +1549,8 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, i32>(4)? != 0,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, i32>(6)? != 0,
-                    r.get::<_, String>(7)?,
+                    r.get::<_, i32>(5)? != 0,
+                    r.get::<_, String>(6)?,
                 ))
             },
         )
@@ -1604,8 +1604,8 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
 
     let attempt_id = next_attempt_id();
     let allowlist = parse_allowlist(&recipient_allowlist);
-    let mailer = build_mailer(&smtp_host, smtp_port, &smtp_user, &smtp_pass, use_tls);
     let from_addr = smtp_from.parse::<Mailbox>();
+    let mut mailer: Option<Result<SmtpTransport, String>> = None;
     let mut results = Vec::new();
 
     for (apt_id, apt_label, raw_email, recipients) in &apartments {
@@ -1665,7 +1665,14 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
                 ));
             }
         } else if !allowed_valid.is_empty() {
-            match (&from_addr, &mailer) {
+            let mailer = mailer.get_or_insert_with(|| {
+                credentials::resolve_password(MailCredentialKind::Smtp, &smtp_user, "").and_then(
+                    |smtp_pass| {
+                        build_mailer(&smtp_host, smtp_port, &smtp_user, &smtp_pass, use_tls)
+                    },
+                )
+            });
+            match (&from_addr, mailer.as_ref()) {
                 (Ok(from_addr), Ok(mailer)) => {
                     let subject = format!("Poloznice za {}/{}", month, year);
                     let body = format!(
@@ -1853,20 +1860,12 @@ pub fn get_upn_packet_hashes(
 
 #[tauri::command]
 pub fn test_smtp_connection(
-    db: State<DbState>,
     config: SmtpConfig,
     password: String,
     test_recipient: String,
 ) -> Result<(), String> {
-    let smtp_pass = if password.is_empty() {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        conn.query_row("SELECT password FROM smtp_config WHERE id=1", [], |r| {
-            r.get::<_, String>(0)
-        })
-        .map_err(|e| e.to_string())?
-    } else {
-        password
-    };
+    let smtp_pass =
+        credentials::resolve_password(MailCredentialKind::Smtp, &config.username, &password)?;
 
     if config.host.trim().is_empty() {
         return Err("SMTP host not configured.".to_string());

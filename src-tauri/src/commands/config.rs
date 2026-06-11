@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
 
+use crate::credentials::{self, MailCredentialKind};
 use crate::db::migrations;
 
 pub struct DbState(pub Mutex<Connection>);
@@ -299,12 +300,13 @@ pub struct SmtpConfig {
     pub use_tls: bool,
     pub allowlist_enabled: bool,
     pub recipient_allowlist: String,
+    pub password_configured: bool,
 }
 
 #[tauri::command]
 pub fn get_smtp_config(db: State<DbState>) -> Result<SmtpConfig, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.query_row(
+    let mut config = conn.query_row(
         "SELECT host, port, username, from_email, use_tls, allowlist_enabled, recipient_allowlist
          FROM smtp_config WHERE id=1",
         [],
@@ -317,10 +319,14 @@ pub fn get_smtp_config(db: State<DbState>) -> Result<SmtpConfig, String> {
                 use_tls: row.get::<_, i32>(4)? != 0,
                 allowlist_enabled: row.get::<_, i32>(5)? != 0,
                 recipient_allowlist: row.get(6)?,
+                password_configured: false,
             })
         },
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    config.password_configured =
+        credentials::password_configured(MailCredentialKind::Smtp, &config.username)?;
+    Ok(config)
 }
 
 #[tauri::command]
@@ -350,6 +356,11 @@ pub fn save_smtp_config(db: State<DbState>, config: SmtpConfig) -> Result<(), St
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppSettings {
     pub theme: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResetAllDataResult {
+    pub credential_cleanup_warning: Option<String>,
 }
 
 fn is_valid_theme(theme: &str) -> bool {
@@ -384,7 +395,17 @@ pub fn save_app_settings(db: State<DbState>, settings: AppSettings) -> Result<Ap
 }
 
 #[tauri::command]
-pub fn reset_all_data(db: State<DbState>) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    migrations::reset_to_defaults(&conn)
+pub fn reset_all_data(db: State<DbState>) -> Result<ResetAllDataResult, String> {
+    {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        migrations::reset_to_defaults(&conn)?;
+    }
+    let credential_cleanup_warning = credentials::delete_mail_credentials().err().map(|error| {
+        format!(
+            "App data was reset, but saved Windows mail credentials could not be deleted: {error}"
+        )
+    });
+    Ok(ResetAllDataResult {
+        credential_cleanup_warning,
+    })
 }

@@ -60,9 +60,11 @@ Enter your outgoing mail server credentials so the app can send UPN slips to ten
 | Port | `587` |
 | Username | Your Gmail address |
 | Password | App password (not your regular Gmail password) |
-| TLS | Enabled |
+| Security | STARTTLS on port `587` or TLS on port `465` |
 
 Gmail note: you must create an **App Password** in your Google Account security settings. Your regular Gmail password will not work.
+
+SMTP passwords are saved in Windows Credential Manager for the current Windows user. The password field is write-only: leave it blank to keep the saved password, or enter a new app password to replace it.
 
 Use **Email safety** while testing SMTP delivery. The recipient allowlist is enabled by default and starts empty, so **Send Emails** records blocked attempts but does not contact tenants until you add allowed test recipients or turn the allowlist off. **Test Email** sends a small real email to the test recipient using the current form values; when the allowlist is enabled, that test recipient must also be listed.
 
@@ -81,6 +83,8 @@ Enter your incoming IMAP mailbox settings so the app can manually import bill at
 
 Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. The mailbox scan window controls how far back messages are searched; imported attachments must still match the selected billing period and a configured provider that is still missing for that month.
 
+IMAP passwords are saved in Windows Credential Manager for the current Windows user. The password field is write-only and is never loaded back into the form.
+
 ### Settings -> App -> Appearance
 
 Choose the app theme. **Refined** is the default and the polished production direction. The selected theme is saved in the app database and included in manual backups.
@@ -89,7 +93,7 @@ Choose the app theme. **Refined** is the default and the polished production dir
 
 Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme.
 
-Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, saved SMTP and inbox passwords are not included in backups, so after restore you must enter them again in **Settings -> Delivery** before sending emails or importing from the inbox.
+Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, saved SMTP and inbox passwords are not included in backups. Existing Windows Credential Manager passwords are kept and reused only when the restored username still matches; otherwise enter the password again in **Settings -> Delivery**.
 
 ---
 
@@ -185,7 +189,7 @@ All data is stored locally in a SQLite database at:
 %APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, inbox import history, and UPN email delivery history, but intentionally exclude saved SMTP and inbox passwords.
+Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, inbox import history, and UPN email delivery history, but intentionally exclude saved SMTP and inbox passwords. Mail passwords are stored in Windows Credential Manager and are matched to the configured username before use.
 
 Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings. Inbox imports connect directly to the IMAP server you configure, store only import metadata, and do not persist raw extracted text from inbox attachments.
 

@@ -83,6 +83,7 @@ export function InboxSection() {
         <h3 className="font-head text-lg font-semibold">Inbox (IMAP) Settings</h3>
         <p className="mt-1 text-sm text-muted-foreground">
           Used to read incoming bill attachments for configured providers that are still missing in the selected month.
+          The password is stored in Windows Credential Manager.
         </p>
       </div>
       <CardContent className="p-5">

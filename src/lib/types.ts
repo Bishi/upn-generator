@@ -50,6 +50,7 @@ export interface SmtpConfig {
   use_tls: boolean;
   allowlist_enabled: boolean;
   recipient_allowlist: string;
+  password_configured: boolean;
 }
 
 export interface InboxConfig {
@@ -69,6 +70,10 @@ export interface AppSettings {
 
 export interface BackupFileInfo {
   path: string;
+}
+
+export interface ResetAllDataResult {
+  credential_cleanup_warning: string | null;
 }
 
 // Billing periods

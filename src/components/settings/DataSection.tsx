@@ -48,12 +48,13 @@ export function DataSection() {
         queryClient.invalidateQueries({ queryKey: ["apartments"] }),
         queryClient.invalidateQueries({ queryKey: ["providers"] }),
         queryClient.invalidateQueries({ queryKey: ["smtp_config"] }),
+        queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
         queryClient.invalidateQueries({ queryKey: ["bills"] }),
         queryClient.invalidateQueries({ queryKey: ["splits"] }),
         queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
       ]);
       await message(
-        "Backup restored. SMTP password was not included and must be entered again before sending email.",
+        "Backup restored. SMTP and IMAP passwords are not included in backup files. Saved Windows credentials are kept when their usernames still match.",
         {
           title: "Restore Complete",
           kind: "info",
@@ -65,7 +66,7 @@ export function DataSection() {
 
   const resetMutation = useMutation({
     mutationFn: ipc.resetAllData,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       setStoredBillingPeriod(null);
       setResetConfirm("");
       await Promise.all([
@@ -73,10 +74,17 @@ export function DataSection() {
         queryClient.invalidateQueries({ queryKey: ["apartments"] }),
         queryClient.invalidateQueries({ queryKey: ["providers"] }),
         queryClient.invalidateQueries({ queryKey: ["smtp_config"] }),
+        queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
         queryClient.invalidateQueries({ queryKey: ["bills"] }),
         queryClient.invalidateQueries({ queryKey: ["splits"] }),
         queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
       ]);
+      if (result.credential_cleanup_warning) {
+        await message(result.credential_cleanup_warning, {
+          title: "Reset Completed With Warning",
+          kind: "warning",
+        });
+      }
       window.location.reload();
     },
   });
@@ -94,7 +102,7 @@ export function DataSection() {
 
   const handleRestoreBackup = async () => {
     const confirmed = await confirm(
-      "Restore will replace the current building, apartments, providers, billing periods, bills, splits, and SMTP settings. The SMTP password will stay blank after restore.",
+      "Restore will replace the current building, apartments, providers, billing periods, bills, splits, and mail settings. SMTP and IMAP passwords are not restored from backup files.",
       {
         title: "Restore Backup",
         kind: "warning",
@@ -165,7 +173,7 @@ export function DataSection() {
               Suggested file format: <span className="font-mono">.sqlite3</span>
             </p>
             <p>Restore fully replaces current app data with the selected backup.</p>
-            <p>After restore, re-enter the SMTP password before sending emails.</p>
+            <p>SMTP and IMAP passwords are stored in Windows Credential Manager, not in backup files.</p>
           </div>
         </CardContent>
       </Card>
@@ -181,7 +189,7 @@ export function DataSection() {
           <div className="space-y-3">
           <div>
             <p className="text-sm text-muted-foreground">
-              Resets building, apartments, providers, SMTP, billing periods, bills, and splits
+              Resets building, apartments, providers, mail settings, billing periods, bills, and splits
               back to the seeded defaults.
             </p>
           </div>
