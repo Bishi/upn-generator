@@ -167,6 +167,8 @@ pub fn delete_apartment(db: State<DbState>, id: i64) -> Result<(), String> {
         [id],
     )
     .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM bill_splits WHERE apartment_id=?1", [id])
+        .map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM apartments WHERE id=?1", [id])
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
