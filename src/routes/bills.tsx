@@ -244,6 +244,36 @@ function formatBillingPeriodLabel(month?: number | null, year?: number | null): 
   return monthName ? `${monthName} ${year}` : `${String(month).padStart(2, "0")}.${year}`;
 }
 
+function candidateProviderIds(candidate: InboxPreviewCandidate) {
+  return [
+    ...new Set(
+      candidate.bills
+        .map((bill) => bill.provider_id)
+        .filter((providerId): providerId is number => providerId != null),
+    ),
+  ];
+}
+
+function defaultInboxPreviewSelection(candidates: InboxPreviewCandidate[]) {
+  const providerUseCount = new Map<number, number>();
+
+  for (const candidate of candidates) {
+    if (!candidate.selectable) continue;
+    for (const providerId of candidateProviderIds(candidate)) {
+      providerUseCount.set(providerId, (providerUseCount.get(providerId) ?? 0) + 1);
+    }
+  }
+
+  return candidates
+    .filter((candidate) => {
+      if (!candidate.selectable) return false;
+      return candidateProviderIds(candidate).every(
+        (providerId) => (providerUseCount.get(providerId) ?? 0) === 1,
+      );
+    })
+    .map((candidate) => candidate.id);
+}
+
 function parseSenderAllowlist(raw?: string | null): string[] {
   return (raw ?? "")
     .split(",")
@@ -539,7 +569,7 @@ function InboxImportDrawer({
       setDaysToScan(clampedDays);
       const nextPreview = await ipc.previewInboxAttachments(billingPeriodId, clampedDays);
       setPreview(nextPreview);
-      setSelectedIds(new Set(nextPreview.candidates.filter((candidate) => candidate.selectable).map((candidate) => candidate.id)));
+      setSelectedIds(new Set(defaultInboxPreviewSelection(nextPreview.candidates)));
     } catch (e) {
       setError(`Failed to preview inbox: ${e}`);
       setPreview(null);
@@ -575,7 +605,7 @@ function InboxImportDrawer({
 
   const toggleAllReady = (checked: boolean) => {
     if (!preview) return;
-    setSelectedIds(checked ? new Set(preview.candidates.filter((candidate) => candidate.selectable).map((candidate) => candidate.id)) : new Set());
+    setSelectedIds(checked ? new Set(defaultInboxPreviewSelection(preview.candidates)) : new Set());
   };
 
   if (!open) return null;
@@ -588,7 +618,10 @@ function InboxImportDrawer({
   const resultFailedCount = results.filter((result) => result.status === "failed").length;
   const scanSummary = preview?.scan_summary;
   const senderEntries = parseSenderAllowlist(config?.sender_allowlist);
-  const allReadySelected = !!preview && readyCount > 0 && preview.candidates.filter((candidate) => candidate.selectable).every((candidate) => selectedIds.has(candidate.id));
+  const defaultSelectedIds = preview ? defaultInboxPreviewSelection(preview.candidates) : [];
+  const allReadySelected =
+    defaultSelectedIds.length > 0 &&
+    defaultSelectedIds.every((candidateId) => selectedIds.has(candidateId));
   const accountLabel = config ? `${config.username || "Inbox account"} / ${config.folder || "INBOX"}` : "Loading inbox settings";
   const selectedBillCount = preview?.candidates.reduce((sum, candidate) => sum + (selectedIds.has(candidate.id) ? candidate.importable_count : 0), 0) ?? 0;
 
@@ -710,9 +743,9 @@ function InboxImportDrawer({
                     <tr>
                       <th className="w-14 p-0 align-middle">
                         <div className="flex h-11 items-center justify-center">
-                          {readyCount > 0 && (
+                          {defaultSelectedIds.length > 0 && (
                             <input
-                              aria-label="Select all ready inbox preview bills"
+                              aria-label="Select all non-conflicting inbox preview bills"
                               type="checkbox"
                               className="block size-4 accent-primary"
                               checked={allReadySelected}
