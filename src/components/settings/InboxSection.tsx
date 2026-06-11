@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { CheckCircle2, Eye, EyeOff, Save, ShieldAlert, Wifi } from "lucide-react";
+import { Check, CheckCircle2, Eye, EyeOff, Loader2, Save, ShieldAlert, Wifi } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { InboxConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -222,8 +222,14 @@ export function InboxSection() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" disabled={saveMutation.isPending} className="gap-2">
-              <Save className="size-4" />
-              {saved ? "Saved!" : saveMutation.isPending ? "Saving..." : "Save"}
+              {saveMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : saved ? (
+                <Check className="size-4" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save
             </Button>
             <Button
               type="button"
@@ -232,8 +238,12 @@ export function InboxSection() {
               disabled={testMutation.isPending}
               className="gap-2"
             >
-              <Wifi className="size-4" />
-              {testMutation.isPending ? "Testing..." : "Test Connection"}
+              {testMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Wifi className="size-4" />
+              )}
+              Test Connection
             </Button>
           </div>
           {(saveMutation.error || testStatus) && (

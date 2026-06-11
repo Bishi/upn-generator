@@ -94,7 +94,7 @@ function ShellFrame({ showContextBar }: { showContextBar: boolean }) {
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {showContextBar && <WorkflowContextBar snapshot={snapshot} />}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-6">
+      <div className="scrollbar-gutter-stable flex-1 overflow-y-auto overflow-x-hidden p-6">
         <Outlet />
       </div>
     </main>

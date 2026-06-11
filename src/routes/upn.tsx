@@ -512,15 +512,23 @@ function UpnPage() {
             onClick={downloadAll}
             disabled={!selected || showUpnLoading || splits.length === 0 || downloading}
           >
-            <Download className="size-4 mr-2" />
-            {downloading ? "Saving..." : "Download All PDFs"}
+            {downloading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            Download All PDFs
           </Button>
           <Button
             onClick={sendEmails}
             disabled={!selected || showUpnLoading || splits.length === 0 || sending}
           >
-            <Mail className="size-4 mr-2" />
-            {sending ? "Sending..." : "Send All Emails"}
+            {sending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Mail className="size-4" />
+            )}
+            Send All Emails
           </Button>
         </>
       }
@@ -568,23 +576,32 @@ function UpnPage() {
         (showUpnLoading ||
           showUpnSettling ||
           (splitsLoadedForSelected && splits.length === 0)) && (
-        <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground min-h-[132px] flex items-center justify-center">
+        <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
           {showUpnLoading ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className="size-4 animate-spin" />
-              Loading UPN data...
+            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading UPN data...
+              </div>
             </div>
-          ) : showUpnSettling ? (
-            <div aria-busy="true" className="min-h-[1px]" />
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3 w-full">
-              <span>No splits found. Go to Splits and click Recalculate first.</span>
-              <Link
-                to="/splits"
-                className={buttonVariants()}
-              >
-                Go to Splits
-              </Link>
+            <div className="relative min-h-[268px] px-6 py-8 text-center">
+              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
+                <div className="mx-auto max-w-md space-y-2">
+                  <div className="text-sm font-medium">No UPNs yet for this billing month</div>
+                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
+                    Calculate splits first, then return here to preview and send UPN forms.
+                  </div>
+                </div>
+              </div>
+              <div className="absolute inset-x-6 bottom-8 flex justify-center">
+                <Link
+                  to="/splits"
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  Go to Splits
+                </Link>
+              </div>
             </div>
           )}
         </div>

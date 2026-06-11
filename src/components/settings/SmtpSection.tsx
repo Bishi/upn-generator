@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { CheckCircle2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
+import { Check, CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { SmtpConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -219,8 +219,12 @@ export function SmtpSection() {
                 disabled={testMutation.isPending}
                 className="gap-2"
               >
-                <Send className="size-4" />
-                {testMutation.isPending ? "Testing..." : "Test Email"}
+                {testMutation.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Send className="size-4" />
+                )}
+                Test Email
               </Button>
             </div>
             {testStatus && (
@@ -234,8 +238,14 @@ export function SmtpSection() {
             )}
           </div>
           <Button type="submit" disabled={mutation.isPending} className="gap-2">
-            <Save className="size-4" />
-            {saved ? "Saved!" : mutation.isPending ? "Saving..." : "Save"}
+            {mutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : saved ? (
+              <Check className="size-4" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            Save
           </Button>
         </form>
       </CardContent>

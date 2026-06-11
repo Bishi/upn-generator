@@ -160,12 +160,12 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
           type="button"
           onClick={() => setPickerOpen((open) => !open)}
           className={cn(
-            "inline-flex h-8 items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-shadow",
+            "inline-grid h-8 w-32 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-shadow",
             pickerOpen && "shadow-[0_0_0_3px_var(--accent-soft-2)]",
           )}
         >
           <Calendar className="size-3.5" />
-          {periodLabel}
+          <span className="truncate text-center">{periodLabel}</span>
           <ChevronDown className={cn("size-3 transition-transform", pickerOpen && "rotate-180")} />
         </button>
         {pickerOpen && (

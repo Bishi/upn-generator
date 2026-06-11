@@ -443,6 +443,10 @@ option {
   display: none;
 }
 
+.scrollbar-gutter-stable {
+  scrollbar-gutter: stable;
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-2) var(--surface-2);

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Save } from "lucide-react";
+import { Check, Loader2, Save } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Building } from "@/lib/types";
@@ -100,8 +100,14 @@ export function BuildingSection() {
             </div>
           </div>
           <Button type="submit" disabled={mutation.isPending} className="gap-2">
-            <Save className="size-4" />
-            {saved ? "Saved!" : mutation.isPending ? "Saving..." : "Save"}
+            {mutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : saved ? (
+              <Check className="size-4" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            Save
           </Button>
         </form>
       </CardContent>

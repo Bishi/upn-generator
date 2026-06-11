@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -41,12 +41,23 @@ function DashboardPage() {
   const { allPeriods, selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
   const { apartments, providers, bills, splits } = snapshot;
+  const [historySelected, setHistorySelected] = useState<BillingPeriod | null>(selected);
+  const selectedStatusKnown =
+    selected?.id != null && snapshot.periodStatuses.has(selected.id);
+  const useStatusSummary = snapshot.loading && selectedStatusKnown;
+  const selectedStatus = snapshot.selectedStatus;
+
+  useEffect(() => {
+    if (!snapshot.loading) {
+      setHistorySelected(selected);
+    }
+  }, [selected, snapshot.loading]);
 
   const history = useMemo<PeriodTotal[]>(
     () => {
       const now = new Date();
-      const anchorYear = selected?.year ?? now.getFullYear();
-      const anchorMonth = selected?.month ?? now.getMonth() + 1;
+      const anchorYear = historySelected?.year ?? now.getFullYear();
+      const anchorMonth = historySelected?.month ?? now.getMonth() + 1;
       const anchorValue = anchorYear * 12 + anchorMonth;
       const periodsByMonth = new Map<number, BillingPeriod & { id: number }>();
 
@@ -77,25 +88,35 @@ function DashboardPage() {
         };
       });
     },
-    [allPeriods, selected, snapshot.periodStatuses],
+    [allPeriods, historySelected, snapshot.periodStatuses],
   );
 
-  const totalCents = bills.reduce((sum, bill) => sum + bill.amount_cents, 0);
-  const apartmentsWithSplits = new Set(splits.map((split) => split.apartment_id)).size;
-  const reviewBills = bills.filter((bill) => bill.parse_note?.trim());
+  const totalCents = useStatusSummary
+    ? selectedStatus.totalCents
+    : bills.reduce((sum, bill) => sum + bill.amount_cents, 0);
+  const billCount = useStatusSummary ? selectedStatus.billCount : bills.length;
+  const splitCount = useStatusSummary ? selectedStatus.splitCount : splits.length;
+  const apartmentsWithSplits = useStatusSummary
+    ? Math.min(apartments.length, selectedStatus.splitCount)
+    : new Set(splits.map((split) => split.apartment_id)).size;
+  const reviewBills = useStatusSummary
+    ? []
+    : bills.filter((bill) => bill.parse_note?.trim());
   const firstReviewBill = reviewBills[0] ?? null;
-  const needsReview = reviewBills.length;
-  const unmatchedBillCount = bills.filter((bill) => bill.provider_id == null).length;
+  const needsReview = useStatusSummary ? selectedStatus.needsReview : reviewBills.length;
+  const unmatchedBillCount = useStatusSummary
+    ? 0
+    : bills.filter((bill) => bill.provider_id == null).length;
   const selectedLabel = selected
     ? `${MONTHS[selected.month - 1]} ${selected.year}`
     : "No billing period";
   const buildingLabel = `${snapshot.buildingName}, ${snapshot.buildingCity}`;
-  const billsReady = bills.length > 0;
-  const splitsReady = splits.length > 0;
+  const billsReady = billCount > 0;
+  const splitsReady = splitCount > 0;
   const upnsReady = billsReady && splitsReady;
   const maxHistory = Math.max(1, ...history.map((entry) => entry.totalCents));
   const selectedHistoryIndex = history.findIndex((entry) =>
-    selected?.id != null ? entry.periodId === selected.id : entry.isAnchor,
+    historySelected?.id != null ? entry.periodId === historySelected.id : entry.isAnchor,
   );
   const previousHistory =
     selectedHistoryIndex > 0 ? history[selectedHistoryIndex - 1] : null;
@@ -110,12 +131,12 @@ function DashboardPage() {
         ? `${monthlyDelta >= 0 ? "+" : ""}${monthlyDelta.toFixed(1)}% vs ${
             MONTHS[previousHistory!.month - 1]
           }`
-        : `${bills.length} source bill${bills.length === 1 ? "" : "s"}`;
-  const expectedBillCount = providers.length || bills.length;
+        : `${billCount} source bill${billCount === 1 ? "" : "s"}`;
+  const expectedBillCount = providers.length || billCount;
   const billsImportedValue = billsReady
     ? expectedBillCount > 0
-      ? `${bills.length} / ${expectedBillCount}`
-      : String(bills.length)
+      ? `${billCount} / ${expectedBillCount}`
+      : String(billCount)
     : expectedBillCount > 0
       ? `0 / ${expectedBillCount}`
       : "0";
@@ -136,6 +157,13 @@ function DashboardPage() {
     firstReviewBill?.source_filename ??
     "Bill";
   const reviewNote = firstReviewBill?.parse_note?.trim() ?? "";
+  const reviewDetail =
+    needsReview > 0
+      ? firstReviewBill
+        ? reviewLabel
+        : "Review flagged bill notes"
+      : "No flagged bill notes";
+  const dashboardChecking = snapshot.loading && !selectedStatusKnown;
 
   const providerById = useMemo(
     () =>
@@ -187,10 +215,7 @@ function DashboardPage() {
     <div className="flex flex-col gap-5">
       <section className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
-            Monthly workflow
-          </div>
-          <h2 className="mt-1 text-3xl font-semibold leading-tight">{selectedLabel}</h2>
+          <h2 className="text-3xl font-semibold leading-tight">{selectedLabel}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {buildingLabel} - {apartments.length} apartment
             {apartments.length === 1 ? "" : "s"}
@@ -235,14 +260,14 @@ function DashboardPage() {
           }
           label="Needs review"
           value={
-            snapshot.loading
+            dashboardChecking
               ? "Checking"
               : needsReview > 0
                 ? `${needsReview} bill${needsReview === 1 ? "" : "s"}`
                 : "Clear"
           }
-          detail={needsReview > 0 ? reviewLabel : "No flagged bill notes"}
-          tone={needsReview > 0 ? "warn" : "good"}
+          detail={dashboardChecking ? "Checking billing month status" : reviewDetail}
+          tone={dashboardChecking ? "neutral" : needsReview > 0 ? "warn" : "good"}
         />
       </div>
 
@@ -256,7 +281,13 @@ function DashboardPage() {
                 : ""}
             </span>
           </div>
-          {providerRows.length === 0 ? (
+          {snapshot.loading && billsReady && providerRows.length === 0 ? (
+            <EmptyPanel
+              icon={<Banknote className="size-7" />}
+              title="Loading bills"
+              detail="Checking the selected billing month."
+            />
+          ) : providerRows.length === 0 ? (
             <EmptyPanel
               icon={<FilePlus className="size-7" />}
               title="No bills yet"
@@ -325,7 +356,9 @@ function DashboardPage() {
                   const monthLabel = `${MONTHS[entry.month - 1]} ${entry.year}`;
                   const totalLabel = `${formatEur(entry.totalCents)} €`;
                   const isSelected =
-                    selected?.id != null ? entry.periodId === selected.id : entry.isAnchor;
+                    historySelected?.id != null
+                      ? entry.periodId === historySelected.id
+                      : entry.isAnchor;
 
                   return (
                     <div
@@ -342,7 +375,7 @@ function DashboardPage() {
                         </span>
                       </span>
                       <div
-                        className={`min-h-1 rounded-t transition duration-150 group-hover:-translate-y-0.5 group-hover:shadow-sm group-focus-visible:-translate-y-0.5 ${
+                        className={`min-h-1 rounded-t transition-[transform,box-shadow] duration-150 group-hover:-translate-y-0.5 group-hover:shadow-sm group-focus-visible:-translate-y-0.5 ${
                           isSelected
                             ? "bg-primary group-hover:bg-accent-strong"
                             : "bg-accent-soft-2 group-hover:bg-primary"
@@ -393,7 +426,9 @@ function DashboardPage() {
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {needsReview > 0
-                    ? `${reviewLabel} - ${reviewNote || "Verify parser and OCR notes before sending UPN packets."}`
+                    ? firstReviewBill
+                      ? `${reviewLabel} - ${reviewNote || "Verify parser and OCR notes before sending UPN packets."}`
+                      : "Review flagged bill notes before sending UPN packets."
                     : upnsReady
                       ? "Bills and splits are ready for UPN preview."
                       : "The next workflow step will appear here as the period progresses."}
@@ -430,7 +465,7 @@ function DashboardActions({
         className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-card transition-colors hover:bg-primary/90"
       >
         <FilePlus className="size-4" />
-        Import bills
+        Go to Import Bills
       </Link>
     );
   }

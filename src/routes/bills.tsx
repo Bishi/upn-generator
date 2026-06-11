@@ -1089,16 +1089,20 @@ function BillsPage() {
         selected ? (
           <>
             <Button variant="outline" onClick={addBlankBill}>
-              <Plus className="size-4 mr-2" />
+              <Plus className="size-4" />
               Add Bill
             </Button>
             <Button variant="outline" onClick={() => setInboxDrawerOpen(true)}>
-              <Mail className="size-4 mr-2" />
+              <Mail className="size-4" />
               Import from Inbox
             </Button>
             <Button onClick={importFiles} disabled={importing}>
-              <FilePlus className="size-4 mr-2" />
-              {importing ? "Importing..." : "Import Bills"}
+              {importing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <FilePlus className="size-4" />
+              )}
+              Import Bills
             </Button>
           </>
         ) : (
@@ -1217,14 +1221,14 @@ function BillsPage() {
                 Loading bills...
               </div>
             </div>
-          ) : showBillsSettling ? (
-            <div aria-busy="true" className="min-h-[268px]" />
-          ) : bills.length === 0 ? (
-            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-              <div className="max-w-md space-y-2">
-                <div className="text-sm font-medium">No bills yet for this billing month</div>
-                <div className="text-sm text-muted-foreground">
-                  Use the buttons above to import PDF or image invoices, or add a bill manually.
+          ) : showBillsSettling || bills.length === 0 ? (
+            <div className="relative min-h-[268px] px-6 py-8 text-center">
+              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
+                <div className="mx-auto max-w-md space-y-2">
+                  <div className="text-sm font-medium">No bills yet for this billing month</div>
+                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
+                    Use the buttons above to import PDF or image invoices, or add a bill manually.
+                  </div>
                 </div>
               </div>
             </div>

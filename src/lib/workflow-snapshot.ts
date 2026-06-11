@@ -73,6 +73,7 @@ export function useWorkflowSnapshot(
   const [providers, setProviders] = useState<Provider[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
   const [splits, setSplits] = useState<SplitRow[]>([]);
+  const [selectedDataPeriodId, setSelectedDataPeriodId] = useState<number | null>(null);
   const [periodStatuses, setPeriodStatuses] = useState<Map<number, PeriodStatus>>(
     () => new Map(),
   );
@@ -130,11 +131,13 @@ export function useWorkflowSnapshot(
         if (requestRef.current !== requestId) return;
         setBills(selectedBills);
         setSplits(selectedSplits);
+        setSelectedDataPeriodId(selectedPeriodId);
         nextStatuses.set(selectedPeriodId, summarizePeriod(selectedBills, selectedSplits));
         setPeriodStatuses(new Map(nextStatuses));
       } else {
         setBills([]);
         setSplits([]);
+        setSelectedDataPeriodId(null);
       }
     } finally {
       if (requestRef.current === requestId) setLoading(false);
@@ -157,16 +160,19 @@ export function useWorkflowSnapshot(
         : periodStatuses.get(selectedPeriodId) ?? EMPTY_PERIOD_STATUS,
     [periodStatuses, selectedPeriodId],
   );
+  const selectedDataFresh = selectedPeriodId == null || selectedDataPeriodId === selectedPeriodId;
+  const exposedBills = selectedDataFresh ? bills : [];
+  const exposedSplits = selectedDataFresh ? splits : [];
 
   return {
-    loading,
+    loading: loading || !selectedDataFresh,
     building,
     buildingName,
     buildingCity,
     apartments,
     providers,
-    bills,
-    splits,
+    bills: exposedBills,
+    splits: exposedSplits,
     periodStatuses,
     selectedStatus,
     refresh,
