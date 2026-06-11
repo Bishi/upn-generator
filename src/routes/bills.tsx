@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, CheckCircle2, FilePlus, Loader2, Mail, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -235,14 +235,111 @@ function previewStatusLabel(status: InboxPreviewCandidate["status"]): string {
   }
 }
 
+function formatBillingPeriodLabel(month?: number | null, year?: number | null): string {
+  if (!month || !year) return "No period";
+  const monthName = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month - 1];
+  return monthName ? `${monthName} ${year}` : `${String(month).padStart(2, "0")}.${year}`;
+}
+
+function parseSenderAllowlist(raw?: string | null): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function InboxChip({ children, className = "", title }: { children: ReactNode; className?: string; title?: string }) {
+  return (
+    <span title={title} className={`inline-flex h-6 max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-3 px-2.5 text-xs font-semibold text-muted-foreground ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: string[]; busy: boolean; onEditSettings: () => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const label = senders.length === 0 ? "Any sender" : senders.length === 1 ? "1 sender" : `${senders.length} senders`;
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative inline-flex">
+      <button
+        type="button"
+        className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-3 px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={senders.length > 0 ? `Show ${senders.length} allowed inbox senders` : "Show inbox sender filter"}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {label}
+        <ChevronDown className="size-3" />
+      </button>
+      {open && (
+        <div role="dialog" aria-label="Sender allowlist" className="absolute left-0 top-8 z-20 min-w-60 rounded-md border border-border bg-card p-3 text-left shadow-pop">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Sender allowlist</div>
+          {senders.length > 0 ? (
+            <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto pr-1">
+              {senders.map((sender) => (
+                <div key={sender} className="font-mono text-xs text-muted-foreground">
+                  {sender}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs leading-relaxed text-muted-foreground">No sender filter is configured. The preview will inspect supported attachments from any sender.</div>
+          )}
+          <div className="mt-3 border-t border-border pt-3">
+            <Link
+              to="/settings"
+              search={{ tab: "delivery" }}
+              className={`${buttonVariants({ variant: "ghost", size: "sm" })} h-7 w-full justify-center text-xs`}
+              onClick={(event) => {
+                if (busy) {
+                  event.preventDefault();
+                  return;
+                }
+                setOpen(false);
+                onEditSettings();
+              }}
+            >
+              <Settings className="size-3.5" />
+              Edit in Settings
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InboxImportDrawer({
   open,
   billingPeriodId,
+  periodLabel,
   onClose,
   onImported,
 }: {
   open: boolean;
   billingPeriodId: number | null;
+  periodLabel: string;
   onClose: () => void;
   onImported: (results: InboxImportResult[]) => Promise<void>;
 }) {
@@ -316,6 +413,8 @@ function InboxImportDrawer({
       if (preview?.session_id) {
         await ipc.clearInboxPreviewSession(preview.session_id);
       }
+      setPreview(null);
+      setSelectedIds(new Set());
       const clampedDays = Math.min(90, Math.max(1, Math.round(daysToScan || 1)));
       setDaysToScan(clampedDays);
       const nextPreview = await ipc.previewInboxAttachments(billingPeriodId, clampedDays);
@@ -350,99 +449,159 @@ function InboxImportDrawer({
     }
   };
 
+  const setClampedScanDays = (next: number) => {
+    setDaysToScan(Math.min(90, Math.max(1, Math.round(next || 1))));
+  };
+
+  const toggleAllReady = (checked: boolean) => {
+    if (!preview) return;
+    setSelectedIds(checked ? new Set(preview.candidates.filter((candidate) => candidate.selectable).map((candidate) => candidate.id)) : new Set());
+  };
+
   if (!open) return null;
 
-  const readyCount = preview?.candidates.filter((candidate) => candidate.selectable).length ?? 0;
+  const readyCount = preview?.candidates.reduce((sum, candidate) => sum + (candidate.selectable ? candidate.importable_count : 0), 0) ?? 0;
   const skippedCount = preview?.candidates.filter((candidate) => candidate.status.startsWith("skipped_") || candidate.status === "empty").length ?? 0;
   const failedCount = preview?.candidates.filter((candidate) => candidate.status === "failed").length ?? 0;
   const importedCount = results.filter((result) => result.status === "imported").length;
   const resultSkippedCount = results.filter((result) => result.status.startsWith("skipped_")).length;
   const resultFailedCount = results.filter((result) => result.status === "failed").length;
   const scanSummary = preview?.scan_summary;
+  const senderEntries = parseSenderAllowlist(config?.sender_allowlist);
+  const allReadySelected = !!preview && readyCount > 0 && preview.candidates.filter((candidate) => candidate.selectable).every((candidate) => selectedIds.has(candidate.id));
+  const accountLabel = config ? `${config.username || "Inbox account"} / ${config.folder || "INBOX"}` : "Loading inbox settings";
+  const selectedBillCount = preview?.candidates.reduce((sum, candidate) => sum + (selectedIds.has(candidate.id) ? candidate.importable_count : 0), 0) ?? 0;
 
   return (
     <div className="fixed inset-0 z-50">
       <button
         type="button"
-        className="absolute inset-0 bg-overlay"
+        className="absolute inset-0 bg-overlay animate-drawer-scrim-in"
         aria-label="Close inbox import"
         disabled={busy}
         onClick={() => void closeDrawer()}
       />
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-4xl flex-col border-l border-border bg-card shadow-pop sm:w-[760px]">
-        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-          <div>
-            <h2 className="text-lg font-semibold">Import from Inbox</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {config ? `${config.username || "Inbox account"} / ${config.folder || "INBOX"}` : "Loading inbox settings"}
-            </p>
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-4xl flex-col border-l border-border bg-card shadow-pop animate-drawer-slide-in sm:w-[760px]">
+        <header className="border-b border-border px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="font-head text-lg font-semibold">Import from Inbox</h2>
+            <Button variant="ghost" size="icon" onClick={() => void closeDrawer()} disabled={busy} aria-label="Close">
+              <X className="size-4" />
+            </Button>
           </div>
-          <Button variant="ghost" size="icon" onClick={() => void closeDrawer()} disabled={busy} aria-label="Close">
-            <X className="size-4" />
-          </Button>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <InboxChip className="bg-card">
+              <Mail className="size-3" />
+              <span className="max-w-64 truncate">{accountLabel}</span>
+            </InboxChip>
+            <InboxChip className="bg-accent-soft text-accent-foreground">
+              <Calendar className="size-3" />
+              {periodLabel}
+            </InboxChip>
+            <div className="inline-flex h-6 items-center overflow-hidden rounded-full border border-border bg-surface-3 text-muted-foreground">
+              <button
+                type="button"
+                className="grid size-6 place-items-center transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                onClick={() => setClampedScanDays(daysToScan - 1)}
+                disabled={loadingConfig || loadingPreview || importing || daysToScan <= 1}
+                aria-label="Decrease scan window"
+              >
+                <Minus className="size-3" />
+              </button>
+              <input
+                aria-label="Scan window days"
+                className="h-6 w-10 border-x border-border bg-transparent text-center font-mono text-xs font-bold text-foreground outline-none disabled:opacity-50"
+                type="number"
+                min={1}
+                max={90}
+                value={daysToScan}
+                onChange={(event) => setClampedScanDays(Number(event.target.value))}
+                disabled={loadingConfig || loadingPreview || importing}
+              />
+              <button
+                type="button"
+                className="grid size-6 place-items-center transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                onClick={() => setClampedScanDays(daysToScan + 1)}
+                disabled={loadingConfig || loadingPreview || importing || daysToScan >= 90}
+                aria-label="Increase scan window"
+              >
+                <Plus className="size-3" />
+              </button>
+            </div>
+            <SenderAllowlistChip senders={senderEntries} busy={busy} onEditSettings={() => void closeDrawer()} />
+          </div>
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          <div className="grid gap-3 rounded-lg border border-border bg-surface-2 p-3 sm:grid-cols-[1fr_auto]">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div>
-                <label htmlFor="inbox-run-days" className="mb-1 block text-xs font-semibold text-muted-foreground">
-                  Scan window
-                </label>
-                <Input
-                  id="inbox-run-days"
-                  type="number"
-                  min={1}
-                  max={90}
-                  value={daysToScan}
-                  onChange={(event) => setDaysToScan(Number(event.target.value))}
-                  disabled={loadingConfig || loadingPreview || importing}
-                />
-              </div>
-              <div className="min-w-0">
-                <div className="mb-1 text-xs font-semibold text-muted-foreground">Sender allowlist</div>
-                <div className="truncate rounded-md border border-border bg-card px-3 py-2 text-sm">
-                  {config?.sender_allowlist.trim() || "Any sender"}
-                </div>
-              </div>
-              <div className="min-w-0">
-                <div className="mb-1 text-xs font-semibold text-muted-foreground">Password</div>
-                <div className="rounded-md border border-border bg-card px-3 py-2 text-sm">
-                  {config?.password_configured ? "Configured" : "Missing"}
-                </div>
-              </div>
-            </div>
-            <div className="flex items-end">
-              <Button onClick={fetchPreview} disabled={!billingPeriodId || loadingConfig || loadingPreview || importing}>
-                {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />}
-                Fetch preview
-              </Button>
-            </div>
-          </div>
-
           {error && (
             <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
               {error}
             </div>
           )}
 
-          {preview && (
+          {!preview && results.length === 0 && (
+            <div className="flex min-h-[360px] flex-col items-center justify-center gap-4 px-6 py-10 text-center">
+              <span className="grid size-12 place-items-center rounded-lg bg-surface-3 text-muted-foreground">
+                <Inbox className="size-6" />
+              </span>
+              <div className="max-w-md">
+                <h3 className="font-head text-xl font-semibold">Ready to scan</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  Will scan the last <span className="font-semibold text-foreground">{daysToScan} days</span> of {config?.folder || "INBOX"} for PDF and image attachments
+                  {senderEntries.length > 0 ? <> from <span className="font-semibold text-foreground">{senderEntries.length} senders</span></> : null}. Only bills for <span className="font-semibold text-foreground">{periodLabel}</span> will be offered.
+                </p>
+              </div>
+              <Button onClick={fetchPreview} disabled={!billingPeriodId || loadingConfig || loadingPreview || importing} className="h-10 px-6">
+                {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />}
+                Fetch preview
+              </Button>
+              <span className="text-xs text-muted-foreground">This may take a few seconds.</span>
+            </div>
+          )}
+
+          {preview && results.length === 0 && (
             <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Scanned</span>
+                <InboxChip className="h-5 bg-card">
+                  <Clock className="size-3" />
+                  Last {preview.days_to_scan} days
+                </InboxChip>
+                <SenderAllowlistChip senders={senderEntries} busy={busy} onEditSettings={() => void closeDrawer()} />
+                <Button variant="ghost" size="sm" className="ml-auto h-7" onClick={fetchPreview} disabled={loadingPreview || importing}>
+                  {loadingPreview ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                  Re-scan
+                </Button>
+              </div>
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Preview</span>
-                <span className="rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">{readyCount} ready</span>
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
+                  <Check className="size-3" />
+                  {readyCount} ready
+                </span>
                 <span className="rounded-md bg-surface-3 px-3 py-1 text-xs font-semibold text-muted-foreground">{skippedCount} skipped</span>
                 {failedCount > 0 && (
                   <span className="rounded-md bg-danger-soft px-3 py-1 text-xs font-semibold text-danger">{failedCount} failed</span>
                 )}
               </div>
-              <div className="overflow-hidden rounded-lg border border-border">
+              <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
                 <table className="w-full text-sm">
                   <thead className="bg-surface-2 text-left text-xs text-muted-foreground">
                     <tr>
-                      <th className="w-10 px-3 py-2"></th>
+                      <th className="w-11 px-4 py-2 align-middle">
+                        {readyCount > 0 && (
+                          <input
+                            aria-label="Select all ready inbox preview bills"
+                            type="checkbox"
+                            className="size-4 accent-primary"
+                            checked={allReadySelected}
+                            onChange={(event) => toggleAllReady(event.target.checked)}
+                            disabled={importing}
+                          />
+                        )}
+                      </th>
                       <th className="px-3 py-2">Attachment</th>
-                      <th className="px-3 py-2">Parsed bills</th>
+                      <th className="px-3 py-2">Bill</th>
                       <th className="px-3 py-2">Status</th>
                     </tr>
                   </thead>
@@ -473,45 +632,42 @@ function InboxImportDrawer({
                         </td>
                       </tr>
                     ) : (
-                      preview.candidates.map((candidate) => (
-                        <tr key={candidate.id} className="border-t border-border align-top">
-                          <td className="px-3 py-3">
+                      preview.candidates.map((candidate) => {
+                        const groupClass = candidate.selectable ? "bg-card" : "bg-surface-2/40 opacity-70";
+                        const toggleCandidate = (checked: boolean) => {
+                          const next = new Set(selectedIds);
+                          if (checked) next.add(candidate.id);
+                          else next.delete(candidate.id);
+                          setSelectedIds(next);
+                        };
+                        const selectionCell = (keySuffix: string) => (
+                          <td className="px-4 py-3">
                             <input
+                              aria-label={`Select ${candidate.attachment_filename}${keySuffix ? ` bill ${keySuffix}` : ""}`}
                               type="checkbox"
                               className="size-4 accent-primary"
                               checked={selectedIds.has(candidate.id)}
                               disabled={!candidate.selectable || importing}
-                              onChange={(event) => {
-                                const next = new Set(selectedIds);
-                                if (event.target.checked) next.add(candidate.id);
-                                else next.delete(candidate.id);
-                                setSelectedIds(next);
-                              }}
+                              onChange={(event) => toggleCandidate(event.target.checked)}
                             />
                           </td>
+                        );
+                        const attachmentCell = (
                           <td className="max-w-64 px-3 py-3">
                             <div className="truncate font-semibold">{candidate.attachment_filename}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.sender || "Unknown sender"}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.subject || "No subject"}</div>
                           </td>
+                        );
+                        const statusCell = (
                           <td className="px-3 py-3">
-                            {candidate.bills.length > 0 ? (
-                              <div className="space-y-2">
-                                {candidate.bills.map((bill, index) => (
-                                  <div key={`${candidate.id}-bill-${index}`} className="rounded-md bg-surface-2 px-3 py-2">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                      <span className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</span>
-                                      <span className="font-mono text-xs">{formatEur(bill.amount_cents)} EUR</span>
-                                    </div>
-                                    <div className="mt-1 truncate text-xs text-muted-foreground">{bill.reference || "No reference"} / {bill.due_date || "No due date"}</div>
-                                    {bill.parse_note && (
-                                      <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
-                                    )}
-                                  </div>
-                                ))}
+                            <span className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${candidate.status === "ready" ? "bg-success-soft text-success" : candidate.status === "failed" ? "bg-danger-soft text-danger" : "bg-surface-3 text-muted-foreground"}`}>
+                              {previewStatusLabel(candidate.status)}
+                            </span>
+                            {(candidate.skipped_reason || candidate.error) && (
+                              <div className="mt-2 max-w-56 text-xs text-muted-foreground">
+                                {candidate.error ?? candidate.skipped_reason}
                               </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">No importable bills</span>
                             )}
                             {candidate.notices.length > 0 && (
                               <div className="mt-2 space-y-1">
@@ -523,18 +679,43 @@ function InboxImportDrawer({
                               </div>
                             )}
                           </td>
-                          <td className="px-3 py-3">
-                            <span className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${candidate.status === "ready" ? "bg-success-soft text-success" : candidate.status === "failed" ? "bg-danger-soft text-danger" : "bg-surface-3 text-muted-foreground"}`}>
-                              {previewStatusLabel(candidate.status)}
-                            </span>
-                            {(candidate.skipped_reason || candidate.error) && (
-                              <div className="mt-2 max-w-56 text-xs text-muted-foreground">
-                                {candidate.error ?? candidate.skipped_reason}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))
+                        );
+
+                        if (candidate.bills.length === 0) {
+                          return (
+                            <tr key={candidate.id} className={`border-t border-border align-top ${groupClass}`}>
+                              {selectionCell("")}
+                              {attachmentCell}
+                              <td className="px-3 py-3">
+                                <span className="text-xs text-muted-foreground">No importable bills</span>
+                              </td>
+                              {statusCell}
+                            </tr>
+                          );
+                        }
+
+                        return (
+                          <Fragment key={candidate.id}>
+                            {candidate.bills.map((bill, index) => (
+                              <tr key={`${candidate.id}-bill-${index}`} className={`border-t border-border align-top ${groupClass}`}>
+                                {selectionCell(String(index + 1))}
+                                {attachmentCell}
+                                <td className="px-3 py-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</span>
+                                    <span className="font-mono text-xs">{formatEur(bill.amount_cents)} EUR</span>
+                                  </div>
+                                  <div className="mt-1 truncate text-xs text-muted-foreground">{bill.reference || "No reference"} / {bill.due_date || "No due date"}</div>
+                                  {bill.parse_note && (
+                                    <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
+                                  )}
+                                </td>
+                                {statusCell}
+                              </tr>
+                            ))}
+                          </Fragment>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -543,32 +724,101 @@ function InboxImportDrawer({
           )}
 
           {results.length > 0 && (
-            <div className="rounded-lg border border-border bg-surface-2 px-4 py-3 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Imported</span>
-                <span className="rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">{importedCount} imported</span>
-                <span className="rounded-md bg-card px-3 py-1 text-xs font-semibold text-muted-foreground">{resultSkippedCount} skipped</span>
-                {resultFailedCount > 0 && (
-                  <span className="rounded-md bg-danger-soft px-3 py-1 text-xs font-semibold text-danger">{resultFailedCount} failed</span>
-                )}
+            <div className="space-y-4">
+              <div className="flex items-center gap-4 rounded-lg border border-success/40 bg-success-soft px-4 py-4">
+                <CheckCircle2 className="size-8 shrink-0 text-success" />
+                <div>
+                  <h3 className="font-head text-lg font-semibold text-success">Import complete</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    <span className="font-semibold text-foreground">{importedCount}</span> imported /{" "}
+                    <span className="font-semibold text-foreground">{resultSkippedCount}</span> skipped
+                    {resultFailedCount > 0 ? (
+                      <>
+                        {" "} / <span className="font-semibold text-foreground">{resultFailedCount}</span> failed
+                      </>
+                    ) : null}
+                  </p>
+                </div>
               </div>
+
+              {importedCount > 0 && (
+                <div>
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Imported</div>
+                  <div className="space-y-2">
+                    {results.filter((result) => result.status === "imported").map((result, index) => (
+                      <div key={`imported-${index}`} className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2">
+                        <Check className="size-4 shrink-0 text-success" />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold">{result.attachment_filename}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {result.bill_count} bill{result.bill_count === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(resultSkippedCount > 0 || resultFailedCount > 0) && (
+                <div>
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Skipped</div>
+                  <div className="space-y-2">
+                    {results.filter((result) => result.status !== "imported").map((result, index) => (
+                      <div key={`skipped-${index}`} className="flex items-start gap-3 rounded-md border border-border bg-surface-2 px-3 py-2 opacity-80">
+                        <X className={`mt-0.5 size-4 shrink-0 ${result.status === "failed" ? "text-danger" : "text-muted-foreground"}`} />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold">{result.attachment_filename}</div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            {result.error ?? result.skipped_reason ?? result.status}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
         <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
-          <div className="text-sm text-muted-foreground">
-            {selectedIds.size} selected
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
-              Close
-            </Button>
-            <Button onClick={importSelected} disabled={!preview || selectedIds.size === 0 || importing || loadingPreview}>
-              {importing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-              Import selected
-            </Button>
-          </div>
+          {results.length > 0 ? (
+            <>
+              <div className="text-sm text-muted-foreground">Import complete. You can close this panel.</div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
+                  Close
+                </Button>
+                <Button variant="ghost" onClick={fetchPreview} disabled={!billingPeriodId || loadingPreview || importing}>
+                  {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                  Import again
+                </Button>
+              </div>
+            </>
+          ) : preview ? (
+            <>
+              <div className="text-sm text-muted-foreground">
+                <span className="font-semibold text-foreground">{selectedBillCount}</span> selected
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
+                  Close
+                </Button>
+                <Button onClick={importSelected} disabled={!preview || selectedIds.size === 0 || importing || loadingPreview}>
+                  {importing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                  Import selected ({selectedBillCount})
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div />
+              <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
+                Close
+              </Button>
+            </>
+          )}
         </footer>
       </aside>
     </div>
@@ -733,6 +983,7 @@ function BillsPage() {
       <InboxImportDrawer
         open={inboxDrawerOpen}
         billingPeriodId={selected?.id ?? null}
+        periodLabel={formatBillingPeriodLabel(selected?.month, selected?.year)}
         onClose={() => setInboxDrawerOpen(false)}
         onImported={handleInboxImported}
       />

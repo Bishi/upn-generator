@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 use tempfile::{Builder as TempFileBuilder, TempDir};
 
 use crate::credentials::{self, MailCredentialKind};
@@ -356,6 +356,15 @@ fn preview_token(prefix: &str) -> String {
     );
     let digest = Sha256::digest(seed.as_bytes());
     digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn write_inbox_preview_debug_log(lines: &[String]) {
+    if let Some(path) =
+        dirs_next::data_dir().map(|d| d.join("si.upn-generator").join("inbox_preview_debug.log"))
+    {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
+        let _ = std::fs::write(path, lines.join("\n"));
+    }
 }
 
 fn header_value(mail: &ParsedMail<'_>, name: &str) -> String {
@@ -1268,12 +1277,36 @@ pub fn test_inbox_connection(config: InboxConfig, password: String) -> Result<()
 }
 
 #[tauri::command]
-pub fn preview_inbox_attachments(
-    db: State<DbState>,
-    preview_state: State<InboxPreviewState>,
+pub async fn preview_inbox_attachments(
+    app: AppHandle,
     billing_period_id: i64,
     days_to_scan: i32,
 ) -> Result<InboxPreviewSession, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<DbState>();
+        let preview_state = app.state::<InboxPreviewState>();
+        preview_inbox_attachments_impl(db, preview_state, billing_period_id, days_to_scan)
+    })
+    .await
+    .map_err(|e| format!("Inbox preview task failed: {e}"))?
+}
+
+fn preview_inbox_attachments_impl(
+    db: State<'_, DbState>,
+    preview_state: State<'_, InboxPreviewState>,
+    billing_period_id: i64,
+    days_to_scan: i32,
+) -> Result<InboxPreviewSession, String> {
+    let overall_start = Instant::now();
+    let mut debug_log = vec![
+        format!(
+            "=== preview_inbox_attachments {} ===",
+            Local::now().to_rfc3339()
+        ),
+        format!("billing_period_id={billing_period_id}"),
+        format!("days_to_scan={days_to_scan}"),
+    ];
+
     sweep_preview_sessions(&preview_state)?;
     if !(1..=MAX_DAYS_TO_SCAN).contains(&days_to_scan) {
         return Err(format!(
@@ -1293,6 +1326,9 @@ pub fn preview_inbox_attachments(
     let since = (Local::now().date_naive() - ChronoDuration::days(days_to_scan as i64))
         .format("%d-%b-%Y")
         .to_string();
+    debug_log.push(format!("folder={}", credentials.config.folder));
+    debug_log.push(format!("allowlist_count={}", allowlist.len()));
+    debug_log.push(format!("since={since}"));
 
     let session_id = preview_token("session");
     let temp_dir = tempfile::Builder::new()
@@ -1313,31 +1349,60 @@ pub fn preview_inbox_attachments(
     let mut preview_candidates = Vec::new();
     let mut scan_summary = InboxPreviewScanSummary::default();
 
-    let mut imap_session = connect_tls(&credentials.config, &credentials.password)?;
+    let connect_start = Instant::now();
+    let mut imap_session = match connect_tls(&credentials.config, &credentials.password) {
+        Ok(session) => {
+            debug_log.push(format!("connect_ms={}", connect_start.elapsed().as_millis()));
+            session
+        }
+        Err(error) => {
+            debug_log.push(format!("connect_error={error}"));
+            debug_log.push(format!("total_ms={}", overall_start.elapsed().as_millis()));
+            write_inbox_preview_debug_log(&debug_log);
+            return Err(error);
+        }
+    };
     let scan_result = (|| -> Result<(), String> {
+        let examine_start = Instant::now();
         let mailbox = imap_session
             .examine(credentials.config.folder.as_str())
             .map_err(|e| e.to_string())?;
+        debug_log.push(format!("examine_ms={}", examine_start.elapsed().as_millis()));
         let uid_validity = mailbox.uid_validity;
+        let search_start = Instant::now();
         let ids = imap_session
             .search(format!("SINCE {}", since))
             .map_err(|e| e.to_string())?;
         let mut ids: Vec<u32> = ids.into_iter().collect();
         ids.sort_unstable();
         scan_summary.messages_matched = ids.len() as i32;
+        debug_log.push(format!(
+            "search_ms={} matched={}",
+            search_start.elapsed().as_millis(),
+            ids.len()
+        ));
 
         for id in ids {
+            let message_start = Instant::now();
             let id_str = id.to_string();
+            let metadata_start = Instant::now();
             let metadata = imap_session
                 .fetch(&id_str, "(UID RFC822.SIZE INTERNALDATE)")
                 .map_err(|e| e.to_string())?;
+            let metadata_ms = metadata_start.elapsed().as_millis();
             let Some(meta) = metadata.iter().next() else {
+                debug_log.push(format!("message_id={id} metadata_ms={metadata_ms} no_metadata=true"));
                 continue;
             };
             let message_uid = meta.uid;
             let received_date = meta.internal_date().map(|date| date.to_rfc3339());
-            if meta.size.unwrap_or(0) > MAX_MESSAGE_BYTES {
+            let message_size = meta.size.unwrap_or(0);
+            if message_size > MAX_MESSAGE_BYTES {
                 scan_summary.messages_skipped_oversize += 1;
+                debug_log.push(format!(
+                    "message_id={id} uid={:?} metadata_ms={metadata_ms} size_bytes={} skipped=oversize",
+                    message_uid, message_size
+                ));
                 let message = MessageContext {
                     folder: credentials.config.folder.clone(),
                     uid_validity,
@@ -1358,17 +1423,29 @@ pub fn preview_inbox_attachments(
                 continue;
             }
 
+            let fetch_start = Instant::now();
             let messages = imap_session
                 .fetch(&id_str, "(UID BODY.PEEK[])")
                 .map_err(|e| e.to_string())?;
+            let fetch_ms = fetch_start.elapsed().as_millis();
             let Some(message) = messages.iter().next() else {
+                debug_log.push(format!(
+                    "message_id={id} uid={:?} metadata_ms={metadata_ms} fetch_ms={fetch_ms} no_message=true",
+                    message_uid
+                ));
                 continue;
             };
             let Some(body) = message.body() else {
+                debug_log.push(format!(
+                    "message_id={id} uid={:?} metadata_ms={metadata_ms} fetch_ms={fetch_ms} no_body=true",
+                    message.uid.or(message_uid)
+                ));
                 continue;
             };
             scan_summary.messages_fetched += 1;
+            let parse_start = Instant::now();
             let parsed = mailparse::parse_mail(body).map_err(|e| e.to_string())?;
+            let parse_ms = parse_start.elapsed().as_millis();
             let sender = parsed_sender(&parsed);
             if !sender.is_empty()
                 && !scan_summary.senders_seen.contains(&sender)
@@ -1378,6 +1455,11 @@ pub fn preview_inbox_attachments(
             }
             if !allowlist.is_empty() && !allowlist.contains(&sender) {
                 scan_summary.messages_skipped_sender += 1;
+                debug_log.push(format!(
+                    "message_id={id} uid={:?} metadata_ms={metadata_ms} fetch_ms={fetch_ms} parse_ms={parse_ms} size_bytes={} skipped=sender",
+                    message.uid.or(message_uid),
+                    message_size
+                ));
                 continue;
             }
             let message_context = MessageContext {
@@ -1389,7 +1471,11 @@ pub fn preview_inbox_attachments(
                 subject: truncate_chars(&header_value(&parsed, "Subject"), MAX_SUBJECT_LEN),
                 received_date,
             };
+            let attachment_scan_start = Instant::now();
             let attachment_scan = collect_attachment_scan(&parsed);
+            let attachment_scan_ms = attachment_scan_start.elapsed().as_millis();
+            let supported_count = attachment_scan.attachments.len();
+            let unsupported_count = attachment_scan.unsupported_filenames.len();
             scan_summary.supported_attachments_found += attachment_scan.attachments.len() as i32;
             scan_summary.unsupported_attachments_found +=
                 attachment_scan.unsupported_filenames.len() as i32;
@@ -1405,6 +1491,13 @@ pub fn preview_inbox_attachments(
             if attachment_scan.attachments.is_empty() {
                 scan_summary.messages_without_supported_attachments += 1;
             }
+            debug_log.push(format!(
+                "message_id={id} uid={:?} metadata_ms={metadata_ms} fetch_ms={fetch_ms} parse_ms={parse_ms} attachment_scan_ms={attachment_scan_ms} size_bytes={} supported_attachments={} unsupported_attachments={}",
+                message_context.message_uid,
+                message_size,
+                supported_count,
+                unsupported_count
+            ));
             for attachment in attachment_scan.attachments {
                 let safe_filename = sanitize_filename(&attachment.filename);
                 let attachment_sha256 = sha256_hex(&attachment.bytes);
@@ -1434,7 +1527,15 @@ pub fn preview_inbox_attachments(
                 };
                 let staged_name = format!("{}-{}.{}", preview_candidates.len(), candidate_id, ext);
                 let staged_path = session_data.temp_dir.path().join(staged_name);
+                let stage_start = Instant::now();
                 if let Err(error) = std::fs::write(&staged_path, &attachment.bytes) {
+                    debug_log.push(format!(
+                        "attachment={} size_bytes={} stage_ms={} status=failed error={}",
+                        safe_filename,
+                        attachment.bytes.len(),
+                        stage_start.elapsed().as_millis(),
+                        error
+                    ));
                     preview_candidates.push(preview_failure_candidate(
                         candidate_id.clone(),
                         &message_context,
@@ -1454,6 +1555,8 @@ pub fn preview_inbox_attachments(
                     );
                     continue;
                 }
+                let stage_ms = stage_start.elapsed().as_millis();
+                let analysis_start = Instant::now();
                 let analysis = {
                     let conn = db.0.lock().map_err(|e| e.to_string())?;
                     analyze_staged_attachment(
@@ -1466,6 +1569,7 @@ pub fn preview_inbox_attachments(
                         &staged_path.to_string_lossy(),
                     )
                 };
+                let analysis_ms = analysis_start.elapsed().as_millis();
                 let candidate = preview_candidate_from_analysis(
                     candidate_id.clone(),
                     &message_context,
@@ -1477,20 +1581,35 @@ pub fn preview_inbox_attachments(
                     candidate_id,
                     InboxPreviewCandidateData {
                         message: message_context.clone(),
-                        attachment_filename: safe_filename,
+                        attachment_filename: safe_filename.clone(),
                         attachment_sha256,
                         file_path: Some(staged_path),
                         status: candidate.status.clone(),
                     },
                 );
+                debug_log.push(format!(
+                    "attachment={} size_bytes={} stage_ms={stage_ms} analysis_ms={analysis_ms} status={} importable_count={} notices={}",
+                    safe_filename,
+                    attachment.bytes.len(),
+                    candidate.status,
+                    candidate.importable_count,
+                    candidate.notices.len()
+                ));
                 preview_candidates.push(candidate);
             }
+            debug_log.push(format!(
+                "message_id={id} elapsed_ms={}",
+                message_start.elapsed().as_millis()
+            ));
         }
         Ok(())
     })();
     let logout_result = imap_session.logout().map_err(|e| e.to_string());
     if let Err(error) = scan_result {
         let _ = logout_result;
+        debug_log.push(format!("scan_error={error}"));
+        debug_log.push(format!("total_ms={}", overall_start.elapsed().as_millis()));
+        write_inbox_preview_debug_log(&debug_log);
         return Err(error);
     }
     logout_result?;
@@ -1506,6 +1625,19 @@ pub fn preview_inbox_attachments(
         .lock()
         .map_err(|e| e.to_string())?
         .insert(session_id, session_data);
+    debug_log.push(format!(
+        "summary matched={} fetched={} skipped_sender={} skipped_oversize={} without_supported={} supported_attachments={} unsupported_attachments={} candidates={}",
+        response.scan_summary.messages_matched,
+        response.scan_summary.messages_fetched,
+        response.scan_summary.messages_skipped_sender,
+        response.scan_summary.messages_skipped_oversize,
+        response.scan_summary.messages_without_supported_attachments,
+        response.scan_summary.supported_attachments_found,
+        response.scan_summary.unsupported_attachments_found,
+        response.candidates.len()
+    ));
+    debug_log.push(format!("total_ms={}", overall_start.elapsed().as_millis()));
+    write_inbox_preview_debug_log(&debug_log);
     Ok(response)
 }
 
