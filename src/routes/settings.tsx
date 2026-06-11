@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Building2, Home, Mail, Settings, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppearanceSection } from "@/components/settings/AppearanceSection";
@@ -11,6 +11,9 @@ import { ProvidersSection } from "@/components/settings/ProvidersSection";
 import { SmtpSection } from "@/components/settings/SmtpSection";
 
 export const Route = createFileRoute("/settings")({
+  validateSearch: (search: Record<string, unknown>): { tab?: Tab } => ({
+    tab: isSettingsTab(search.tab) ? search.tab : undefined,
+  }),
   component: SettingsPage,
 });
 
@@ -29,8 +32,17 @@ const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "app", label: "App", icon: <Settings className="size-4" /> },
 ];
 
+function isSettingsTab(value: unknown): value is Tab {
+  return typeof value === "string" && tabs.some((tab) => tab.id === value);
+}
+
 function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("building");
+  const search = Route.useSearch();
+  const [activeTab, setActiveTab] = useState<Tab>(search.tab ?? "building");
+
+  useEffect(() => {
+    if (search.tab) setActiveTab(search.tab);
+  }, [search.tab]);
 
   return (
     <div className="flex flex-col gap-5">

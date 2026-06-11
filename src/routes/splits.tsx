@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw, Check, X } from "lucide-react";
+import { Loader2, RefreshCw, Check, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -127,7 +127,7 @@ function EditableCell({
       className="font-mono text-sm cursor-pointer hover:underline"
       onClick={() => setEditing(true)}
     >
-      {formatEur(split.split_amount_cents)}
+      {formatEur(split.split_amount_cents)} €
     </span>
   );
 }
@@ -136,13 +136,11 @@ function SplitsPage() {
   const { selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
   const [splits, setSplits] = useState<SplitRow[]>(() => snapshot.splits);
-  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.splits.length === 0);
+  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.loading);
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const loadedPeriodIdRef = useRef<number | null>(
-    snapshot.splits.length > 0 ? selected?.id ?? null : null,
-  );
+  const loadedPeriodIdRef = useRef<number | null>(snapshot.loading ? null : selected?.id ?? null);
 
   const loadSplits = async (periodId: number) => {
     const rows = await ipc.getSplits(periodId);
@@ -152,12 +150,13 @@ function SplitsPage() {
   useEffect(() => {
     const requestId = ++loadRequestRef.current;
     if (!selected?.id) {
+      loadedPeriodIdRef.current = null;
       setSplits([]);
       setLoadingSplits(false);
       return;
     }
 
-    if (loadedPeriodIdRef.current !== selected.id || splits.length === 0) {
+    if (loadedPeriodIdRef.current !== selected.id) {
       setLoadingSplits(true);
     }
     void ipc
@@ -165,6 +164,13 @@ function SplitsPage() {
       .then((rows) => {
         if (loadRequestRef.current !== requestId) return;
         setSplits(rows);
+        setError(null);
+        loadedPeriodIdRef.current = selected.id;
+      })
+      .catch((e) => {
+        if (loadRequestRef.current !== requestId) return;
+        setError(String(e));
+        setSplits([]);
         loadedPeriodIdRef.current = selected.id;
       })
       .finally(() => {
@@ -221,6 +227,16 @@ function SplitsPage() {
       (apartmentTotals.get(s.apartment_id) ?? 0) + s.split_amount_cents,
     );
   }
+  const selectedPeriodId = selected?.id ?? null;
+  const splitsLoadedForSelected = loadedPeriodIdRef.current === selectedPeriodId;
+  const splitsLoadPending = selectedPeriodId !== null && !splitsLoadedForSelected;
+  const showSplitsLoading =
+    selectedPeriodId !== null &&
+    (loadingSplits || splitsLoadPending) &&
+    (splits.length > 0 || snapshot.selectedStatus.splits);
+  const showSplitsSettling =
+    selectedPeriodId !== null && (loadingSplits || splitsLoadPending) && !showSplitsLoading;
+  const showSplitsTable = splitsLoadedForSelected && splits.length > 0;
 
   return (
     <BillingPageShell
@@ -239,7 +255,7 @@ function SplitsPage() {
         </div>
       )}
 
-      {!loadingSplits && splits.length > 0 && (
+      {showSplitsTable && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
           <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
             Split method
@@ -271,44 +287,42 @@ function SplitsPage() {
         </p>
       )}
 
-      {selected && splits.length === 0 && (
+      {selected && (showSplitsLoading || showSplitsSettling || splits.length === 0) && (
         <div className="min-h-[268px] overflow-auto rounded-lg border border-border bg-card shadow-card">
           <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-            <div className="max-w-md space-y-3">
-              {loadingSplits ? (
-                <>
-                  <div className="text-sm font-medium">Loading splits...</div>
-                  <div className="text-sm text-muted-foreground">
-                    Preparing this billing period.
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="text-sm font-medium">No splits yet for this period</div>
-                  <div className="text-sm text-muted-foreground">
-                    Import bills first, then use the Recalculate button above.
-                  </div>
-                  <div>
-                    <Link
-                      to="/bills"
-                      className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
-                    >
-                      Go to Bills
-                    </Link>
-                  </div>
-                </>
-              )}
-            </div>
+            {showSplitsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading splits...
+              </div>
+            ) : showSplitsSettling ? (
+              <div aria-busy="true" className="min-h-[1px]" />
+            ) : (
+              <div className="max-w-md space-y-3">
+                <div className="text-sm font-medium">No splits yet for this billing month</div>
+                <div className="text-sm text-muted-foreground">
+                  Import bills first, then use the Recalculate button above.
+                </div>
+                <div>
+                  <Link
+                    to="/bills"
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+                  >
+                    Go to Bills
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {!loadingSplits && splits.length > 0 && (
+      {showSplitsTable && (
         <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-card">
           <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="bg-surface-2 text-xs font-medium text-muted-foreground">
-                <th className="sticky left-0 z-10 min-w-48 bg-surface-2 px-3 pt-3.5 pb-2.5 text-left">
+                <th className="min-w-48 px-3 pt-3.5 pb-2.5 text-left">
                   Bill
                 </th>
                 <th className="border-r border-border-2 px-3 pt-3.5 pb-2.5 text-right">
@@ -330,7 +344,7 @@ function SplitsPage() {
                   key={billId}
                   className="border-t border-border odd:bg-card even:bg-surface-2/50 hover:bg-accent/10"
                 >
-                  <td className="sticky left-0 z-10 bg-inherit px-3 py-2">
+                  <td className="px-3 py-2">
                     <div className="flex items-start gap-2 max-w-56">
                       {info.parseNote && <ReviewIndicator note={info.parseNote} />}
                       <div className="min-w-0">
@@ -340,16 +354,11 @@ function SplitsPage() {
                         <div className="text-xs text-muted-foreground truncate max-w-44">
                           {splitBasisLabel(info.splitBasis)}
                         </div>
-                        {info.provider && (
-                          <div className="text-xs text-muted-foreground truncate max-w-44">
-                            {info.filename}
-                          </div>
-                        )}
                       </div>
                     </div>
                   </td>
                   <td className="border-r border-border-2 px-3 py-2 text-right font-mono font-medium">
-                    {formatEur(info.total)} EUR
+                    {formatEur(info.total)} €
                   </td>
                   {apartments.map(([aptId]) => {
                     const cell = matrix.get(billId)?.get(aptId);
@@ -373,15 +382,15 @@ function SplitsPage() {
             </tbody>
             <tfoot>
               <tr className="border-t border-border bg-surface-2 font-semibold">
-                <td className="sticky left-0 z-10 bg-surface-2 px-3 py-2">Total per Apartment</td>
+                <td className="px-3 py-2">Total per Apartment</td>
                 <td className="border-r border-border-2 px-3 py-2 text-right font-mono">
                   {formatEur(
                     splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
-                  )}
+                  )} €
                 </td>
                 {apartments.map(([aptId]) => (
                   <td key={aptId} className="px-3 py-2 text-right font-mono">
-                    {formatEur(apartmentTotals.get(aptId) ?? 0)} EUR
+                    {formatEur(apartmentTotals.get(aptId) ?? 0)} €
                   </td>
                 ))}
               </tr>
@@ -390,7 +399,7 @@ function SplitsPage() {
         </div>
       )}
 
-      {!loadingSplits && splits.length > 0 && (
+      {showSplitsTable && (
         <div className="flex justify-end">
           <Link
             to="/upn"

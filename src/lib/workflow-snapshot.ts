@@ -11,7 +11,7 @@ import {
 } from "react";
 import { ipc } from "@/lib/ipc";
 import { subscribeWorkflowStatusChanged } from "@/lib/workflow-status";
-import type { Apartment, Bill, BillingPeriod, Provider, SplitRow } from "@/lib/types";
+import type { Apartment, Bill, BillingPeriod, Building, Provider, SplitRow } from "@/lib/types";
 
 export type PeriodStatus = {
   bills: boolean;
@@ -25,6 +25,7 @@ export type PeriodStatus = {
 
 export type WorkflowSnapshot = {
   loading: boolean;
+  building: Building | null;
   buildingName: string;
   buildingCity: string;
   apartments: Apartment[];
@@ -65,6 +66,7 @@ export function useWorkflowSnapshot(
   periods: BillingPeriod[] = [],
 ): WorkflowSnapshot {
   const [loading, setLoading] = useState(true);
+  const [building, setBuilding] = useState<Building | null>(null);
   const [buildingName, setBuildingName] = useState("Kamniska ulica 36");
   const [buildingCity, setBuildingCity] = useState("Ljubljana");
   const [apartments, setApartments] = useState<Apartment[]>([]);
@@ -88,6 +90,7 @@ export function useWorkflowSnapshot(
       ]);
       if (requestRef.current !== requestId) return;
 
+      setBuilding(building);
       setBuildingName(building.name || "Kamniska ulica 36");
       setBuildingCity(building.city || "Ljubljana");
       setApartments(nextApartments);
@@ -157,6 +160,7 @@ export function useWorkflowSnapshot(
 
   return {
     loading,
+    building,
     buildingName,
     buildingCity,
     apartments,

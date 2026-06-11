@@ -13,8 +13,9 @@ use commands::config::{
     save_building, save_provider, save_smtp_config, DbState,
 };
 use commands::inbox::{
-    get_inbox_config, import_inbox_attachments, save_inbox_config, save_inbox_password,
-    test_inbox_connection,
+    clear_inbox_preview_session, get_inbox_config, import_inbox_attachments,
+    import_inbox_preview_selection, preview_inbox_attachments, save_inbox_config,
+    save_inbox_password, test_inbox_connection, InboxPreviewState,
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
@@ -53,6 +54,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(DbState(Mutex::new(conn)))
+        .manage(InboxPreviewState::default())
         .invoke_handler(tauri::generate_handler![
             // Backup
             create_db_backup,
@@ -73,6 +75,9 @@ pub fn run() {
             save_inbox_password,
             test_inbox_connection,
             import_inbox_attachments,
+            preview_inbox_attachments,
+            import_inbox_preview_selection,
+            clear_inbox_preview_session,
             get_app_settings,
             save_app_settings,
             reset_all_data,

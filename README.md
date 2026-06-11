@@ -52,7 +52,7 @@ Utility providers are pre-configured with the correct IBANs, payment purpose tem
 
 ### Settings -> Delivery -> Email (SMTP)
 
-Enter your outgoing mail server credentials so the app can send UPN slips to tenants. Typical Gmail settings:
+Enter your outgoing mail server credentials so the app can send UPN slips to tenants. Gmail server settings are prefilled by default:
 
 | Field | Value |
 |-------|-------|
@@ -64,13 +64,15 @@ Enter your outgoing mail server credentials so the app can send UPN slips to ten
 
 Gmail note: you must create an **App Password** in your Google Account security settings. Your regular Gmail password will not work.
 
+The default database stores the SMTP server, port, TLS setting, `kamniska.racuni@gmail.com` as the username/from address, and the same address in the test-recipient allowlist. Enter the app password before sending real email.
+
 SMTP passwords are saved in Windows Credential Manager for the current Windows user. The password field is write-only: leave it blank to keep the saved password, or enter a new app password to replace it.
 
-Use **Email safety** while testing SMTP delivery. The recipient allowlist is enabled by default and starts empty, so **Send Emails** records blocked attempts but does not contact tenants until you add allowed test recipients or turn the allowlist off. **Test Email** sends a small real email to the test recipient using the current form values; when the allowlist is enabled, that test recipient must also be listed.
+Use **Email safety** while testing SMTP delivery. The recipient allowlist is enabled by default and starts with `kamniska.racuni@gmail.com` as the allowed test recipient, so **Send Emails** remains limited until you add more allowed recipients or turn the allowlist off. **Test Email** sends a small real email to the test recipient using the current form values; when the allowlist is enabled, that test recipient must also be listed.
 
 ### Settings -> Delivery -> Inbox
 
-Enter your incoming IMAP mailbox settings so the app can manually import bill attachments from email. Typical Gmail settings:
+Enter your incoming IMAP mailbox settings so the app can manually import bill attachments from email. Gmail server settings are prefilled by default:
 
 | Field | Value |
 |-------|-------|
@@ -81,7 +83,9 @@ Enter your incoming IMAP mailbox settings so the app can manually import bill at
 | Folder | `INBOX` |
 | TLS | Enabled |
 
-Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. The mailbox scan window controls how far back messages are searched; imported attachments must still match the selected billing period and a configured provider that is still missing for that month.
+Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. On the Bills page, **Import from Inbox** opens a preview step where you can override the scan window for that run, inspect parsed attachments, and import only selected ready candidates. Previewing does not create bills or inbox audit rows; imported attachments must still match the selected billing month and a configured provider that is still missing for that month.
+
+The default database stores the IMAP server, port, TLS setting, folder, scan window, `kamniska.racuni@gmail.com` as the username, and an empty sender allowlist. Enter the app password before importing from the inbox.
 
 IMAP passwords are saved in Windows Credential Manager for the current Windows user. The password field is write-only and is never loaded back into the form.
 
@@ -99,20 +103,20 @@ Use **Restore Backup** to replace the current app data with a previously saved b
 
 ## Monthly Workflow
 
-### Step 1 - Create a billing period
+### Step 1 - Create a billing month
 
 Go to the **Bills** page.
 
-- First time using a new year: click **Add Year**, enter the year (for example `2026`) - all 12 months are created at once.
+- First time using a new year: click **Add Year**, enter the year (for example `2026`) - all 12 billing months are created at once.
 - In subsequent months, the periods already exist; just select the correct month.
 
 ### Step 2 - Import bills
 
-Select the month and click **Import Bills** to choose a local file, or click **Import from Inbox** to scan the configured mailbox for bill attachments.
+Select the billing month and click **Import Bills** to choose a local file, or click **Import from Inbox** to scan the configured mailbox for bill attachments. For example, bills titled `02.2026` belong in the February 2026 billing month, even when the provider charges for January usage.
 
 The app supports importing a single combined PDF or a supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`). PDFs can contain all bills together; image imports are OCR'd on Windows before the same provider-detection pipeline runs.
 
-Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing period, skips unknown providers, skips configured providers that already have a bill in that month, avoids duplicate attachments and duplicate parsed bill content by hash, and deletes its temporary attachment file when that attachment has finished importing.
+Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing month, skips unknown providers, skips configured providers that already have a bill in that month, avoids duplicate attachments and duplicate parsed bill content by hash, and deletes its temporary attachment file when that attachment has finished importing.
 
 | Provider | Service | Detection method |
 |----------|---------|-----------------|

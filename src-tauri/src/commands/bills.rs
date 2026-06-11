@@ -454,8 +454,11 @@ pub fn create_billing_period(
 pub fn delete_billing_period(db: State<DbState>, id: i64) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     // Cascade: delete splits → bills → period
-    conn.execute("DELETE FROM upn_delivery_events WHERE billing_period_id=?1", [id])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM upn_delivery_events WHERE billing_period_id=?1",
+        [id],
+    )
+    .map_err(|e| e.to_string())?;
     conn.execute(
         "DELETE FROM bill_splits WHERE bill_id IN (SELECT id FROM bills WHERE billing_period_id=?1)",
         [id],
@@ -1164,6 +1167,20 @@ pub(crate) struct BillImportContext {
     pub providers: Vec<Provider>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PreparedBillPreviewSummary {
+    pub provider_id: Option<i64>,
+    pub provider_name: Option<String>,
+    pub creditor_name: String,
+    pub amount_cents: i64,
+    pub reference: String,
+    pub due_date: String,
+    pub invoice_number: String,
+    pub purpose_text: String,
+    pub parse_note: String,
+    pub status: String,
+}
+
 pub(crate) struct PreparedBillImport {
     raw_text: String,
     filename: String,
@@ -1368,6 +1385,61 @@ pub(crate) fn retain_new_bill_hashes(
         kept_hashes,
         skipped_duplicate_count,
     }
+}
+
+pub(crate) fn preview_prepared_bills(
+    prepared: &PreparedBillImport,
+    providers: &[Provider],
+) -> Vec<PreparedBillPreviewSummary> {
+    let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
+        .iter()
+        .filter(|p| !p.creditor_iban.is_empty())
+        .map(|p| (normalize_iban(&p.creditor_iban), p))
+        .collect();
+
+    prepared
+        .extracted
+        .iter()
+        .map(|eb| {
+            let provider = provider_by_iban.get(&eb.iban_norm).copied();
+            let status = if eb.parse_note.is_empty() {
+                "draft".to_string()
+            } else {
+                "needs_review".to_string()
+            };
+            let (provider_id, provider_name, creditor_name, purpose_text) = match provider {
+                Some(p) => (
+                    p.id,
+                    Some(p.name.clone()),
+                    p.creditor_name.clone(),
+                    if !eb.purpose_text.is_empty() {
+                        eb.purpose_text.clone()
+                    } else {
+                        interpolate_template(
+                            &p.purpose_text_template,
+                            &eb.invoice_number,
+                            prepared.source_month,
+                            prepared.source_year,
+                        )
+                    },
+                ),
+                None => (None, None, String::new(), eb.purpose_text.clone()),
+            };
+
+            PreparedBillPreviewSummary {
+                provider_id,
+                provider_name,
+                creditor_name,
+                amount_cents: eb.amount_cents,
+                reference: eb.reference.clone(),
+                due_date: eb.due_date.clone(),
+                invoice_number: eb.invoice_number.clone(),
+                purpose_text,
+                parse_note: eb.parse_note.clone(),
+                status,
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn load_bill_import_context(

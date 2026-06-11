@@ -1,25 +1,20 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowRight,
   Banknote,
   CheckCircle2,
-  Download,
   FilePlus,
   Inbox,
   Layers,
-  Loader2,
-  Send,
   Users,
 } from "lucide-react";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { serviceIconFor } from "@/lib/service-icons";
 import type { BillingPeriod, Provider } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
-import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
 export const Route = createFileRoute("/")({
@@ -46,10 +41,6 @@ function DashboardPage() {
   const { allPeriods, selected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
   const { apartments, providers, bills, splits } = snapshot;
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [actionError, setActionError] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [downloading, setDownloading] = useState(false);
 
   const history = useMemo<PeriodTotal[]>(
     () => {
@@ -192,47 +183,6 @@ function DashboardPage() {
     return [...byProvider.values()].sort((a, b) => b.total - a.total);
   }, [bills, providerById]);
 
-  const handleDownload = async () => {
-    if (!selected?.id) return;
-    setActionMessage(null);
-    setActionError(false);
-    setDownloading(true);
-    try {
-      const result = await downloadPeriodUpnPdfs(selected.id);
-      if (result) {
-        setActionMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
-      }
-    } catch (error) {
-      setActionError(true);
-      setActionMessage(String(error));
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  const handleSendEmails = async () => {
-    if (!selected?.id) return;
-    setActionMessage(null);
-    setActionError(false);
-    setSending(true);
-    try {
-      const results = await sendPeriodEmails(selected.id);
-      const sentCount = results.filter((result) => result.success).length;
-      const failedCount = results.length - sentCount;
-      setActionMessage(
-        failedCount > 0
-          ? `Sent ${sentCount} email(s), ${failedCount} failed.`
-          : `Sent ${sentCount} email(s).`,
-      );
-      setActionError(failedCount > 0);
-    } catch (error) {
-      setActionError(true);
-      setActionMessage(String(error));
-    } finally {
-      setSending(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-5">
       <section className="flex flex-wrap items-start justify-between gap-4">
@@ -250,31 +200,14 @@ function DashboardPage() {
         <DashboardActions
           billsReady={billsReady}
           splitsReady={splitsReady}
-          selectedPeriodId={selected?.id ?? null}
-          sending={sending}
-          downloading={downloading}
-          onDownload={handleDownload}
-          onSend={handleSendEmails}
         />
       </section>
-
-      {actionMessage && (
-        <div
-          className={`rounded-md border px-4 py-3 text-sm ${
-            actionError
-              ? "border-danger/30 bg-danger-soft text-danger"
-              : "border-success/30 bg-success-soft text-success"
-          }`}
-        >
-          {actionMessage}
-        </div>
-      )}
 
       <div className="grid gap-4 lg:grid-cols-4">
         <StatTile
           icon={<Banknote className="size-4" />}
           label={splitsReady ? "Total this month" : "Total imported"}
-          value={billsReady ? `${formatEur(totalCents)} EUR` : "-"}
+          value={billsReady ? `${formatEur(totalCents)} €` : "-"}
           detail={totalDetail}
           tone={billsReady ? "accent" : "neutral"}
         />
@@ -355,7 +288,7 @@ function DashboardPage() {
                       />
                     </div>
                     <div className="text-right font-mono font-semibold">
-                      {formatEur(provider.total)} EUR
+                      {formatEur(provider.total)} €
                     </div>
                     <div className="text-right font-mono text-xs text-muted-foreground">
                       {Math.round(share * 100)}%
@@ -374,7 +307,7 @@ function DashboardPage() {
               <div className="flex items-baseline gap-2">
                 {billsReady && (
                   <span className="font-mono text-sm font-semibold">
-                    {formatEur(totalCents)} EUR
+                    {formatEur(totalCents)} €
                   </span>
                 )}
                 <span className="rounded-full bg-surface-3 px-2.5 py-1 text-xs font-semibold text-muted-foreground">
@@ -390,7 +323,7 @@ function DashboardPage() {
               ) : (
                 history.map((entry) => {
                   const monthLabel = `${MONTHS[entry.month - 1]} ${entry.year}`;
-                  const totalLabel = `${formatEur(entry.totalCents)} EUR`;
+                  const totalLabel = `${formatEur(entry.totalCents)} €`;
                   const isSelected =
                     selected?.id != null ? entry.periodId === selected.id : entry.isAnchor;
 
@@ -456,7 +389,7 @@ function DashboardPage() {
                 >
                   {needsReview > 0
                     ? `${needsReview} bill${needsReview === 1 ? "" : "s"} needs review`
-                    : "No alerts this period"}
+                    : "No alerts this billing month"}
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {needsReview > 0
@@ -486,19 +419,9 @@ function DashboardPage() {
 function DashboardActions({
   billsReady,
   splitsReady,
-  selectedPeriodId,
-  sending,
-  downloading,
-  onDownload,
-  onSend,
 }: {
   billsReady: boolean;
   splitsReady: boolean;
-  selectedPeriodId: number | null;
-  sending: boolean;
-  downloading: boolean;
-  onDownload: () => Promise<void>;
-  onSend: () => Promise<void>;
 }) {
   if (!billsReady) {
     return (
@@ -534,20 +457,13 @@ function DashboardActions({
   }
 
   return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        variant="outline"
-        onClick={() => void onDownload()}
-        disabled={!selectedPeriodId || downloading}
-      >
-        {downloading ? <Loader2 className="animate-spin" /> : <Download />}
-        {downloading ? "Saving..." : "Download PDFs"}
-      </Button>
-      <Button onClick={() => void onSend()} disabled={!selectedPeriodId || sending}>
-        {sending ? <Loader2 className="animate-spin" /> : <Send />}
-        {sending ? "Sending..." : "Send all emails"}
-      </Button>
-    </div>
+    <Link
+      to="/upn"
+      className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-card transition-colors hover:bg-primary/90"
+    >
+      <ArrowRight className="size-4" />
+      Open UPNs
+    </Link>
   );
 }
 
