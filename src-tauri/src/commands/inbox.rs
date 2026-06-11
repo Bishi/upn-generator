@@ -303,19 +303,15 @@ fn load_credentials(
         MailCredentialKind::Imap,
         &credentials_row.config.username,
     )?;
+    let resolved = credentials::resolve_password(
+        MailCredentialKind::Imap,
+        &credentials_row.config.username,
+        "",
+    );
     credentials_row.password = if require_password {
-        credentials::resolve_password(
-            MailCredentialKind::Imap,
-            &credentials_row.config.username,
-            "",
-        )?
+        resolved?
     } else {
-        credentials::resolve_password(
-            MailCredentialKind::Imap,
-            &credentials_row.config.username,
-            "",
-        )
-        .unwrap_or_default()
+        resolved.unwrap_or_default()
     };
     Ok(credentials_row)
 }
