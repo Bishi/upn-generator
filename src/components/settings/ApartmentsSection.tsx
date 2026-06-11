@@ -100,8 +100,9 @@ export function ApartmentsSection() {
 
   const saveMutation = useMutation({
     mutationFn: ipc.saveApartment,
-    onSuccess: (savedApartment) => {
-      queryClient.invalidateQueries({ queryKey: ["apartments"] });
+    onSuccess: async (savedApartment) => {
+      await queryClient.invalidateQueries({ queryKey: ["apartments"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(savedApartment.id);
       const draft = cloneApartment(savedApartment);
       setEditing(draft);
@@ -112,8 +113,9 @@ export function ApartmentsSection() {
 
   const deleteMutation = useMutation({
     mutationFn: ipc.deleteApartment,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apartments"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["apartments"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(null);
       setEditing(null);
       setBaseline(null);

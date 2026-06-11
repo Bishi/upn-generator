@@ -51,7 +51,6 @@ export function DataSection() {
         queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
         queryClient.invalidateQueries({ queryKey: ["bills"] }),
         queryClient.invalidateQueries({ queryKey: ["splits"] }),
-        queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
       ]);
       await message(
         "Backup restored. SMTP and IMAP passwords are not included in backup files. Saved Windows credentials are kept when their usernames still match.",
@@ -77,7 +76,6 @@ export function DataSection() {
         queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
         queryClient.invalidateQueries({ queryKey: ["bills"] }),
         queryClient.invalidateQueries({ queryKey: ["splits"] }),
-        queryClient.invalidateQueries({ queryKey: ["workflow-status"] }),
       ]);
       if (result.credential_cleanup_warning) {
         await message(result.credential_cleanup_warning, {

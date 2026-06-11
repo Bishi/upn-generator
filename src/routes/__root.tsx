@@ -9,9 +9,7 @@ import {
   Settings,
   SplitSquareHorizontal,
 } from "lucide-react";
-import { BillingPeriodSelectionProvider } from "@/lib/billing-period-selection";
 import { WorkflowContextBar } from "@/components/WorkflowContextBar";
-import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import {
   useWorkflowSnapshotContext,
   WorkflowSnapshotProvider,
@@ -65,27 +63,22 @@ function RootLayout() {
           )}
         </div>
       </nav>
-      <BillingPeriodSelectionProvider>
+      <WorkflowSnapshotProvider>
         <ShellContent />
-      </BillingPeriodSelectionProvider>
+      </WorkflowSnapshotProvider>
     </div>
   );
 }
 
 function ShellContent() {
   const location = useLocation();
-  const { allPeriods, selected } = useBillingPeriodSelection();
   const showContextBar =
     location.pathname === "/" ||
     location.pathname.startsWith("/bills") ||
     location.pathname.startsWith("/splits") ||
     location.pathname.startsWith("/upn");
 
-  return (
-    <WorkflowSnapshotProvider selectedPeriodId={selected?.id} periods={allPeriods}>
-      <ShellFrame showContextBar={showContextBar} />
-    </WorkflowSnapshotProvider>
-  );
+  return <ShellFrame showContextBar={showContextBar} />;
 }
 
 function ShellFrame({ showContextBar }: { showContextBar: boolean }) {

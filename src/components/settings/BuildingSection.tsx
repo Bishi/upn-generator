@@ -37,8 +37,9 @@ export function BuildingSection() {
 
   const mutation = useMutation({
     mutationFn: ipc.saveBuilding,
-    onSuccess: (updated) => {
+    onSuccess: async (updated) => {
       queryClient.setQueryData(["building"], updated);
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     },

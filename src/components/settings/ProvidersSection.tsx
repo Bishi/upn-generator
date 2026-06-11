@@ -129,8 +129,9 @@ export function ProvidersSection() {
 
   const saveMutation = useMutation({
     mutationFn: ipc.saveProvider,
-    onSuccess: (savedProvider) => {
-      queryClient.invalidateQueries({ queryKey: ["providers"] });
+    onSuccess: async (savedProvider) => {
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(savedProvider.id);
       const draft = cloneProvider(savedProvider);
       setEditing(draft);
@@ -141,8 +142,9 @@ export function ProvidersSection() {
 
   const deleteMutation = useMutation({
     mutationFn: ipc.deleteProvider,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["providers"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
       setSelectedId(null);
       setEditing(null);
       setBaseline(null);
