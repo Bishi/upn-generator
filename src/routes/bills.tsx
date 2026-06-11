@@ -261,30 +261,52 @@ function InboxChip({ children, className = "", title }: { children: ReactNode; c
 
 function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: string[]; busy: boolean; onEditSettings: () => void }) {
   const [open, setOpen] = useState(false);
+  const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const label = senders.length === 0 ? "Any sender" : senders.length === 1 ? "1 sender" : `${senders.length} senders`;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPopoverPosition(null);
+      return;
+    }
+    const updatePosition = () => {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const popoverWidth = 240;
+      setPopoverPosition({
+        top: rect.bottom + 8,
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - popoverWidth - 12)),
+      });
+    };
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
       setOpen(false);
     };
+    updatePosition();
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
     };
   }, [open]);
 
   return (
     <div ref={rootRef} className="relative inline-flex">
       <button
+        ref={buttonRef}
         type="button"
         className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-3 px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-haspopup="dialog"
@@ -295,40 +317,49 @@ function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: strin
         {label}
         <ChevronDown className="size-3" />
       </button>
-      {open && (
-        <div role="dialog" aria-label="Sender allowlist" className="absolute left-0 top-8 z-20 min-w-60 rounded-md border border-border bg-card p-3 text-left shadow-pop">
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Sender allowlist</div>
-          {senders.length > 0 ? (
-            <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto pr-1">
-              {senders.map((sender) => (
-                <div key={sender} className="font-mono text-xs text-muted-foreground">
-                  {sender}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-xs leading-relaxed text-muted-foreground">No sender filter is configured. The preview will inspect supported attachments from any sender.</div>
-          )}
-          <div className="mt-3 border-t border-border pt-3">
-            <Link
-              to="/settings"
-              search={{ tab: "delivery" }}
-              className={`${buttonVariants({ variant: "ghost", size: "sm" })} h-7 w-full justify-center text-xs`}
-              onClick={(event) => {
-                if (busy) {
-                  event.preventDefault();
-                  return;
-                }
-                setOpen(false);
-                onEditSettings();
-              }}
+      {open && popoverPosition
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              role="dialog"
+              aria-label="Sender allowlist"
+              className="fixed z-[70] w-60 rounded-md border border-border bg-card p-3 text-left shadow-pop"
+              style={{ top: popoverPosition.top, left: popoverPosition.left }}
             >
-              <Settings className="size-3.5" />
-              Edit in Settings
-            </Link>
-          </div>
-        </div>
-      )}
+              <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Sender allowlist</div>
+              {senders.length > 0 ? (
+                <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto pr-1">
+                  {senders.map((sender) => (
+                    <div key={sender} className="font-mono text-xs text-muted-foreground">
+                      {sender}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs leading-relaxed text-muted-foreground">No sender filter is configured. The preview will inspect supported attachments from any sender.</div>
+              )}
+              <div className="mt-3 border-t border-border pt-3">
+                <Link
+                  to="/settings"
+                  search={{ tab: "delivery" }}
+                  className={`${buttonVariants({ variant: "ghost", size: "sm" })} h-7 w-full justify-center text-xs`}
+                  onClick={(event) => {
+                    if (busy) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setOpen(false);
+                    onEditSettings();
+                  }}
+                >
+                  <Settings className="size-3.5" />
+                  Edit in Settings
+                </Link>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
@@ -938,6 +969,13 @@ function BillsPage() {
       .then((bs) => {
         if (loadRequestRef.current !== requestId) return;
         setBills(bs);
+        setError(null);
+        loadedPeriodIdRef.current = selected.id;
+      })
+      .catch((e) => {
+        if (loadRequestRef.current !== requestId) return;
+        setError(String(e));
+        setBills([]);
         loadedPeriodIdRef.current = selected.id;
       })
       .finally(() => {

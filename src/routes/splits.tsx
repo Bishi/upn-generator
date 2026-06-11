@@ -164,6 +164,13 @@ function SplitsPage() {
       .then((rows) => {
         if (loadRequestRef.current !== requestId) return;
         setSplits(rows);
+        setError(null);
+        loadedPeriodIdRef.current = selected.id;
+      })
+      .catch((e) => {
+        if (loadRequestRef.current !== requestId) return;
+        setError(String(e));
+        setSplits([]);
         loadedPeriodIdRef.current = selected.id;
       })
       .finally(() => {

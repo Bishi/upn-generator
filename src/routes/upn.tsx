@@ -343,6 +343,7 @@ function UpnPage() {
   const [deliveryEvents, setDeliveryEvents] = useState<UpnDeliveryEvent[]>([]);
   const [packetHashes, setPacketHashes] = useState<UpnPacketHash[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
+  const [apartmentLoadError, setApartmentLoadError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
   const loadedPeriodIdRef = useRef<number | null>(snapshot.loading ? null : selected?.id ?? null);
   const loadedApartmentsRef = useRef(!snapshot.loading);
@@ -356,6 +357,13 @@ function UpnPage() {
       .then((apartments) => {
         if (!cancelled) {
           setApartmentsConfig(apartments);
+          setApartmentLoadError(null);
+          loadedApartmentsRef.current = true;
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setApartmentLoadError(String(error));
           loadedApartmentsRef.current = true;
         }
       })
@@ -393,6 +401,7 @@ function UpnPage() {
             setSplits([]);
             setDeliveryEvents([]);
             setPacketHashes([]);
+            loadedPeriodIdRef.current = selected.id;
           }
         })
         .finally(() => {
@@ -519,6 +528,12 @@ function UpnPage() {
       {pageMessage && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {pageMessage}
+        </div>
+      )}
+
+      {apartmentLoadError && (
+        <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+          {apartmentLoadError}
         </div>
       )}
 
