@@ -1,13 +1,16 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
+import { ipc } from "@/lib/ipc";
 
 export const THEME_STORAGE_KEY = "upn-generator.theme";
+const THEME_DB_MIGRATION_KEY = "upn-generator.theme.db-migrated";
 export const DEFAULT_THEME = "refined";
 
 export const THEMES = [
@@ -26,6 +29,21 @@ export const THEMES = [
     name: "Official",
     description: "UPN-slip inspired red for document-forward testing.",
   },
+  {
+    id: "dark-crisp",
+    name: "Dark Crisp",
+    description: "Dark navy with banking-blue accents from the refined mock.",
+  },
+  {
+    id: "dark-mono",
+    name: "Dark Mono",
+    description: "High-contrast grayscale for a quieter night-mode pass.",
+  },
+  {
+    id: "dark-shadow",
+    name: "Dark Shadow",
+    description: "Near-black, low-glow theme inspired by the new mock.",
+  },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
@@ -38,7 +56,7 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function isThemeId(value: string | null): value is ThemeId {
-  return value === "refined" || value === "crisp" || value === "official";
+  return THEMES.some((theme) => theme.id === value);
 }
 
 export function applyTheme(theme: ThemeId) {
@@ -58,24 +76,82 @@ export function initializeTheme() {
   applyTheme(readStoredTheme());
 }
 
+function writeStoredTheme(theme: ThemeId) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Local persistence is a startup fallback; the SQLite setting is canonical.
+  }
+}
+
+function readThemeMigrated() {
+  try {
+    return window.localStorage.getItem(THEME_DB_MIGRATION_KEY) === "1";
+  } catch {
+    return true;
+  }
+}
+
+function writeThemeMigrated() {
+  try {
+    window.localStorage.setItem(THEME_DB_MIGRATION_KEY, "1");
+  } catch {
+    // Migration marker is best-effort; a failed marker should not block theming.
+  }
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(() => readStoredTheme());
 
   useEffect(() => {
-    applyTheme(theme);
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-    } catch {
-      // Theme persistence is optional; the CSS refined fallback remains valid.
+    let cancelled = false;
+
+    async function loadThemeFromDb() {
+      try {
+        const settings = await ipc.getAppSettings();
+        const dbTheme = isThemeId(settings.theme) ? settings.theme : DEFAULT_THEME;
+        const localTheme = readStoredTheme();
+        const shouldMigrateLocalTheme = !readThemeMigrated();
+        const nextTheme = shouldMigrateLocalTheme ? localTheme : dbTheme;
+
+        if (shouldMigrateLocalTheme) {
+          await ipc.saveAppSettings({ theme: nextTheme });
+          writeThemeMigrated();
+        }
+
+        if (!cancelled) {
+          setThemeState(nextTheme);
+          applyTheme(nextTheme);
+          writeStoredTheme(nextTheme);
+        }
+      } catch {
+        // In plain Vite preview or failed IPC startup, localStorage keeps the UI usable.
+      }
     }
-  }, [theme]);
+
+    void loadThemeFromDb();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setTheme = useCallback((nextTheme: ThemeId) => {
+    setThemeState(nextTheme);
+    applyTheme(nextTheme);
+    writeStoredTheme(nextTheme);
+    writeThemeMigrated();
+    void ipc.saveAppSettings({ theme: nextTheme }).catch(() => {
+      // Keep the immediate UI response even if persistence is temporarily unavailable.
+    });
+  }, []);
 
   const value = useMemo(
     () => ({
       theme,
-      setTheme: setThemeState,
+      setTheme,
     }),
-    [theme],
+    [theme, setTheme],
   );
 
   return (

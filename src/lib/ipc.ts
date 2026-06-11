@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppSettings,
   Apartment,
   BackupFileInfo,
   Bill,
@@ -7,9 +8,13 @@ import type {
   BillSplit,
   Building,
   EmailResult,
+  InboxConfig,
+  InboxImportResult,
   Provider,
   SmtpConfig,
   SplitRow,
+  UpnDeliveryEvent,
+  UpnPacketHash,
 } from "./types";
 
 export const ipc = {
@@ -35,6 +40,18 @@ export const ipc = {
   getSmtpConfig: () => invoke<SmtpConfig>("get_smtp_config"),
   saveSmtpConfig: (config: SmtpConfig) =>
     invoke<void>("save_smtp_config", { config }),
+  getInboxConfig: () => invoke<InboxConfig>("get_inbox_config"),
+  saveInboxConfig: (config: InboxConfig) =>
+    invoke<void>("save_inbox_config", { config }),
+  saveInboxPassword: (password: string) =>
+    invoke<void>("save_inbox_password", { password }),
+  testInboxConnection: (config: InboxConfig, password: string) =>
+    invoke<void>("test_inbox_connection", { config, password }),
+  testSmtpConnection: (config: SmtpConfig, password: string, testRecipient: string) =>
+    invoke<void>("test_smtp_connection", { config, password, testRecipient }),
+  getAppSettings: () => invoke<AppSettings>("get_app_settings"),
+  saveAppSettings: (settings: AppSettings) =>
+    invoke<AppSettings>("save_app_settings", { settings }),
   resetAllData: () => invoke<void>("reset_all_data"),
 
   // Billing periods
@@ -51,6 +68,8 @@ export const ipc = {
     invoke<Bill>("import_bill", { filePath, billingPeriodId }),
   importBills: (filePath: string, billingPeriodId: number) =>
     invoke<Bill[]>("import_bills", { filePath, billingPeriodId }),
+  importInboxAttachments: (billingPeriodId: number) =>
+    invoke<InboxImportResult[]>("import_inbox_attachments", { billingPeriodId }),
   saveBill: (bill: Bill) => invoke<Bill>("save_bill", { bill }),
   deleteBill: (id: number) => invoke<void>("delete_bill", { id }),
 
@@ -74,6 +93,10 @@ export const ipc = {
     invoke<string[]>("save_all_upns", { billingPeriodId, folderPath }),
   sendEmails: (billingPeriodId: number) =>
     invoke<EmailResult[]>("send_emails", { billingPeriodId }),
+  getUpnDeliveryEvents: (billingPeriodId: number) =>
+    invoke<UpnDeliveryEvent[]>("get_upn_delivery_events", { billingPeriodId }),
+  getUpnPacketHashes: (billingPeriodId: number) =>
+    invoke<UpnPacketHash[]>("get_upn_packet_hashes", { billingPeriodId }),
   saveSmtpPassword: (password: string) =>
     invoke<void>("save_smtp_password", { password }),
   getSmtpPassword: () => invoke<string>("get_smtp_password"),

@@ -1,31 +1,170 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState } from "react";
-import { Mail, Download, Eye, CheckCircle2, XCircle, Loader2, Files } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Mail,
+  Download,
+  Eye,
+  CheckCircle2,
+  XCircle,
+  Files,
+  ChevronDown,
+  Loader2,
+} from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import type { EmailResult, SplitRow } from "@/lib/types";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
+import type {
+  Apartment,
+  EmailResult,
+  SplitRow,
+  UpnDeliveryEvent,
+  UpnPacketHash,
+} from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { downloadPeriodUpnPdfs, sendPeriodEmails } from "@/lib/upn-actions";
 
 export const Route = createFileRoute("/upn")({
   component: UpnPage,
 });
 
-function ApartmentCard({
+function parseRecipientList(raw: string) {
+  return raw
+    .split(",")
+    .map((recipient) => recipient.trim())
+    .filter(Boolean);
+}
+
+function hasSendableRecipient(raw: string) {
+  return parseRecipientList(raw).length > 0;
+}
+
+function statusLabel(status: EmailResult["status"]) {
+  switch (status) {
+    case "sent":
+      return "sent";
+    case "blocked":
+      return "blocked";
+    case "partial":
+      return "partial";
+    case "changed":
+      return "changed";
+    default:
+      return "failed";
+  }
+}
+
+function statusClass(status: EmailResult["status"]) {
+  if (status === "sent") return "bg-success-soft text-success";
+  if (status === "blocked") return "bg-warning-soft text-warning";
+  if (status === "partial") return "bg-warning-soft text-warning";
+  if (status === "changed") return "bg-warning-soft text-warning";
+  return "bg-danger-soft text-danger";
+}
+
+function normalizedRecipients(raw: string) {
+  return parseRecipientList(raw).map((recipient) => recipient.toLowerCase()).sort();
+}
+
+function sameRecipients(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function aggregateHistoryEvents(
+  events: UpnDeliveryEvent[],
+  apartmentsById: Map<number, Apartment>,
+  packetHashesByApartmentId: Map<number, UpnPacketHash>,
+): Map<number, EmailResult> {
+  const latestAttemptByApartment = new Map<number, string>();
+  const latestSortByApartment = new Map<number, string>();
+
+  for (const event of events) {
+    const sortKey = `${event.created_at}:${String(event.id).padStart(12, "0")}`;
+    const previous = latestSortByApartment.get(event.apartment_id);
+    if (!previous || sortKey >= previous) {
+      latestSortByApartment.set(event.apartment_id, sortKey);
+      latestAttemptByApartment.set(event.apartment_id, event.attempt_id);
+    }
+  }
+
+  const result = new Map<number, EmailResult>();
+  for (const [apartmentId, attemptId] of latestAttemptByApartment) {
+    const rows = events.filter(
+      (event) => event.apartment_id === apartmentId && event.attempt_id === attemptId,
+    );
+    const statuses = new Set(rows.map((event) => event.status));
+    const status: EmailResult["status"] =
+      statuses.size === 1
+        ? (rows[0]?.status as EmailResult["status"])
+        : "partial";
+    const apartment = apartmentsById.get(apartmentId) ?? null;
+    const currentRecipients = normalizedRecipients(apartment?.contact_email ?? "");
+    const historicalRecipients = rows
+      .map((event) => event.recipient.trim().toLowerCase())
+      .filter(Boolean)
+      .sort();
+    const currentPacketHash = packetHashesByApartmentId.get(apartmentId);
+    const historicalHashes = [...new Set(rows.map((event) => event.attachment_sha256))].filter(
+      Boolean,
+    );
+    const matchesRecipients = sameRecipients(currentRecipients, historicalRecipients);
+    const matchesPacket =
+      Boolean(currentPacketHash?.attachment_sha256) &&
+      historicalHashes.length === 1 &&
+      historicalHashes[0] === currentPacketHash?.attachment_sha256;
+    const isCurrent = matchesRecipients && matchesPacket;
+    const displayStatus: EmailResult["status"] = isCurrent ? status : "changed";
+    const errors = rows
+      .map((event) => event.error)
+      .filter(Boolean)
+      .filter((error, index, all) => all.indexOf(error) === index);
+    if (!isCurrent) {
+      errors.unshift(
+        currentPacketHash?.error
+          ? `Current packet could not be checked: ${currentPacketHash.error}`
+          : "Current recipients or UPN packet changed since this delivery attempt.",
+      );
+    }
+
+    result.set(apartmentId, {
+      apartment_id: apartmentId,
+      apartment_label: apartment?.label ?? `Apartment ${apartmentId}`,
+      email: apartment?.contact_email ?? rows.map((event) => event.original_recipient).join(", "),
+      status: displayStatus,
+      recipient: rows.map((event) => event.recipient).join(", "),
+      original_recipient: rows.map((event) => event.original_recipient).join(", "),
+      success: displayStatus === "sent",
+      error: errors.length > 0 ? errors.join("; ") : null,
+    });
+  }
+
+  return result;
+}
+
+function ApartmentRows({
   billingPeriodId,
   apartmentId,
   apartmentLabel,
+  apartmentUnitCode,
+  contactEmail,
   splits,
   emailResult,
+  expanded,
+  onToggle,
   onPreviewError,
 }: {
   billingPeriodId: number;
   apartmentId: number;
   apartmentLabel: string;
+  apartmentUnitCode: string;
+  contactEmail: string;
   splits: SplitRow[];
   emailResult?: EmailResult;
+  expanded: boolean;
+  onToggle: () => void;
   onPreviewError: (message: string | null) => void;
 }) {
   const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
@@ -64,117 +203,205 @@ function ApartmentCard({
   };
 
   const total = splits.reduce((s, r) => s + r.split_amount_cents, 0);
+  const hasRecipient = hasSendableRecipient(contactEmail);
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 shadow-card">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-semibold">{apartmentLabel}</h3>
-          <p className="text-xs text-muted-foreground">
-            {splits.length} UPN{splits.length === 1 ? "" : "s"} in one apartment packet
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
+    <Fragment>
+      <tr
+        className="cursor-pointer border-b border-border hover:bg-accent/10"
+        onClick={onToggle}
+      >
+        <td className="px-3 py-3">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
+            className="flex min-w-0 items-center gap-2 text-left"
+          >
+            <ChevronDown
+              className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
+                expanded ? "" : "-rotate-90"
+              }`}
+            />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">{apartmentLabel}</div>
+              <div className="font-mono text-[11px] text-muted-foreground">
+                {apartmentUnitCode || "No unit code"} - {splits.length} UPN
+                {splits.length === 1 ? "" : "s"}
+              </div>
+            </div>
+          </button>
+        </td>
+        <td className="px-3 py-3">
+          {hasRecipient ? (
+            <span className="font-mono text-xs text-muted-foreground">
+              {contactEmail}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
+              <Mail className="size-3" />
+              no email
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-3 text-right">
+          {emailResult ? (
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${statusClass(
+                emailResult.status,
+              )}`}
+            >
+              {emailResult.status === "sent" ? (
+                <CheckCircle2 className="size-3" />
+              ) : (
+                <XCircle className="size-3" />
+              )}
+              {statusLabel(emailResult.status)}
+            </span>
+          ) : hasRecipient ? (
+            <span className="inline-flex rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
+              ready
+            </span>
+          ) : (
+            <span className="inline-flex rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
+              hold
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-3 text-right font-mono font-semibold">
+          {formatEur(total)} EUR
+        </td>
+        <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={previewAll}
             disabled={previewingAll || splits.length === 0}
+            className="w-full"
           >
             {previewingAll ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <Files className="size-3.5" />
+              <Eye className="size-3.5" />
             )}
-            Preview All
+            Preview all
           </Button>
-          {emailResult && (
-            <span
-              className={`flex items-center gap-1 text-xs ${
-                emailResult.success ? "text-success" : "text-danger"
-              }`}
-            >
-              {emailResult.success ? (
-                <CheckCircle2 className="size-3.5" />
-              ) : (
-                <XCircle className="size-3.5" />
-              )}
-              {emailResult.success ? "Sent" : emailResult.error ?? "Failed"}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        {splits.map((s) => (
-          <div
-            key={s.bill_id}
-            className="flex items-center justify-between text-sm"
-          >
-            <span className="text-muted-foreground truncate max-w-40">
-              {s.provider_name ?? s.bill_source_filename}
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="font-mono font-medium">
-                {formatEur(s.split_amount_cents)} EUR
-              </span>
+        </td>
+      </tr>
+      {expanded &&
+        splits.map((split) => (
+          <tr key={split.bill_id} className="border-b border-border bg-surface-2">
+            <td colSpan={2} className="px-9 py-2">
+              <div className="text-sm font-medium">
+                {split.provider_name ?? split.bill_source_filename}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {split.bill_source_filename}
+              </div>
+            </td>
+            <td />
+            <td className="px-3 py-2 text-right font-mono text-sm text-muted-foreground">
+              {formatEur(split.split_amount_cents)} EUR
+            </td>
+            <td className="px-3 py-2">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => previewUpn(s.bill_id)}
-                disabled={loadingPreview === s.bill_id}
-                title="Preview UPN"
+                onClick={() => previewUpn(split.bill_id)}
+                disabled={loadingPreview === split.bill_id}
+                className="w-full"
               >
-                {loadingPreview === s.bill_id ? (
+                {loadingPreview === split.bill_id ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
                   <Eye className="size-3.5" />
                 )}
                 Preview
               </Button>
-            </div>
-          </div>
+            </td>
+          </tr>
         ))}
-      </div>
-
-      <div className="border-t border-border pt-2 flex justify-between text-sm font-semibold">
-        <span>Total</span>
-        <span className="font-mono">{formatEur(total)} EUR</span>
-      </div>
-    </div>
+    </Fragment>
   );
+
 }
 
 function UpnPage() {
-  const [splits, setSplits] = useState<SplitRow[]>([]);
-  const [loadingSplits, setLoadingSplits] = useState(false);
+  const { selected } = useBillingPeriodSelection();
+  const snapshot = useWorkflowSnapshotContext();
+  const [splits, setSplits] = useState<SplitRow[]>(() => snapshot.splits);
+  const [apartmentsConfig, setApartmentsConfig] = useState<Apartment[]>(
+    () => snapshot.apartments,
+  );
+  const [loadingApartments, setLoadingApartments] = useState(
+    () => snapshot.apartments.length === 0,
+  );
+  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.splits.length === 0);
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
+  const [deliveryEvents, setDeliveryEvents] = useState<UpnDeliveryEvent[]>([]);
+  const [packetHashes, setPacketHashes] = useState<UpnPacketHash[]>([]);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const {
-    years,
-    yearPeriods,
-    selectedYear,
-    selected,
-    setSelectedYear,
-    setSelected,
-  } = useBillingPeriodSelection();
+  const loadedPeriodIdRef = useRef<number | null>(
+    snapshot.splits.length > 0 ? selected?.id ?? null : null,
+  );
+  const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (apartmentsConfig.length === 0) setLoadingApartments(true);
+    void ipc
+      .getApartments()
+      .then((apartments) => {
+        if (!cancelled) setApartmentsConfig(apartments);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingApartments(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const requestId = ++loadRequestRef.current;
     if (selected?.id) {
       setEmailResults([]);
-      setSplits([]);
-      setLoadingSplits(true);
-      void ipc.getSplits(selected.id).then((rows) => {
-        if (loadRequestRef.current !== requestId) return;
-        setSplits(rows);
-        setLoadingSplits(false);
-      });
+      if (loadedPeriodIdRef.current !== selected.id || splits.length === 0) {
+        setLoadingSplits(true);
+      }
+      void Promise.all([
+        ipc.getSplits(selected.id),
+        ipc.getUpnDeliveryEvents(selected.id),
+        ipc.getUpnPacketHashes(selected.id),
+      ])
+        .then(([rows, events, hashes]) => {
+          if (loadRequestRef.current !== requestId) return;
+          setSplits(rows);
+          setDeliveryEvents(events);
+          setPacketHashes(hashes);
+          loadedPeriodIdRef.current = selected.id;
+          setPageMessage(null);
+        })
+        .catch((error) => {
+          if (loadRequestRef.current === requestId) {
+            setPageMessage(String(error));
+            setSplits([]);
+            setDeliveryEvents([]);
+            setPacketHashes([]);
+          }
+        })
+        .finally(() => {
+          if (loadRequestRef.current === requestId) setLoadingSplits(false);
+        });
     } else {
       setSplits([]);
+      setDeliveryEvents([]);
+      setPacketHashes([]);
       setLoadingSplits(false);
     }
     return () => {
@@ -184,11 +411,17 @@ function UpnPage() {
 
   const sendEmails = async () => {
     if (!selected?.id) return;
-    setPageMessage(null);
-    setSending(true);
-    try {
-      const results = await ipc.sendEmails(selected.id);
+      setPageMessage(null);
+      setSending(true);
+      try {
+      const results = await sendPeriodEmails(selected.id);
       setEmailResults(results);
+      const [events, hashes] = await Promise.all([
+        ipc.getUpnDeliveryEvents(selected.id),
+        ipc.getUpnPacketHashes(selected.id),
+      ]);
+      setDeliveryEvents(events);
+      setPacketHashes(hashes);
     } catch (e) {
       setPageMessage(String(e));
     } finally {
@@ -198,12 +431,11 @@ function UpnPage() {
 
   const downloadAll = async () => {
     if (!selected?.id) return;
-    setDownloading(true);
-    try {
-      const folder = await open({ directory: true, title: "Choose folder to save UPN PDFs" });
-      if (!folder || typeof folder !== "string") return;
-      const saved = await ipc.saveAllUpns(selected.id, folder);
-      setPageMessage(`Saved ${saved.length} PDF(s) to ${folder}`);
+      setDownloading(true);
+      try {
+      const result = await downloadPeriodUpnPdfs(selected.id);
+      if (!result) return;
+      setPageMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
     } catch (e) {
       setPageMessage(String(e));
     } finally {
@@ -211,31 +443,45 @@ function UpnPage() {
     }
   };
 
-  const byApartment = new Map<number, { label: string; splits: SplitRow[] }>();
+  const apartmentConfigById = new Map<number, Apartment>(
+    apartmentsConfig.flatMap((apartment) =>
+      apartment.id === null ? [] : [[apartment.id, apartment]],
+    ),
+  );
+  const historyResultsByApartmentId = aggregateHistoryEvents(
+    deliveryEvents,
+    apartmentConfigById,
+    new Map(packetHashes.map((hash) => [hash.apartment_id, hash])),
+  );
+  const runResultsByApartmentId = new Map(
+    emailResults.map((result) => [result.apartment_id, result]),
+  );
+  const byApartment = new Map<number, { label: string; unitCode: string; contactEmail: string; splits: SplitRow[] }>();
   for (const s of splits) {
     if (!byApartment.has(s.apartment_id)) {
-      byApartment.set(s.apartment_id, { label: s.apartment_label, splits: [] });
+      byApartment.set(s.apartment_id, {
+        label: s.apartment_label,
+        unitCode: s.apartment_unit_code,
+        contactEmail: apartmentConfigById.get(s.apartment_id)?.contact_email ?? "",
+        splits: [],
+      });
     }
     byApartment.get(s.apartment_id)!.splits.push(s);
   }
   const apartments = [...byApartment.entries()].sort((a, b) =>
     a[1].label.localeCompare(b[1].label)
   );
+  const totalSlipCount = splits.length;
+  const readyRecipientCount = apartments.filter(([, apartment]) =>
+    hasSendableRecipient(apartment.contactEmail),
+  ).length;
+  const missingRecipientCount = Math.max(0, apartments.length - readyRecipientCount);
+  const loadingUpnData = loadingSplits || loadingApartments;
 
   return (
     <BillingPageShell
       title="UPN Preview"
       subtitle={null}
-      years={years}
-      selectedYear={selectedYear}
-      onSelectYear={setSelectedYear}
-      yearPeriods={yearPeriods}
-      selected={selected}
-      onSelectPeriod={(period) => {
-        setSelected(period);
-        setSplits([]);
-        setEmailResults([]);
-      }}
       actions={
         <>
           <Button
@@ -262,6 +508,27 @@ function UpnPage() {
         </div>
       )}
 
+      {!loadingUpnData && apartments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+          <span className="inline-flex items-center gap-2 rounded-md bg-success-soft px-3 py-1 text-xs font-semibold text-success">
+            <CheckCircle2 className="size-3.5" />
+            {readyRecipientCount} ready
+            <span className="font-normal text-muted-foreground">recipient on file</span>
+          </span>
+          {missingRecipientCount > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-md bg-warning-soft px-3 py-1 text-xs font-semibold text-warning">
+              <AlertTriangle className="size-3.5" />
+              {missingRecipientCount} missing email
+            </span>
+          )}
+          <span className="inline-flex items-center gap-2 rounded-md bg-surface-3 px-3 py-1 text-xs font-semibold text-muted-foreground">
+            <Files className="size-3.5" />
+            {totalSlipCount} slips
+            <span className="font-normal">across {apartments.length} packets</span>
+          </span>
+        </div>
+      )}
+
       {!selected && (
         <p className="text-muted-foreground text-sm">
           Select a billing period to view UPN forms.
@@ -270,7 +537,7 @@ function UpnPage() {
 
       {selected && splits.length === 0 && (
         <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground min-h-[132px] flex items-center justify-center">
-          {loadingSplits ? (
+          {loadingUpnData ? (
             <div className="text-center">
               <div className="text-sm font-medium text-foreground">Loading UPN data...</div>
               <div className="text-sm text-muted-foreground">
@@ -282,7 +549,7 @@ function UpnPage() {
               <span>No splits found. Go to Splits and click Recalculate first.</span>
               <Link
                 to="/splits"
-                className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+                className={buttonVariants()}
               >
                 Go to Splits
               </Link>
@@ -291,19 +558,56 @@ function UpnPage() {
         </div>
       )}
 
-      {!loadingSplits && apartments.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {apartments.map(([aptId, { label, splits: aptSplits }]) => (
-            <ApartmentCard
-              key={aptId}
-              billingPeriodId={selected!.id!}
-              apartmentId={aptId}
-              apartmentLabel={label}
-              splits={aptSplits}
-              emailResult={emailResults.find((r) => r.apartment_label === label)}
-              onPreviewError={setPageMessage}
-            />
-          ))}
+      {!loadingUpnData && apartments.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-surface-2 text-left text-xs font-medium text-muted-foreground">
+                <th className="px-3 pt-3.5 pb-2.5">Apartment</th>
+                <th className="px-3 pt-3.5 pb-2.5">Recipient</th>
+                <th className="px-3 pt-3.5 pb-2.5 text-right">Status</th>
+                <th className="px-3 pt-3.5 pb-2.5 text-right">Total</th>
+                <th className="w-32 px-3 pt-3.5 pb-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {apartments.map(([aptId, { label, unitCode, contactEmail, splits: aptSplits }]) => (
+                <ApartmentRows
+                  key={aptId}
+                  billingPeriodId={selected!.id!}
+                  apartmentId={aptId}
+                  apartmentLabel={label}
+                  apartmentUnitCode={unitCode}
+                  contactEmail={contactEmail}
+                  splits={aptSplits}
+                  emailResult={
+                    runResultsByApartmentId.get(aptId) ??
+                    historyResultsByApartmentId.get(aptId)
+                  }
+                  expanded={expandedApartmentId === aptId}
+                  onToggle={() =>
+                    setExpandedApartmentId((current) =>
+                      current === aptId ? null : aptId,
+                    )
+                  }
+                  onPreviewError={setPageMessage}
+                />
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-surface-2 font-semibold">
+                <td colSpan={3} className="px-3 py-2 text-xs text-muted-foreground">
+                  {apartments.length} packet{apartments.length === 1 ? "" : "s"}
+                </td>
+                <td className="px-3 py-2 text-right font-mono">
+                  {formatEur(
+                    splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
+                  )} EUR
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
         </div>
       )}
 
@@ -313,12 +617,17 @@ function UpnPage() {
           <div className="flex flex-col gap-1.5">
             {emailResults.map((r, i) => (
               <div key={i} className="flex items-center gap-2 text-sm">
-                {r.success ? (
+                {r.status === "sent" ? (
                   <CheckCircle2 className="size-4 shrink-0 text-success" />
                 ) : (
-                  <XCircle className="size-4 shrink-0 text-danger" />
+                  <XCircle
+                    className={`size-4 shrink-0 ${
+                      r.status === "failed" ? "text-danger" : "text-warning"
+                    }`}
+                  />
                 )}
                 <span className="font-medium">{r.apartment_label}</span>
+                <span className="text-muted-foreground">{statusLabel(r.status)}</span>
                 <span className="text-muted-foreground">{r.email}</span>
                 {r.error && (
                   <span className="text-xs text-danger">{r.error}</span>

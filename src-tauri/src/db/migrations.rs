@@ -335,10 +335,75 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             port INTEGER NOT NULL DEFAULT 587,
             username TEXT NOT NULL DEFAULT '',
             from_email TEXT NOT NULL DEFAULT '',
-            use_tls INTEGER NOT NULL DEFAULT 1
+            use_tls INTEGER NOT NULL DEFAULT 1,
+            allowlist_enabled INTEGER NOT NULL DEFAULT 1,
+            recipient_allowlist TEXT NOT NULL DEFAULT ''
         );
 
         INSERT OR IGNORE INTO smtp_config (id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS inbox_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            host TEXT NOT NULL DEFAULT '',
+            port INTEGER NOT NULL DEFAULT 993,
+            username TEXT NOT NULL DEFAULT '',
+            password TEXT NOT NULL DEFAULT '',
+            use_tls INTEGER NOT NULL DEFAULT 1,
+            folder TEXT NOT NULL DEFAULT 'INBOX',
+            days_to_scan INTEGER NOT NULL DEFAULT 45,
+            sender_allowlist TEXT NOT NULL DEFAULT ''
+        );
+
+        INSERT OR IGNORE INTO inbox_config (id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS inbox_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            billing_period_id INTEGER NOT NULL REFERENCES billing_periods(id),
+            folder TEXT NOT NULL DEFAULT '',
+            uid_validity INTEGER,
+            message_uid INTEGER,
+            message_id TEXT NOT NULL DEFAULT '',
+            sender TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            attachment_filename TEXT NOT NULL DEFAULT '',
+            attachment_sha256 TEXT NOT NULL DEFAULT '',
+            bill_ids TEXT NOT NULL DEFAULT '',
+            bill_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT '',
+            error_text TEXT NOT NULL DEFAULT '',
+            imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS inbox_bill_hashes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            billing_period_id INTEGER NOT NULL REFERENCES billing_periods(id),
+            inbox_import_id INTEGER REFERENCES inbox_imports(id) ON DELETE CASCADE,
+            bill_id INTEGER REFERENCES bills(id),
+            bill_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(billing_period_id, bill_hash)
+        );
+
+        CREATE TABLE IF NOT EXISTS upn_delivery_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id TEXT NOT NULL DEFAULT '',
+            billing_period_id INTEGER NOT NULL REFERENCES billing_periods(id),
+            apartment_id INTEGER NOT NULL REFERENCES apartments(id),
+            delivery_type TEXT NOT NULL DEFAULT 'email',
+            status TEXT NOT NULL DEFAULT '',
+            recipient TEXT NOT NULL DEFAULT '',
+            original_recipient TEXT NOT NULL DEFAULT '',
+            attachment_sha256 TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            theme TEXT NOT NULL DEFAULT 'refined'
+        );
+
+        INSERT OR IGNORE INTO app_settings (id, theme) VALUES (1, 'refined');
         ",
     )
     .map_err(|e| e.to_string())?;
@@ -357,6 +422,14 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     );
     let _ = conn.execute(
         "ALTER TABLE smtp_config ADD COLUMN password TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE smtp_config ADD COLUMN allowlist_enabled INTEGER NOT NULL DEFAULT 1",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE smtp_config ADD COLUMN recipient_allowlist TEXT NOT NULL DEFAULT ''",
         [],
     );
     let _ = conn.execute(
@@ -386,6 +459,36 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     );
     let _ = conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_apartment_label ON apartments(building_id, label)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_imports_period_hash_status
+         ON inbox_imports(billing_period_id, attachment_sha256, status)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_bill_hashes_period_hash
+         ON inbox_bill_hashes(billing_period_id, bill_hash)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_period
+         ON upn_delivery_events(billing_period_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_apartment
+         ON upn_delivery_events(apartment_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_attempt
+         ON upn_delivery_events(attempt_id)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upn_delivery_events_latest
+         ON upn_delivery_events(billing_period_id, apartment_id, created_at)",
         [],
     );
 
@@ -425,14 +528,23 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
         DELETE FROM bill_splits;
+        DELETE FROM inbox_bill_hashes;
+        DELETE FROM upn_delivery_events;
         DELETE FROM bills;
         DELETE FROM billing_periods;
+        DELETE FROM inbox_imports;
         DELETE FROM apartments;
         DELETE FROM providers;
         UPDATE building SET name='', address='', city='', postal_code='' WHERE id=1;
         UPDATE smtp_config
-        SET host='', port=587, username='', from_email='', use_tls=1, password=''
+        SET host='', port=587, username='', from_email='', use_tls=1, password='',
+            allowlist_enabled=1, recipient_allowlist=''
         WHERE id=1;
+        UPDATE inbox_config
+        SET host='', port=993, username='', password='', use_tls=1, folder='INBOX',
+            days_to_scan=45, sender_allowlist=''
+        WHERE id=1;
+        UPDATE app_settings SET theme='refined' WHERE id=1;
         ",
     )
     .map_err(|e| e.to_string())?;

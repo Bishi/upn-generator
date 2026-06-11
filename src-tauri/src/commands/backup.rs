@@ -56,6 +56,44 @@ fn backup_output_path(output_path: &str) -> Result<&Path, String> {
     Ok(path)
 }
 
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+        [table],
+        |_| Ok(()),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+    .map(|row| row.is_some())
+}
+
+fn attached_table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM restore_db.sqlite_master WHERE type='table' AND name=?1",
+        [table],
+        |_| Ok(()),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+    .map(|row| row.is_some())
+}
+
+fn attached_column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA restore_db.table_info({})", table))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?;
+
+    for row in rows {
+        if row.map_err(|e| e.to_string())? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[tauri::command]
 pub fn create_db_backup(db: State<DbState>, output_path: String) -> Result<BackupFileInfo, String> {
     let backup_path = backup_output_path(&output_path)?;
@@ -71,6 +109,11 @@ pub fn create_db_backup(db: State<DbState>, output_path: String) -> Result<Backu
     backup_conn
         .execute("UPDATE smtp_config SET password='' WHERE id=1", [])
         .map_err(|e| e.to_string())?;
+    if table_exists(&backup_conn, "inbox_config")? {
+        backup_conn
+            .execute("UPDATE inbox_config SET password='' WHERE id=1", [])
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(BackupFileInfo { path: output_path })
 }
@@ -95,18 +138,32 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
     let restore_result = (|| -> Result<(), String> {
         ensure_required_tables(&conn)?;
         ensure_required_tables_on_attached(&conn)?;
+        let has_inbox_config = attached_table_exists(&conn, "inbox_config")?;
+        let has_inbox_imports = attached_table_exists(&conn, "inbox_imports")?;
+        let has_inbox_bill_hashes = attached_table_exists(&conn, "inbox_bill_hashes")?;
+        let has_app_settings = attached_table_exists(&conn, "app_settings")?;
+        let has_upn_delivery_events = attached_table_exists(&conn, "upn_delivery_events")?;
+        let has_smtp_allowlist_enabled =
+            attached_column_exists(&conn, "smtp_config", "allowlist_enabled")?;
+        let has_smtp_recipient_allowlist =
+            attached_column_exists(&conn, "smtp_config", "recipient_allowlist")?;
 
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
         tx.execute_batch(
             "
             DELETE FROM bill_splits;
+            DELETE FROM inbox_bill_hashes;
+            DELETE FROM upn_delivery_events;
             DELETE FROM bills;
             DELETE FROM billing_periods;
             DELETE FROM apartments;
             DELETE FROM providers;
             DELETE FROM building;
             DELETE FROM smtp_config;
+            DELETE FROM inbox_imports;
+            DELETE FROM inbox_config;
+            DELETE FROM app_settings;
             ",
         )
         .map_err(|e| e.to_string())?;
@@ -164,6 +221,127 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
             SELECT id, host, port, username, from_email, use_tls, ''
             FROM restore_db.smtp_config;
             ",
+        )
+        .map_err(|e| e.to_string())?;
+
+        if has_smtp_allowlist_enabled {
+            tx.execute(
+                "UPDATE smtp_config
+                 SET allowlist_enabled = (
+                    SELECT allowlist_enabled FROM restore_db.smtp_config WHERE id=1
+                 )
+                 WHERE id=1",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_smtp_recipient_allowlist {
+            tx.execute(
+                "UPDATE smtp_config
+                 SET recipient_allowlist = (
+                    SELECT recipient_allowlist FROM restore_db.smtp_config WHERE id=1
+                 )
+                 WHERE id=1",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_inbox_config {
+            tx.execute(
+                "INSERT INTO inbox_config (
+                    id, host, port, username, password, use_tls, folder,
+                    days_to_scan, sender_allowlist
+                 )
+                 SELECT
+                    id, host, port, username, '', use_tls, folder,
+                    days_to_scan, sender_allowlist
+                 FROM restore_db.inbox_config WHERE id=1",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO inbox_config (
+                id, host, port, username, password, use_tls, folder,
+                days_to_scan, sender_allowlist
+             ) VALUES (1, '', 993, '', '', 1, 'INBOX', 45, '')",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+        if has_inbox_imports {
+            tx.execute_batch(
+                "
+                INSERT INTO inbox_imports (
+                    id, billing_period_id, folder, uid_validity, message_uid,
+                    message_id, sender, subject, attachment_filename,
+                    attachment_sha256, bill_ids, bill_count, status,
+                    error_text, imported_at
+                )
+                SELECT
+                    id, billing_period_id, folder, uid_validity, message_uid,
+                    message_id, sender, subject, attachment_filename,
+                    attachment_sha256, bill_ids, bill_count, status,
+                    error_text, imported_at
+                FROM restore_db.inbox_imports;
+                ",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_inbox_bill_hashes {
+            tx.execute_batch(
+                "
+                INSERT INTO inbox_bill_hashes (
+                    id, billing_period_id, inbox_import_id, bill_id,
+                    bill_hash, created_at
+                )
+                SELECT
+                    id, billing_period_id, inbox_import_id, bill_id,
+                    bill_hash, created_at
+                FROM restore_db.inbox_bill_hashes;
+                ",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_upn_delivery_events {
+            tx.execute_batch(
+                "
+                INSERT INTO upn_delivery_events (
+                    id, attempt_id, billing_period_id, apartment_id,
+                    delivery_type, status, recipient, original_recipient,
+                    attachment_sha256, error, created_at
+                )
+                SELECT
+                    id, attempt_id, billing_period_id, apartment_id,
+                    delivery_type, status, recipient, original_recipient,
+                    attachment_sha256, error, created_at
+                FROM restore_db.upn_delivery_events;
+                ",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_app_settings {
+            tx.execute(
+                "INSERT INTO app_settings (id, theme)
+                 SELECT id, theme FROM restore_db.app_settings WHERE id=1",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            tx.execute(
+                "INSERT INTO app_settings (id, theme) VALUES (1, 'refined')",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO app_settings (id, theme) VALUES (1, 'refined')",
+            [],
         )
         .map_err(|e| e.to_string())?;
 

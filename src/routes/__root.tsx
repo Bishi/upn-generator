@@ -1,15 +1,21 @@
-import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Link, Outlet, useLocation } from "@tanstack/react-router";
 import { getVersion } from "@tauri-apps/api/app";
 import { type ReactNode, useEffect, useState } from "react";
 import {
-  Banknote,
-  FileText,
-  SplitSquareHorizontal,
   CreditCard,
+  FileText,
+  Gauge,
+  Banknote,
   Settings,
+  SplitSquareHorizontal,
 } from "lucide-react";
-import { WorkflowStatusBar } from "@/components/WorkflowStatusBar";
 import { BillingPeriodSelectionProvider } from "@/lib/billing-period-selection";
+import { WorkflowContextBar } from "@/components/WorkflowContextBar";
+import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
+import {
+  useWorkflowSnapshotContext,
+  WorkflowSnapshotProvider,
+} from "@/lib/workflow-snapshot";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -41,6 +47,7 @@ function RootLayout() {
         <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
           Monthly Workflow
         </div>
+        <NavLink to="/" icon={<Gauge className="size-4" />} label="Dashboard" />
         <NavLink to="/bills" icon={<FileText className="size-4" />} label="Bills" />
         <NavLink to="/splits" icon={<SplitSquareHorizontal className="size-4" />} label="Splits" />
         <NavLink to="/upn" icon={<CreditCard className="size-4" />} label="UPN Preview" />
@@ -58,13 +65,39 @@ function RootLayout() {
           )}
         </div>
       </nav>
-      <main className="flex-1 overflow-y-scroll overflow-x-hidden p-6 [scrollbar-gutter:stable]">
-        <BillingPeriodSelectionProvider>
-          <WorkflowStatusBar />
-          <Outlet />
-        </BillingPeriodSelectionProvider>
-      </main>
+      <BillingPeriodSelectionProvider>
+        <ShellContent />
+      </BillingPeriodSelectionProvider>
     </div>
+  );
+}
+
+function ShellContent() {
+  const location = useLocation();
+  const { allPeriods, selected } = useBillingPeriodSelection();
+  const showContextBar =
+    location.pathname === "/" ||
+    location.pathname.startsWith("/bills") ||
+    location.pathname.startsWith("/splits") ||
+    location.pathname.startsWith("/upn");
+
+  return (
+    <WorkflowSnapshotProvider selectedPeriodId={selected?.id} periods={allPeriods}>
+      <ShellFrame showContextBar={showContextBar} />
+    </WorkflowSnapshotProvider>
+  );
+}
+
+function ShellFrame({ showContextBar }: { showContextBar: boolean }) {
+  const snapshot = useWorkflowSnapshotContext();
+
+  return (
+    <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      {showContextBar && <WorkflowContextBar snapshot={snapshot} />}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-6">
+        <Outlet />
+      </div>
+    </main>
   );
 }
 

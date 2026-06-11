@@ -4,10 +4,11 @@ import { RefreshCw, Check, X } from "lucide-react";
 import { notifyWorkflowStatusChanged } from "@/lib/workflow-status";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/splits")({
@@ -132,19 +133,16 @@ function EditableCell({
 }
 
 function SplitsPage() {
-  const [splits, setSplits] = useState<SplitRow[]>([]);
-  const [loadingSplits, setLoadingSplits] = useState(false);
+  const { selected } = useBillingPeriodSelection();
+  const snapshot = useWorkflowSnapshotContext();
+  const [splits, setSplits] = useState<SplitRow[]>(() => snapshot.splits);
+  const [loadingSplits, setLoadingSplits] = useState(() => snapshot.splits.length === 0);
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
-  const {
-    years,
-    yearPeriods,
-    selectedYear,
-    selected,
-    setSelectedYear,
-    setSelected,
-  } = useBillingPeriodSelection();
+  const loadedPeriodIdRef = useRef<number | null>(
+    snapshot.splits.length > 0 ? selected?.id ?? null : null,
+  );
 
   const loadSplits = async (periodId: number) => {
     const rows = await ipc.getSplits(periodId);
@@ -159,13 +157,19 @@ function SplitsPage() {
       return;
     }
 
-    setSplits([]);
-    setLoadingSplits(true);
-    void ipc.getSplits(selected.id).then((rows) => {
-      if (loadRequestRef.current !== requestId) return;
-      setSplits(rows);
-      setLoadingSplits(false);
-    });
+    if (loadedPeriodIdRef.current !== selected.id || splits.length === 0) {
+      setLoadingSplits(true);
+    }
+    void ipc
+      .getSplits(selected.id)
+      .then((rows) => {
+        if (loadRequestRef.current !== requestId) return;
+        setSplits(rows);
+        loadedPeriodIdRef.current = selected.id;
+      })
+      .finally(() => {
+        if (loadRequestRef.current === requestId) setLoadingSplits(false);
+      });
     return () => {
       loadRequestRef.current += 1;
     };
@@ -193,6 +197,22 @@ function SplitsPage() {
   };
 
   const { apartments, bills, matrix } = buildMatrix(splits);
+  const splitBasisCounts = splits.reduce(
+    (counts, split) => {
+      const current = counts.get(split.split_basis) ?? 0;
+      counts.set(split.split_basis, current + 1);
+      return counts;
+    },
+    new Map<SplitRow["split_basis"], number>(),
+  );
+  const billBasisCounts = bills.reduce(
+    (counts, [, info]) => {
+      const current = counts.get(info.splitBasis) ?? 0;
+      counts.set(info.splitBasis, current + 1);
+      return counts;
+    },
+    new Map<SplitRow["split_basis"], number>(),
+  );
 
   const apartmentTotals = new Map<number, number>();
   for (const s of splits) {
@@ -206,15 +226,6 @@ function SplitsPage() {
     <BillingPageShell
       title="Splits"
       subtitle={null}
-      years={years}
-      selectedYear={selectedYear}
-      onSelectYear={setSelectedYear}
-      yearPeriods={yearPeriods}
-      selected={selected}
-      onSelectPeriod={(period) => {
-        setSelected(period);
-        setSplits([]);
-      }}
       actions={
         <Button onClick={recalculate} disabled={!selected || calculating}>
           <RefreshCw className={`size-4 mr-2 ${calculating ? "animate-spin" : ""}`} />
@@ -225,6 +236,32 @@ function SplitsPage() {
       {error && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {error}
+        </div>
+      )}
+
+      {!loadingSplits && splits.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+            Split method
+          </span>
+          <MethodChip
+            label="m2"
+            detail={`${billBasisCounts.get("m2_percentage") ?? 0} bill${(billBasisCounts.get("m2_percentage") ?? 0) === 1 ? "" : "s"}`}
+            tone="neutral"
+          />
+          <MethodChip
+            label="people"
+            detail={`${billBasisCounts.get("occupants") ?? 0} bill${(billBasisCounts.get("occupants") ?? 0) === 1 ? "" : "s"}`}
+            tone="accent"
+          />
+          <MethodChip
+            label="equal"
+            detail={`${billBasisCounts.get("equal_apartments") ?? 0} bill${(billBasisCounts.get("equal_apartments") ?? 0) === 1 ? "" : "s"}`}
+            tone="warn"
+          />
+          <span className="ml-auto text-xs text-muted-foreground">
+            {splitBasisCounts.size} active method{splitBasisCounts.size === 1 ? "" : "s"}
+          </span>
         </div>
       )}
 
@@ -271,10 +308,14 @@ function SplitsPage() {
           <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="bg-surface-2 text-xs font-medium text-muted-foreground">
-                <th className="px-3 py-2 text-left">Bill</th>
-                <th className="px-3 py-2 text-right">Total</th>
+                <th className="sticky left-0 z-10 min-w-48 bg-surface-2 px-3 pt-3.5 pb-2.5 text-left">
+                  Bill
+                </th>
+                <th className="border-r border-border-2 px-3 pt-3.5 pb-2.5 text-right">
+                  Total
+                </th>
                 {apartments.map(([id, apt]) => (
-                  <th key={id} className="px-3 py-2 text-right whitespace-nowrap">
+                  <th key={id} className="px-3 pt-3.5 pb-2.5 text-right whitespace-nowrap">
                     <div>{apt.label}</div>
                     <div className="text-[11px] font-normal text-muted-foreground">
                       {apt.unitCode || "No code"}
@@ -285,8 +326,11 @@ function SplitsPage() {
             </thead>
             <tbody>
               {bills.map(([billId, info]) => (
-                <tr key={billId} className="border-t border-border hover:bg-accent/10">
-                  <td className="px-3 py-2">
+                <tr
+                  key={billId}
+                  className="border-t border-border odd:bg-card even:bg-surface-2/50 hover:bg-accent/10"
+                >
+                  <td className="sticky left-0 z-10 bg-inherit px-3 py-2">
                     <div className="flex items-start gap-2 max-w-56">
                       {info.parseNote && <ReviewIndicator note={info.parseNote} />}
                       <div className="min-w-0">
@@ -304,7 +348,7 @@ function SplitsPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right font-mono font-medium">
+                  <td className="border-r border-border-2 px-3 py-2 text-right font-mono font-medium">
                     {formatEur(info.total)} EUR
                   </td>
                   {apartments.map(([aptId]) => {
@@ -329,8 +373,8 @@ function SplitsPage() {
             </tbody>
             <tfoot>
               <tr className="border-t border-border bg-surface-2 font-semibold">
-                <td className="px-3 py-2">Total per Apartment</td>
-                <td className="px-3 py-2 text-right font-mono">
+                <td className="sticky left-0 z-10 bg-surface-2 px-3 py-2">Total per Apartment</td>
+                <td className="border-r border-border-2 px-3 py-2 text-right font-mono">
                   {formatEur(
                     splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
                   )}
@@ -350,12 +394,35 @@ function SplitsPage() {
         <div className="flex justify-end">
           <Link
             to="/upn"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+            className={buttonVariants()}
           >
             Continue to UPN Preview
           </Link>
         </div>
       )}
     </BillingPageShell>
+  );
+}
+
+function MethodChip({
+  label,
+  detail,
+  tone,
+}: {
+  label: string;
+  detail: string;
+  tone: "neutral" | "accent" | "warn";
+}) {
+  const toneClass = {
+    neutral: "bg-surface-3 text-muted-foreground",
+    accent: "bg-accent-soft text-accent-foreground",
+    warn: "bg-warning-soft text-warning",
+  }[tone];
+
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-md px-3 py-1 text-xs ${toneClass}`}>
+      <span className="rounded-full bg-card px-2 py-0.5 font-semibold">{label}</span>
+      <span>{detail}</span>
+    </span>
   );
 }
