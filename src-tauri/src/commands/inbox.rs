@@ -286,6 +286,25 @@ fn format_billing_period(month: i32, year: i32) -> String {
     format!("{} {}", month_name, year)
 }
 
+fn billing_month_for_source_period(source_month: i32, source_year: i32) -> (i32, i32) {
+    if source_month == 12 {
+        (1, source_year + 1)
+    } else {
+        (source_month + 1, source_year)
+    }
+}
+
+fn source_period_matches_billing_month(
+    source_month: i32,
+    source_year: i32,
+    billing_month: i32,
+    billing_year: i32,
+) -> bool {
+    let (expected_month, expected_year) =
+        billing_month_for_source_period(source_month, source_year);
+    expected_month == billing_month && expected_year == billing_year
+}
+
 fn mime_matches_extension(mime_type: &str, ext: &str) -> bool {
     let mime = mime_type.to_ascii_lowercase();
     if mime.trim().is_empty() {
@@ -777,22 +796,32 @@ fn analyze_staged_attachment(
 
     let period_mismatch = match prepared.detected_source_period() {
         Some((source_month, source_year))
-            if source_month == context.month && source_year == context.year =>
+            if source_period_matches_billing_month(
+                source_month,
+                source_year,
+                context.month,
+                context.year,
+            ) =>
         {
             None
         }
         Some((source_month, source_year)) => Some((
             "skipped_wrong_period",
             format!(
-                "Attachment appears to be for {}, but the selected billing period is {}.",
+                "Attachment appears to be for {}, which belongs in billing month {}. The selected billing month is {}.",
                 format_billing_period(source_month, source_year),
+                {
+                    let (month, year) =
+                        billing_month_for_source_period(source_month, source_year);
+                    format_billing_period(month, year)
+                },
                 format_billing_period(context.month, context.year)
             ),
         )),
         None => Some((
             "skipped_unknown_period",
             format!(
-                "Attachment billing period could not be detected for selected period {}.",
+                "Attachment source period could not be detected for selected billing month {}.",
                 format_billing_period(context.month, context.year)
             ),
         )),
@@ -1896,6 +1925,14 @@ mod tests {
         assert!(validate_sender_allowlist("sender@example.com").is_ok());
         assert!(validate_sender_allowlist("not-an-email").is_err());
         assert!(validate_sender_allowlist("sender@example.com, bad-entry").is_err());
+    }
+
+    #[test]
+    fn source_period_matches_following_billing_month() {
+        assert!(source_period_matches_billing_month(1, 2026, 2, 2026));
+        assert!(source_period_matches_billing_month(12, 2025, 1, 2026));
+        assert!(!source_period_matches_billing_month(1, 2026, 1, 2026));
+        assert!(!source_period_matches_billing_month(1, 2026, 3, 2026));
     }
 
     fn test_message() -> MessageContext {
