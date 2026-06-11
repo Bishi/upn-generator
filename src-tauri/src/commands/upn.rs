@@ -1272,19 +1272,35 @@ fn packet_data_hash(items: &[UpnData]) -> String {
     hasher.update((items.len() as u64).to_le_bytes());
 
     for item in items {
-        hash_text_field(&mut hasher, &item.payer_name);
-        hash_text_field(&mut hasher, &item.payer_address);
-        hash_text_field(&mut hasher, &item.payer_city);
-        hash_text_field(&mut hasher, &item.payer_postal_code);
-        hasher.update(item.amount_cents.to_le_bytes());
-        hash_text_field(&mut hasher, &item.purpose_code);
-        hash_text_field(&mut hasher, &item.purpose_text);
-        hash_text_field(&mut hasher, &item.due_date);
-        hash_text_field(&mut hasher, &item.creditor_iban);
-        hash_text_field(&mut hasher, &item.creditor_reference);
-        hash_text_field(&mut hasher, &item.creditor_name);
-        hash_text_field(&mut hasher, &item.creditor_address);
-        hash_text_field(&mut hasher, &item.creditor_city);
+        let UpnData {
+            payer_name,
+            payer_address,
+            payer_city,
+            payer_postal_code,
+            amount_cents,
+            purpose_code,
+            purpose_text,
+            due_date,
+            creditor_iban,
+            creditor_reference,
+            creditor_name,
+            creditor_address,
+            creditor_city,
+        } = item;
+
+        hash_text_field(&mut hasher, payer_name);
+        hash_text_field(&mut hasher, payer_address);
+        hash_text_field(&mut hasher, payer_city);
+        hash_text_field(&mut hasher, payer_postal_code);
+        hasher.update(amount_cents.to_le_bytes());
+        hash_text_field(&mut hasher, purpose_code);
+        hash_text_field(&mut hasher, purpose_text);
+        hash_text_field(&mut hasher, due_date);
+        hash_text_field(&mut hasher, creditor_iban);
+        hash_text_field(&mut hasher, creditor_reference);
+        hash_text_field(&mut hasher, creditor_name);
+        hash_text_field(&mut hasher, creditor_address);
+        hash_text_field(&mut hasher, creditor_city);
     }
 
     format!("{:x}", hasher.finalize())
