@@ -1262,8 +1262,50 @@ fn parse_allowlist(raw: &str) -> HashSet<String> {
         .collect()
 }
 
-fn attachment_hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+fn hash_text_field(hasher: &mut Sha256, value: &str) {
+    let bytes = value.as_bytes();
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
+fn packet_data_hash(items: &[UpnData]) -> String {
+    let mut hasher = Sha256::new();
+    hash_text_field(&mut hasher, "upn-packet-v1");
+    hasher.update((items.len() as u64).to_le_bytes());
+
+    for item in items {
+        let UpnData {
+            payer_name,
+            payer_address,
+            payer_city,
+            payer_postal_code,
+            amount_cents,
+            purpose_code,
+            purpose_text,
+            due_date,
+            creditor_iban,
+            creditor_reference,
+            creditor_name,
+            creditor_address,
+            creditor_city,
+        } = item;
+
+        hash_text_field(&mut hasher, payer_name);
+        hash_text_field(&mut hasher, payer_address);
+        hash_text_field(&mut hasher, payer_city);
+        hash_text_field(&mut hasher, payer_postal_code);
+        hasher.update(amount_cents.to_le_bytes());
+        hash_text_field(&mut hasher, purpose_code);
+        hash_text_field(&mut hasher, purpose_text);
+        hash_text_field(&mut hasher, due_date);
+        hash_text_field(&mut hasher, creditor_iban);
+        hash_text_field(&mut hasher, creditor_reference);
+        hash_text_field(&mut hasher, creditor_name);
+        hash_text_field(&mut hasher, creditor_address);
+        hash_text_field(&mut hasher, creditor_city);
+    }
+
+    format!("{:x}", hasher.finalize())
 }
 
 fn next_attempt_id() -> String {
@@ -1568,15 +1610,17 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
     let mut results = Vec::new();
 
     for (apt_id, apt_label, raw_email, recipients) in &apartments {
-        let attachment_bytes = {
+        let packet_items = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
             load_apartment_upn_data(&conn, billing_period_id, *apt_id)
-                .and_then(|items| render_upn_pdf_batch(&items))
         };
-        let (attachment_bytes, attachment_sha256, pdf_error) = match attachment_bytes {
-            Ok(bytes) => {
-                let hash = attachment_hash(&bytes);
-                (Some(bytes), hash, String::new())
+        let (attachment_bytes, attachment_sha256, pdf_error) = match packet_items {
+            Ok(items) => {
+                let hash = packet_data_hash(&items);
+                match render_upn_pdf_batch(&items) {
+                    Ok(bytes) => (Some(bytes), hash, String::new()),
+                    Err(e) => (None, String::new(), e),
+                }
             }
             Err(e) => (None, String::new(), e),
         };
@@ -1786,16 +1830,15 @@ pub fn get_upn_packet_hashes(
 
     let mut hashes = Vec::new();
     for apartment_id in apartment_ids {
-        let rendered = {
+        let packet_items = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
             load_apartment_upn_data(&conn, billing_period_id, apartment_id)
-                .and_then(|items| render_upn_pdf_batch(&items))
         };
 
-        match rendered {
-            Ok(bytes) => hashes.push(UpnPacketHash {
+        match packet_items {
+            Ok(items) => hashes.push(UpnPacketHash {
                 apartment_id,
-                attachment_sha256: attachment_hash(&bytes),
+                attachment_sha256: packet_data_hash(&items),
                 error: String::new(),
             }),
             Err(error) => hashes.push(UpnPacketHash {
@@ -1909,6 +1952,30 @@ mod tests {
         assert!(allowlist.contains("test@example.com"));
         assert!(allowlist.contains("other@example.com"));
         assert!(!allowlist.contains("missing@example.com"));
+    }
+
+    #[test]
+    fn packet_data_hash_is_stable_and_semantic() {
+        let data = vec![UpnData {
+            payer_name: "Tenant".to_string(),
+            payer_address: "Street 1".to_string(),
+            payer_city: "Ljubljana".to_string(),
+            payer_postal_code: "1000".to_string(),
+            amount_cents: 12345,
+            purpose_code: "OTHR".to_string(),
+            purpose_text: "Utilities".to_string(),
+            due_date: "2026-06-30".to_string(),
+            creditor_iban: "SI56000000000000000".to_string(),
+            creditor_reference: "SI00 123".to_string(),
+            creditor_name: "Provider".to_string(),
+            creditor_address: "Provider Street 2".to_string(),
+            creditor_city: "Ljubljana".to_string(),
+        }];
+        let mut changed = data.clone();
+        changed[0].amount_cents += 1;
+
+        assert_eq!(packet_data_hash(&data), packet_data_hash(&data));
+        assert_ne!(packet_data_hash(&data), packet_data_hash(&changed));
     }
 
     #[test]

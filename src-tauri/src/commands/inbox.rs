@@ -115,7 +115,24 @@ fn validate_config(
             MAX_DAYS_TO_SCAN
         ));
     }
+    validate_sender_allowlist(&config.sender_allowlist)?;
     validate_folder(&config.folder)?;
+    Ok(())
+}
+
+fn validate_sender_allowlist(raw: &str) -> Result<(), String> {
+    for item in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        if !item.contains('@') {
+            return Err(format!(
+                "Sender allowlist contains an invalid email address: {}",
+                item
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -985,5 +1002,13 @@ mod tests {
         assert!(allowlist.contains("a@example.com"));
         assert!(allowlist.contains("b@example.com"));
         assert!(!allowlist.contains("invalid"));
+    }
+
+    #[test]
+    fn rejects_malformed_sender_allowlist_entries() {
+        assert!(validate_sender_allowlist("").is_ok());
+        assert!(validate_sender_allowlist("sender@example.com").is_ok());
+        assert!(validate_sender_allowlist("not-an-email").is_err());
+        assert!(validate_sender_allowlist("sender@example.com, bad-entry").is_err());
     }
 }

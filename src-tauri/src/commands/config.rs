@@ -161,9 +161,18 @@ pub fn save_apartment(db: State<DbState>, apartment: Apartment) -> Result<Apartm
 
 #[tauri::command]
 pub fn delete_apartment(db: State<DbState>, id: i64) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM apartments WHERE id=?1", [id])
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM upn_delivery_events WHERE apartment_id=?1",
+        [id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM bill_splits WHERE apartment_id=?1", [id])
         .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM apartments WHERE id=?1", [id])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
