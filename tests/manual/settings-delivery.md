@@ -19,9 +19,9 @@
 - [ ] Leave IMAP password blank on a later save and confirm the existing saved password is kept.
 - [ ] Change IMAP username and confirm the old saved password is not reused for the new username.
 - [ ] Test the IMAP connection using the current Inbox settings.
+- [ ] Save the IMAP mailbox scan window as 0 and confirm it persists as today-only after reload.
 - [ ] Save sender allowlist changes and confirm the saved state is used by inbox import.
 
 ## Notes
 
 Passwords are write-only in the UI and should not be displayed back to the user.
-

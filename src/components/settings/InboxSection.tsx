@@ -25,8 +25,12 @@ function normalizeConfig(config: InboxConfig): InboxConfig {
   return {
     ...config,
     port: Number.isFinite(config.port) ? config.port : 993,
-    days_to_scan: Number.isFinite(config.days_to_scan) ? config.days_to_scan : 45,
+    days_to_scan: clampDaysToScan(config.days_to_scan),
   };
+}
+
+function clampDaysToScan(value: number) {
+  return Math.min(90, Math.max(0, Math.round(Number.isFinite(value) ? value : 45)));
 }
 
 export function InboxSection() {
@@ -165,18 +169,18 @@ export function InboxSection() {
               <Input
                 id="days_to_scan"
                 type="number"
-                min={1}
+                min={0}
                 max={90}
                 value={form.days_to_scan}
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    days_to_scan: Math.min(90, Math.max(1, parseInt(event.target.value, 10) || 45)),
+                    days_to_scan: clampDaysToScan(parseInt(event.target.value, 10)),
                   })
                 }
               />
               <p className="text-xs text-muted-foreground">
-                Looks back this many days, then imports only configured missing providers for the selected billing month.
+                Use 0 for today only. Higher values include today plus earlier calendar dates.
               </p>
             </div>
           </div>

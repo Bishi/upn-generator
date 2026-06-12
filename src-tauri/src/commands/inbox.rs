@@ -222,9 +222,9 @@ fn validate_config(
     if !(1..=65535).contains(&config.port) {
         return Err("IMAP port must be between 1 and 65535.".to_string());
     }
-    if !(1..=MAX_DAYS_TO_SCAN).contains(&config.days_to_scan) {
+    if !(0..=MAX_DAYS_TO_SCAN).contains(&config.days_to_scan) {
         return Err(format!(
-            "Days to scan must be between 1 and {}.",
+            "Days to scan must be between 0 and {}.",
             MAX_DAYS_TO_SCAN
         ));
     }
@@ -1337,9 +1337,9 @@ fn preview_inbox_attachments_impl(
     ];
 
     sweep_preview_sessions(&preview_state)?;
-    if !(1..=MAX_DAYS_TO_SCAN).contains(&days_to_scan) {
+    if !(0..=MAX_DAYS_TO_SCAN).contains(&days_to_scan) {
         return Err(format!(
-            "Days to scan must be between 1 and {}.",
+            "Days to scan must be between 0 and {}.",
             MAX_DAYS_TO_SCAN
         ));
     }
@@ -1888,8 +1888,12 @@ mod tests {
         };
         assert!(validate_config(&config, true, "secret").is_ok());
 
+        let mut today_only = config.clone();
+        today_only.days_to_scan = 0;
+        assert!(validate_config(&today_only, true, "secret").is_ok());
+
         let mut bad = config.clone();
-        bad.days_to_scan = 0;
+        bad.days_to_scan = -1;
         assert!(validate_config(&bad, true, "secret").is_err());
 
         let mut bad = config;

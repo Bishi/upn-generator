@@ -14,6 +14,8 @@
 - [ ] Test the inbox connection and confirm success/failure messages are clear.
 - [ ] Run Import from Inbox and confirm the preview opens before any bill rows are created.
 - [ ] Confirm scan-window overrides apply only to the current preview run unless saved in settings.
+- [ ] Set the scan window override to 0 and confirm the drawer labels the scan as today-only.
+- [ ] Set the scan window override to 1 and confirm the drawer labels the scan as today plus the previous calendar day.
 - [ ] Confirm allowed sender messages appear when sender allowlist is enabled.
 - [ ] Confirm disallowed sender messages are skipped or shown as blocked without import.
 - [ ] Confirm unsupported attachment types are skipped.
@@ -28,4 +30,3 @@
 ## Notes
 
 Inbox imports should use read-only IMAP behavior (`EXAMINE` / `BODY.PEEK`) and should not alter mailbox state.
-

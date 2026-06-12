@@ -308,6 +308,20 @@ function InboxChip({ children, className = "", title }: { children: ReactNode; c
   );
 }
 
+function formatScanWindow(days: number) {
+  if (days === 0) return "today";
+  return `today and the previous ${days} ${days === 1 ? "day" : "days"}`;
+}
+
+function formatScanWindowChip(days: number) {
+  if (days === 0) return "Today";
+  return `Today + previous ${days} ${days === 1 ? "day" : "days"}`;
+}
+
+function clampInboxScanDays(value: number) {
+  return Math.min(90, Math.max(0, Math.round(Number.isFinite(value) ? value : 45)));
+}
+
 function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: string[]; busy: boolean; onEditSettings: () => void }) {
   const [open, setOpen] = useState(false);
   const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
@@ -536,7 +550,7 @@ function InboxImportDrawer({
       .then((loaded) => {
         if (cancelled) return;
         setConfig(loaded);
-        setDaysToScan(loaded.days_to_scan);
+        setDaysToScan(clampInboxScanDays(loaded.days_to_scan));
       })
       .catch((e) => {
         if (!cancelled) setError(`Failed to load inbox settings: ${e}`);
@@ -584,7 +598,7 @@ function InboxImportDrawer({
       }
       setPreview(null);
       setSelectedIds(new Set());
-      const clampedDays = Math.min(90, Math.max(1, Math.round(daysToScan || 1)));
+      const clampedDays = clampInboxScanDays(daysToScan);
       setDaysToScan(clampedDays);
       const nextPreview = await ipc.previewInboxAttachments(billingPeriodId, clampedDays);
       setPreview(nextPreview);
@@ -619,7 +633,7 @@ function InboxImportDrawer({
   };
 
   const setClampedScanDays = (next: number) => {
-    setDaysToScan(Math.min(90, Math.max(1, Math.round(next || 1))));
+    setDaysToScan(clampInboxScanDays(next));
   };
 
   const toggleAllReady = (checked: boolean) => {
@@ -675,7 +689,7 @@ function InboxImportDrawer({
                 type="button"
                 className="grid size-6 place-items-center transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                 onClick={() => setClampedScanDays(daysToScan - 1)}
-                disabled={loadingConfig || loadingPreview || importing || daysToScan <= 1}
+                disabled={loadingConfig || loadingPreview || importing || daysToScan <= 0}
                 aria-label="Decrease scan window"
               >
                 <Minus className="size-3" />
@@ -684,10 +698,10 @@ function InboxImportDrawer({
                 aria-label="Scan window days"
                 className="input-no-spinner h-6 w-10 border-x border-border bg-transparent text-center font-mono text-xs font-bold text-foreground outline-none disabled:opacity-50"
                 type="number"
-                min={1}
+                min={0}
                 max={90}
                 value={daysToScan}
-                onChange={(event) => setClampedScanDays(Number(event.target.value))}
+                onChange={(event) => setClampedScanDays(parseInt(event.target.value, 10))}
                 disabled={loadingConfig || loadingPreview || importing}
               />
               <button
@@ -719,7 +733,7 @@ function InboxImportDrawer({
               <div className="max-w-md">
                 <h3 className="font-head text-xl font-semibold">Ready to scan</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  Will scan the last <span className="font-semibold text-foreground">{daysToScan} days</span> of {config?.folder || "INBOX"} for PDF and image attachments
+                  Will scan <span className="font-semibold text-foreground">{formatScanWindow(daysToScan)}</span> of {config?.folder || "INBOX"} for PDF and image attachments
                   {senderEntries.length > 0 ? <> from <span className="font-semibold text-foreground">{senderEntries.length} senders</span></> : null}. Only bills for the <span className="font-semibold text-foreground">{periodLabel}</span> billing month will be offered.
                 </p>
               </div>
@@ -737,7 +751,7 @@ function InboxImportDrawer({
                 <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Scanned</span>
                 <InboxChip className="h-5 bg-card">
                   <Clock className="size-3" />
-                  Last {preview.days_to_scan} days
+                  {formatScanWindowChip(preview.days_to_scan)}
                 </InboxChip>
                 <SenderAllowlistChip senders={senderEntries} busy={busy} onEditSettings={() => void closeDrawer()} />
                 <Button variant="ghost" size="sm" className="ml-auto h-7" onClick={fetchPreview} disabled={loadingPreview || importing}>
