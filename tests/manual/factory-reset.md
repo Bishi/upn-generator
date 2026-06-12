@@ -20,4 +20,3 @@
 ## Notes
 
 Do not run this checklist against valuable local data without a backup.
-

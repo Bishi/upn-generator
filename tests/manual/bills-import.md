@@ -25,4 +25,3 @@
 ## Notes
 
 For inbox imports, use [inbox-import.md](./inbox-import.md). For split recalculation after bill changes, use [splits.md](./splits.md).
-

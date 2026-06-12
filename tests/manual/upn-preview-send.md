@@ -25,4 +25,3 @@
 ## Notes
 
 Use [upn-visual-reference.md](./upn-visual-reference.md) when the rendered UPN geometry or printed output changes.
-
