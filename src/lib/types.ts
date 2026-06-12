@@ -155,8 +155,8 @@ export interface UpnDeliveryEvent {
   attempt_id: string;
   billing_period_id: number;
   apartment_id: number;
-  delivery_type: "email" | "pdf";
-  status: "sent" | "saved" | "failed" | "blocked";
+  delivery_type: "email" | "pdf" | "manual";
+  status: "sent" | "saved" | "delivered" | "failed" | "blocked";
   recipient: string;
   original_recipient: string;
   attachment_sha256: string;
@@ -177,11 +177,11 @@ export interface UpnDeliveryApartmentRollup {
   packet_error: string;
   delivered: boolean;
   email_sent: boolean;
-  pdf_saved: boolean;
+  manual_delivered: boolean;
   current_failed_event_count: number;
   current_blocked_event_count: number;
-  last_current_delivery_type: "email" | "pdf" | null;
-  last_current_delivery_status: "sent" | "saved" | "failed" | "blocked" | null;
+  last_current_delivery_type: "email" | "pdf" | "manual" | null;
+  last_current_delivery_status: "sent" | "saved" | "delivered" | "failed" | "blocked" | null;
   last_current_delivery_at: string | null;
 }
 
@@ -190,7 +190,7 @@ export interface UpnDeliveryRollup {
   packet_count: number;
   current_delivered_count: number;
   email_sent_count: number;
-  pdf_saved_count: number;
+  manual_delivered_count: number;
   current_failed_event_count: number;
   current_blocked_event_count: number;
   complete: boolean;

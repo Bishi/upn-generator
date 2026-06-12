@@ -62,7 +62,7 @@ pub struct UpnDeliveryApartmentRollup {
     pub packet_error: String,
     pub delivered: bool,
     pub email_sent: bool,
-    pub pdf_saved: bool,
+    pub manual_delivered: bool,
     pub current_failed_event_count: i64,
     pub current_blocked_event_count: i64,
     pub last_current_delivery_type: Option<String>,
@@ -76,7 +76,7 @@ pub struct UpnDeliveryRollup {
     pub packet_count: i64,
     pub current_delivered_count: i64,
     pub email_sent_count: i64,
-    pub pdf_saved_count: i64,
+    pub manual_delivered_count: i64,
     pub current_failed_event_count: i64,
     pub current_blocked_event_count: i64,
     pub complete: bool,
@@ -101,6 +101,7 @@ struct UpnData {
     creditor_city: String,
 }
 
+#[derive(Clone)]
 struct CurrentPacketInfo {
     apartment_id: i64,
     apartment_label: String,
@@ -109,9 +110,7 @@ struct CurrentPacketInfo {
 }
 
 struct SavedUpnPacket {
-    apartment_id: i64,
     filename: String,
-    attachment_sha256: String,
     pdf_bytes: Vec<u8>,
 }
 
@@ -1467,7 +1466,7 @@ fn load_current_packet_infos(
         .collect()
 }
 
-fn has_current_pdf_saved_event(
+fn has_current_manual_delivered_event(
     conn: &rusqlite::Connection,
     billing_period_id: i64,
     apartment_id: i64,
@@ -1479,8 +1478,8 @@ fn has_current_pdf_saved_event(
              FROM upn_delivery_events
              WHERE billing_period_id = ?1
                AND apartment_id = ?2
-               AND delivery_type = 'pdf'
-               AND status = 'saved'
+               AND delivery_type = 'manual'
+               AND status = 'delivered'
                AND attachment_sha256 = ?3",
             params![billing_period_id, apartment_id, attachment_sha256],
             |r| r.get(0),
@@ -1497,7 +1496,7 @@ fn build_delivery_rollup(
     let mut apartments = Vec::new();
     let mut current_delivered_count = 0i64;
     let mut email_sent_count = 0i64;
-    let mut pdf_saved_count = 0i64;
+    let mut manual_delivered_count = 0i64;
     let mut current_failed_event_count = 0i64;
     let mut current_blocked_event_count = 0i64;
 
@@ -1514,9 +1513,9 @@ fn build_delivery_rollup(
         let email_sent = current_events
             .iter()
             .any(|event| event.delivery_type == "email" && event.status == "sent");
-        let pdf_saved = current_events
+        let manual_delivered = current_events
             .iter()
-            .any(|event| event.delivery_type == "pdf" && event.status == "saved");
+            .any(|event| event.delivery_type == "manual" && event.status == "delivered");
         let failed_count = current_events
             .iter()
             .filter(|event| event.status == "failed")
@@ -1525,7 +1524,7 @@ fn build_delivery_rollup(
             .iter()
             .filter(|event| event.status == "blocked")
             .count() as i64;
-        let delivered = packet.packet_error.is_empty() && (email_sent || pdf_saved);
+        let delivered = packet.packet_error.is_empty() && (email_sent || manual_delivered);
 
         let latest_current = current_events.iter().max_by(|left, right| {
             let created_cmp = left.created_at.cmp(&right.created_at);
@@ -1542,8 +1541,8 @@ fn build_delivery_rollup(
         if email_sent {
             email_sent_count += 1;
         }
-        if pdf_saved {
-            pdf_saved_count += 1;
+        if manual_delivered {
+            manual_delivered_count += 1;
         }
         current_failed_event_count += failed_count;
         current_blocked_event_count += blocked_count;
@@ -1555,7 +1554,7 @@ fn build_delivery_rollup(
             packet_error: packet.packet_error,
             delivered,
             email_sent,
-            pdf_saved,
+            manual_delivered,
             current_failed_event_count: failed_count,
             current_blocked_event_count: blocked_count,
             last_current_delivery_type: latest_current.map(|event| event.delivery_type.clone()),
@@ -1580,7 +1579,7 @@ fn build_delivery_rollup(
         packet_count,
         current_delivered_count,
         email_sent_count,
-        pdf_saved_count,
+        manual_delivered_count,
         current_failed_event_count,
         current_blocked_event_count,
         complete,
@@ -2195,6 +2194,77 @@ pub fn get_upn_delivery_rollup(
 }
 
 #[tauri::command]
+pub fn mark_upn_period_delivered(
+    db: State<DbState>,
+    billing_period_id: i64,
+) -> Result<UpnDeliveryRollup, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let packets = load_current_packet_infos(&conn, billing_period_id)?;
+    let packet_errors = packets
+        .iter()
+        .filter(|packet| !packet.packet_error.trim().is_empty())
+        .map(|packet| format!("{}: {}", packet.apartment_label, packet.packet_error))
+        .collect::<Vec<_>>();
+    if !packet_errors.is_empty() {
+        return Err(format!(
+            "Cannot mark delivered until current UPN packets can be generated: {}",
+            packet_errors.join("; ")
+        ));
+    }
+
+    let attempt_id = next_attempt_id("manual");
+    for packet in &packets {
+        if !has_current_manual_delivered_event(
+            &conn,
+            billing_period_id,
+            packet.apartment_id,
+            &packet.packet_hash,
+        )? {
+            insert_delivery_event(
+                &conn,
+                &attempt_id,
+                billing_period_id,
+                packet.apartment_id,
+                "manual",
+                "delivered",
+                "Manual confirmation",
+                "Manual confirmation",
+                &packet.packet_hash,
+                "",
+            )?;
+        }
+    }
+
+    let events = query_vec(
+        &conn,
+        "SELECT id, attempt_id, billing_period_id, apartment_id, delivery_type,
+                status, recipient, original_recipient, attachment_sha256,
+                error, created_at
+         FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+         ORDER BY created_at ASC, id ASC",
+        &[&billing_period_id],
+        |r| {
+            Ok(UpnDeliveryEvent {
+                id: r.get(0)?,
+                attempt_id: r.get(1)?,
+                billing_period_id: r.get(2)?,
+                apartment_id: r.get(3)?,
+                delivery_type: r.get(4)?,
+                status: r.get(5)?,
+                recipient: r.get(6)?,
+                original_recipient: r.get(7)?,
+                attachment_sha256: r.get(8)?,
+                error: r.get(9)?,
+                created_at: r.get(10)?,
+            })
+        },
+    )?;
+
+    Ok(build_delivery_rollup(billing_period_id, packets, &events))
+}
+
+#[tauri::command]
 pub async fn test_smtp_connection(
     config: SmtpConfig,
     password: String,
@@ -2290,7 +2360,6 @@ pub fn save_all_upns(
         )?
     };
 
-    let attempt_id = next_attempt_id("pdf");
     let mut used_filenames = HashSet::new();
     let mut packets: Vec<SavedUpnPacket> = Vec::new();
     for (apt_id, apt_label) in &apartments {
@@ -2298,7 +2367,6 @@ pub fn save_all_upns(
             let conn = db.0.lock().map_err(|e| e.to_string())?;
             load_apartment_upn_data(&conn, billing_period_id, *apt_id)?
         };
-        let attachment_sha256 = packet_data_hash(&items);
         let pdf_bytes = render_upn_pdf_batch(&items)?;
         let base_name = safe_filename_component(apt_label);
         let mut suffix = 0usize;
@@ -2318,9 +2386,7 @@ pub fn save_all_upns(
         };
 
         packets.push(SavedUpnPacket {
-            apartment_id: *apt_id,
             filename,
-            attachment_sha256,
             pdf_bytes,
         });
     }
@@ -2328,30 +2394,7 @@ pub fn save_all_upns(
     let mut saved: Vec<String> = Vec::new();
     for packet in &packets {
         let full_path = Path::new(&folder_path).join(&packet.filename);
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        // Filesystem writes and SQLite inserts cannot be atomic together; a rerun
-        // cleanly recovers any rare write-succeeded/insert-failed case.
         std::fs::write(&full_path, &packet.pdf_bytes).map_err(|e| e.to_string())?;
-
-        if !has_current_pdf_saved_event(
-            &conn,
-            billing_period_id,
-            packet.apartment_id,
-            &packet.attachment_sha256,
-        )? {
-            insert_delivery_event(
-                &conn,
-                &attempt_id,
-                billing_period_id,
-                packet.apartment_id,
-                "pdf",
-                "saved",
-                &packet.filename,
-                &packet.filename,
-                &packet.attachment_sha256,
-                "",
-            )?;
-        }
         saved.push(packet.filename.clone());
     }
     Ok(saved)
@@ -2469,11 +2512,11 @@ mod tests {
     }
 
     #[test]
-    fn delivery_rollup_counts_email_and_pdf_packets_as_complete() {
+    fn delivery_rollup_counts_email_and_manual_packets_as_complete() {
         let packets = vec![test_packet(1, "hash-a"), test_packet(2, "hash-b")];
         let events = vec![
             test_event(1, 1, "email", "sent", "hash-a"),
-            test_event(2, 2, "pdf", "saved", "hash-b"),
+            test_event(2, 2, "manual", "delivered", "hash-b"),
         ];
 
         let rollup = build_delivery_rollup(1, packets, &events);
@@ -2482,7 +2525,21 @@ mod tests {
         assert_eq!(rollup.packet_count, 2);
         assert_eq!(rollup.current_delivered_count, 2);
         assert_eq!(rollup.email_sent_count, 1);
-        assert_eq!(rollup.pdf_saved_count, 1);
+        assert_eq!(rollup.manual_delivered_count, 1);
+    }
+
+    #[test]
+    fn delivery_rollup_does_not_treat_pdf_save_as_delivered() {
+        let packets = vec![test_packet(1, "hash-a")];
+        let events = vec![test_event(1, 1, "pdf", "saved", "hash-a")];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(!rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 0);
+        assert_eq!(rollup.email_sent_count, 0);
+        assert_eq!(rollup.manual_delivered_count, 0);
+        assert!(!rollup.apartments[0].delivered);
     }
 
     #[test]

@@ -58,10 +58,10 @@ function hasSendableRecipient(raw: string) {
   return parseRecipientList(raw).length > 0;
 }
 
-type DeliveryRowStatus = EmailResult["status"] | "saved";
+type DeliveryRowStatus = EmailResult["status"] | "saved" | "delivered";
 type DeliveryRowResult = Omit<EmailResult, "status"> & {
   status: DeliveryRowStatus;
-  delivery_type: "email" | "pdf" | null;
+  delivery_type: "email" | "pdf" | "manual" | null;
 };
 
 function statusLabel(status: DeliveryRowStatus) {
@@ -70,6 +70,8 @@ function statusLabel(status: DeliveryRowStatus) {
       return "sent";
     case "saved":
       return "pdf saved";
+    case "delivered":
+      return "delivered";
     case "blocked":
       return "blocked";
     case "partial":
@@ -82,7 +84,8 @@ function statusLabel(status: DeliveryRowStatus) {
 }
 
 function statusClass(status: DeliveryRowStatus) {
-  if (status === "sent" || status === "saved") return "bg-success-soft text-success";
+  if (status === "sent" || status === "delivered") return "bg-success-soft text-success";
+  if (status === "saved") return "bg-warning-soft text-warning";
   if (status === "blocked") return "bg-warning-soft text-warning";
   if (status === "partial") return "bg-warning-soft text-warning";
   if (status === "changed") return "bg-warning-soft text-warning";
@@ -128,6 +131,7 @@ function aggregateHistoryEvents(
     const apartment = apartmentsById.get(apartmentId) ?? null;
     const containsEmail = rows.some((event) => event.delivery_type === "email");
     const containsPdf = rows.some((event) => event.delivery_type === "pdf");
+    const containsManual = rows.some((event) => event.delivery_type === "manual");
     const currentRecipients = normalizedRecipients(apartment?.contact_email ?? "");
     const historicalRecipients = rows
       .filter((event) => event.delivery_type === "email")
@@ -154,7 +158,9 @@ function aggregateHistoryEvents(
       errors.unshift(
         currentPacketHash?.error
           ? `Current packet could not be checked: ${currentPacketHash.error}`
-          : containsPdf && !containsEmail
+          : containsManual
+            ? "Current UPN packet changed since this manual delivery confirmation."
+            : containsPdf && !containsEmail
             ? "Current UPN packet changed since this PDF save."
             : "Current recipients or UPN packet changed since this delivery attempt.",
       );
@@ -167,9 +173,13 @@ function aggregateHistoryEvents(
       status: displayStatus,
       recipient: rows.map((event) => event.recipient).join(", "),
       original_recipient: rows.map((event) => event.original_recipient).join(", "),
-      success: displayStatus === "sent" || displayStatus === "saved",
+      success: displayStatus === "sent" || displayStatus === "delivered",
       error: errors.length > 0 ? errors.join("; ") : null,
-      delivery_type: containsPdf && !containsEmail ? "pdf" : "email",
+      delivery_type: containsManual
+        ? "manual"
+        : containsPdf && !containsEmail
+          ? "pdf"
+          : "email",
     });
   }
 
@@ -184,12 +194,12 @@ function rollupToRowResult(
   const email = apartment?.contact_email ?? "";
 
   if (row.delivered) {
-    const isPdfOnly = row.pdf_saved && !row.email_sent;
+    const isManualOnly = row.manual_delivered && !row.email_sent;
     return {
       apartment_id: row.apartment_id,
       apartment_label: label,
       email,
-      status: isPdfOnly ? "saved" : "sent",
+      status: isManualOnly ? "delivered" : "sent",
       recipient: "",
       original_recipient: "",
       success: true,
@@ -197,7 +207,7 @@ function rollupToRowResult(
         row.current_failed_event_count > 0 || row.current_blocked_event_count > 0
           ? `${row.current_failed_event_count + row.current_blocked_event_count} current delivery warning(s)`
           : null,
-      delivery_type: isPdfOnly ? "pdf" : "email",
+      delivery_type: isManualOnly ? "manual" : "email",
     };
   }
 
@@ -347,7 +357,7 @@ function ApartmentRows({
                 deliveryResult.status,
               )}`}
             >
-              {deliveryResult.status === "sent" || deliveryResult.status === "saved" ? (
+              {deliveryResult.status === "sent" || deliveryResult.status === "delivered" ? (
                 <CheckCircle2 className="size-3" />
               ) : (
                 <XCircle className="size-3" />
@@ -429,6 +439,7 @@ function UpnPage() {
   const apartmentsConfig = snapshot.apartments;
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [markingDelivered, setMarkingDelivered] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [deliveryEvents, setDeliveryEvents] = useState<UpnDeliveryEvent[]>([]);
   const [deliveryRollup, setDeliveryRollup] = useState<UpnDeliveryRollup | null>(null);
@@ -506,9 +517,32 @@ function UpnPage() {
     try {
       const result = await downloadPeriodUpnPdfs(selected.id);
       if (!result) return;
+      setPageMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
+    } catch (e) {
+      setPageMessage(String(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const markDelivered = async () => {
+    if (!selected?.id) return;
+    const confirmed = window.confirm(
+      "Mark this billing period as delivered? This will count all current UPN packets as delivered.",
+    );
+    if (!confirmed) return;
+
+    setPageMessage(null);
+    setMarkingDelivered(true);
+    try {
+      const rollup = await ipc.markUpnPeriodDelivered(selected.id);
+      setEmailResults([]);
+      setDeliveryRollup(rollup);
       await loadDeliveryState(selected.id);
       await snapshot.refresh({ periods: false, core: false, selected: true, statuses: true });
-      setPageMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
+      setPageMessage(
+        `Marked ${rollup.current_delivered_count} of ${rollup.packet_count} UPN packet(s) delivered.`,
+      );
     } catch (e) {
       setPageMessage(String(e));
       await loadDeliveryState(selected.id, undefined, false).catch(() => undefined);
@@ -516,7 +550,7 @@ function UpnPage() {
         .refresh({ periods: false, core: false, selected: true, statuses: true })
         .catch(() => undefined);
     } finally {
-      setDownloading(false);
+      setMarkingDelivered(false);
     }
   };
 
@@ -604,6 +638,20 @@ function UpnPage() {
               <Download className="size-4" />
             )}
             Download All PDFs
+          </Button>
+          <Button
+            variant="outline"
+            onClick={markDelivered}
+            disabled={
+              !selected?.id || snapshot.loading || splits.length === 0 || markingDelivered
+            }
+          >
+            {markingDelivered ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="size-4" />
+            )}
+            Mark Delivered
           </Button>
           <Button
             onClick={sendEmails}
