@@ -25,6 +25,12 @@ function backupFilename() {
   return `upn-generator-backup-${date}_${time}.sqlite3`;
 }
 
+function mutationErrorMessage(error: unknown) {
+  if (!error) return null;
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 export function DataSection() {
   const queryClient = useQueryClient();
   const [resetConfirm, setResetConfirm] = useState("");
@@ -121,6 +127,9 @@ export function DataSection() {
     restoreMutation.mutate(selected);
   };
 
+  const backupError = mutationErrorMessage(backupMutation.error ?? restoreMutation.error);
+  const resetError = mutationErrorMessage(resetMutation.error);
+
   return (
     <div className={`${SETTINGS_PANEL_WIDTH} grid gap-4`}>
       <Card className="overflow-hidden">
@@ -181,6 +190,12 @@ export function DataSection() {
             <p>Restore fully replaces current app data with the selected backup.</p>
             <p>SMTP and IMAP passwords are stored in Windows Credential Manager, not in backup files.</p>
           </div>
+
+          {backupError && (
+            <div className="rounded-md border border-danger/40 bg-danger-soft px-4 py-3 text-sm text-danger">
+              {backupError}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -229,11 +244,9 @@ export function DataSection() {
           </Button>
         </div>
 
-        {(backupMutation.error || restoreMutation.error || resetMutation.error) && (
+        {resetError && (
           <div className="rounded-md border border-danger/40 bg-danger-soft px-4 py-3 text-sm text-danger">
-            {backupMutation.error?.message ??
-              restoreMutation.error?.message ??
-              resetMutation.error?.message}
+            {resetError}
           </div>
         )}
         </CardContent>

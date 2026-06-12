@@ -19,8 +19,9 @@ dist-ssr
 # Local design references
 docs/design/
 
-# Local agent/session config
+# Local agent/session config and private workflow notes
 .claude/
+.agents/
 
 # Editor directories and files
 .vscode/*

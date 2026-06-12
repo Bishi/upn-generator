@@ -155,13 +155,13 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
             DELETE FROM bill_splits;
             DELETE FROM inbox_bill_hashes;
             DELETE FROM upn_delivery_events;
+            DELETE FROM inbox_imports;
             DELETE FROM bills;
             DELETE FROM billing_periods;
             DELETE FROM apartments;
             DELETE FROM providers;
             DELETE FROM building;
             DELETE FROM smtp_config;
-            DELETE FROM inbox_imports;
             DELETE FROM inbox_config;
             DELETE FROM app_settings;
             ",

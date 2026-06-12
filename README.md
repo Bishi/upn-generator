@@ -83,7 +83,7 @@ Enter your incoming IMAP mailbox settings so the app can manually import bill at
 | Folder | `INBOX` |
 | TLS | Enabled |
 
-Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. On the Bills page, **Import from Inbox** opens a preview step where you can override the scan window for that run, inspect parsed attachments, and import only selected ready candidates. Previewing does not create bills or inbox audit rows; imported attachments must still match the selected billing month and a configured provider that is still missing for that month.
+Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. On the Bills page, **Import from Inbox** opens a preview step where you can override the scan window for that run, inspect parsed attachments, and import only selected ready candidates. A scan window of 0 means today only; higher values include today plus earlier calendar dates. Previewing does not create bills or inbox audit rows; imported attachments must still match the selected billing month and a configured provider that is still missing for that month.
 
 The default database stores the IMAP server, port, TLS setting, folder, scan window, `kamniska.racuni@gmail.com` as the username, and an empty sender allowlist. Enter the app password before importing from the inbox.
 

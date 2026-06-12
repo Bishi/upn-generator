@@ -7,6 +7,19 @@ import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SplitRow } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
+import {
+  BillingEmptyState,
+  BillingTable,
+  BillingTableFooterRow,
+  BillingTableFrame,
+  BillingTableHeaderCell,
+  BillingTableHeaderRow,
+  SummaryChip,
+  SummaryStrip,
+  billingTableCellClass,
+  billingTableNumericCellClass,
+  billingTableZebraRowClass,
+} from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -221,7 +234,7 @@ function SplitsPage() {
       )}
 
       {showSplitsTable && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-card">
+        <SummaryStrip>
           <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
             Split method
           </span>
@@ -243,7 +256,7 @@ function SplitsPage() {
           <span className="ml-auto text-xs text-muted-foreground">
             {splitBasisCounts.size} active method{splitBasisCounts.size === 1 ? "" : "s"}
           </span>
-        </div>
+        </SummaryStrip>
       )}
 
       {!selected && (
@@ -253,65 +266,49 @@ function SplitsPage() {
       )}
 
       {selected && (showSplitsLoading || showSplitsSettling || splits.length === 0) && (
-        <div className="min-h-[268px] overflow-hidden rounded-lg border border-border bg-card shadow-card">
-          {showSplitsLoading ? (
-            <div className="flex min-h-[268px] items-center justify-center px-6 py-8 text-center">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Loading splits...
-              </div>
-            </div>
-          ) : (
-            <div className="relative min-h-[268px] px-6 py-8 text-center">
-              <div className="absolute inset-x-6 top-1/2 -translate-y-1/2">
-                <div className="mx-auto max-w-md space-y-2">
-                  <div className="text-sm font-medium">No splits yet for this billing month</div>
-                  <div className="min-h-10 text-sm leading-5 text-muted-foreground">
-                    Import bills first, then use the Recalculate button above.
-                  </div>
-                </div>
-              </div>
-              <div className="absolute inset-x-6 bottom-14 flex justify-center">
-                <Link
-                  to="/bills"
-                  className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
-                >
-                  Go to Bills
-                </Link>
-              </div>
-            </div>
-          )}
-        </div>
+        <BillingTableFrame minHeight>
+          <BillingEmptyState
+            loading={showSplitsLoading}
+            loadingLabel="Loading splits..."
+            title="No splits yet for this billing month"
+            detail="Import bills first, then use the Recalculate button above."
+            action={
+              <Link
+                to="/bills"
+                className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card hover:bg-accent hover:text-accent-foreground"
+              >
+                Go to Bills
+              </Link>
+            }
+          />
+        </BillingTableFrame>
       )}
 
       {showSplitsTable && (
-        <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-card">
-          <table className="w-full min-w-max text-sm">
+        <BillingTableFrame>
+          <BillingTable>
             <thead>
-              <tr className="bg-surface-2 text-xs font-medium text-muted-foreground">
-                <th className="min-w-48 px-3 pt-3.5 pb-2.5 text-left">
+              <BillingTableHeaderRow>
+                <BillingTableHeaderCell className="min-w-48">
                   Bill
-                </th>
-                <th className="border-r border-border-2 px-3 pt-3.5 pb-2.5 text-right">
-                  Total
-                </th>
+                </BillingTableHeaderCell>
                 {apartments.map(([id, apt]) => (
-                  <th key={id} className="px-3 pt-3.5 pb-2.5 text-right whitespace-nowrap">
+                  <BillingTableHeaderCell key={id} className="text-right whitespace-nowrap">
                     <div>{apt.label}</div>
-                    <div className="text-[11px] font-normal text-muted-foreground">
-                      {apt.unitCode || "No code"}
-                    </div>
-                  </th>
+                  </BillingTableHeaderCell>
                 ))}
-              </tr>
+                <BillingTableHeaderCell className="text-right">
+                  Total
+                </BillingTableHeaderCell>
+              </BillingTableHeaderRow>
             </thead>
             <tbody>
               {bills.map(([billId, info]) => (
                 <tr
                   key={billId}
-                  className="border-t border-border odd:bg-card even:bg-surface-2/50 hover:bg-accent/10"
+                  className={billingTableZebraRowClass}
                 >
-                  <td className="px-3 py-2">
+                  <td className={billingTableCellClass}>
                     <div className="flex items-start gap-2 max-w-56">
                       {info.parseNote && <ReviewIndicator note={info.parseNote} />}
                       <div className="min-w-0">
@@ -324,13 +321,10 @@ function SplitsPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="border-r border-border-2 px-3 py-2 text-right font-mono font-medium">
-                    {formatEur(info.total)} €
-                  </td>
                   {apartments.map(([aptId]) => {
                     const cell = matrix.get(billId)?.get(aptId);
                     return (
-                      <td key={aptId} className="px-3 py-2 text-right">
+                      <td key={aptId} className={`${billingTableCellClass} text-right`}>
                         {cell ? (
                           <div>
                             <EditableCell split={cell} onSave={saveOverride} />
@@ -344,26 +338,29 @@ function SplitsPage() {
                       </td>
                     );
                   })}
+                  <td className={`${billingTableNumericCellClass} font-medium`}>
+                    {formatEur(info.total)} €
+                  </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
-              <tr className="border-t border-border bg-surface-2 font-semibold">
-                <td className="px-3 py-2">Total per Apartment</td>
-                <td className="border-r border-border-2 px-3 py-2 text-right font-mono">
+              <BillingTableFooterRow>
+                <td className={billingTableCellClass}>Total per Apartment</td>
+                {apartments.map(([aptId]) => (
+                  <td key={aptId} className={billingTableNumericCellClass}>
+                    {formatEur(apartmentTotals.get(aptId) ?? 0)} €
+                  </td>
+                ))}
+                <td className={billingTableNumericCellClass}>
                   {formatEur(
                     splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
                   )} €
                 </td>
-                {apartments.map(([aptId]) => (
-                  <td key={aptId} className="px-3 py-2 text-right font-mono">
-                    {formatEur(apartmentTotals.get(aptId) ?? 0)} €
-                  </td>
-                ))}
-              </tr>
+              </BillingTableFooterRow>
             </tfoot>
-          </table>
-        </div>
+          </BillingTable>
+        </BillingTableFrame>
       )}
 
       {showSplitsTable && (
@@ -396,9 +393,9 @@ function MethodChip({
   }[tone];
 
   return (
-    <span className={`inline-flex items-center gap-2 rounded-md px-3 py-1 text-xs ${toneClass}`}>
-      <span className="rounded-full bg-card px-2 py-0.5 font-semibold">{label}</span>
+    <SummaryChip className={`${toneClass} font-normal`}>
+      <span className="rounded-full bg-card px-2 font-semibold leading-4">{label}</span>
       <span>{detail}</span>
-    </span>
+    </SummaryChip>
   );
 }
