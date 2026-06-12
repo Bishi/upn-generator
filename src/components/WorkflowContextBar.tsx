@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "@tanstack/react-router";
 import {
   Calendar,
@@ -6,12 +6,9 @@ import {
   ChevronDown,
   FileText,
   Layers,
-  Loader2,
-  Plus,
   Send,
 } from "lucide-react";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import { ipc } from "@/lib/ipc";
 import { formatEur, type BillingPeriod } from "@/lib/types";
 import {
   EMPTY_PERIOD_STATUS,
@@ -35,6 +32,29 @@ const SHORT_MONTHS = [
   "Dec",
 ];
 
+function createVirtualBillingPeriod(month: number, year: number): BillingPeriod {
+  return {
+    id: null,
+    building_id: 1,
+    month,
+    year,
+    status: "draft",
+    created_at: "",
+  };
+}
+
+function buildYearTabs(years: number[], selectedYear: number) {
+  const currentYear = new Date().getFullYear();
+  const candidates = new Set<number>(years);
+  for (let year = currentYear - 1; year <= currentYear + 2; year += 1) {
+    candidates.add(year);
+  }
+  for (let year = selectedYear - 1; year <= selectedYear + 1; year += 1) {
+    candidates.add(year);
+  }
+  return [...candidates].sort((a, b) => a - b);
+}
+
 type WorkflowContextBarProps = {
   snapshot: WorkflowSnapshot;
 };
@@ -48,12 +68,10 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
     years,
     selectedYear,
     selected,
-    loadPeriods,
     setSelectedYear,
     setSelected,
   } = useBillingPeriodSelection();
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [creatingYear, setCreatingYear] = useState<number | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -94,41 +112,13 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
             : "bills"
         : "bills";
 
-  const createAndSelectYear = useCallback(
-    async (year: number) => {
-      setCreatingYear(year);
-      try {
-        await ipc.createYearPeriods(year);
-        const periods = await loadPeriods();
-        const preferredMonth = selected?.month ?? 1;
-        const next =
-          periods.find(
-            (period) => period.year === year && period.month === preferredMonth,
-          ) ??
-          periods.find((period) => period.year === year && period.month === 1) ??
-          null;
-        if (next) setSelected(next);
-      } finally {
-        setCreatingYear(null);
-      }
-    },
-    [loadPeriods, selected, setSelected],
-  );
-
   const yearTabs = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    return [...new Set([...years, selectedYear, currentYear])].sort((a, b) => a - b);
+    return buildYearTabs(years, selectedYear);
   }, [selectedYear, years]);
-  const yearHasPeriods = allPeriods.some((period) => period.year === selectedYear);
-  const nextAddYear = yearHasPeriods
-    ? Math.max(...yearTabs, new Date().getFullYear()) + 1
-    : selectedYear;
 
   const periodLabel = selected
     ? `${SHORT_MONTHS[selected.month - 1]} ${selected.year}`
-    : yearHasPeriods
-      ? `Select ${selectedYear}`
-      : `Add ${selectedYear}`;
+    : "Pick month";
 
   const steps: Array<{
     label: string;
@@ -194,14 +184,16 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
             allPeriods={allPeriods}
             yearTabs={yearTabs}
             periodStatuses={snapshot.periodStatuses}
-            creatingYear={creatingYear}
-            nextAddYear={nextAddYear}
             onSelectYear={setSelectedYear}
-            onSelectPeriod={(period) => {
+            onSelectMonth={(month) => {
+              const period =
+                allPeriods.find(
+                  (candidate) =>
+                    candidate.year === selectedYear && candidate.month === month,
+                ) ?? createVirtualBillingPeriod(month, selectedYear);
               setSelected(period);
               setPickerOpen(false);
             }}
-            onAddYear={createAndSelectYear}
           />
         )}
       </div>
@@ -235,22 +227,16 @@ function PeriodPicker({
   allPeriods,
   yearTabs,
   periodStatuses,
-  creatingYear,
-  nextAddYear,
   onSelectYear,
-  onSelectPeriod,
-  onAddYear,
+  onSelectMonth,
 }: {
   selected: BillingPeriod | null;
   selectedYear: number;
   allPeriods: BillingPeriod[];
   yearTabs: number[];
   periodStatuses: Map<number, PeriodStatus>;
-  creatingYear: number | null;
-  nextAddYear: number;
   onSelectYear: (year: number) => void;
-  onSelectPeriod: (period: BillingPeriod) => void;
-  onAddYear: (year: number) => Promise<void>;
+  onSelectMonth: (month: number) => void;
 }) {
   const periodByMonth = new Map(
     allPeriods
@@ -260,7 +246,7 @@ function PeriodPicker({
 
   return (
     <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-80 rounded-lg border border-border-2 bg-popover p-4 text-popover-foreground shadow-pop">
-      <div className="mb-4 flex items-center gap-1.5">
+      <div className="mb-4 flex max-h-20 flex-wrap items-center gap-1.5 overflow-y-auto pr-1">
         {yearTabs.map((year) => (
           <button
             key={year}
@@ -276,19 +262,6 @@ function PeriodPicker({
             {year}
           </button>
         ))}
-        <button
-          type="button"
-          onClick={() => void onAddYear(nextAddYear)}
-          disabled={creatingYear != null}
-          className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-accent-foreground hover:bg-accent disabled:opacity-60"
-        >
-          {creatingYear != null ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <Plus className="size-3" />
-          )}
-          Add year
-        </button>
       </div>
 
       <div className="grid grid-cols-4 gap-1.5">
@@ -299,21 +272,18 @@ function PeriodPicker({
             period?.id != null
               ? periodStatuses.get(period.id) ?? EMPTY_PERIOD_STATUS
               : EMPTY_PERIOD_STATUS;
-          const isSelected = selected?.id != null && selected.id === period?.id;
+          const isSelected = selected?.year === selectedYear && selected.month === month;
 
           return (
             <button
               key={month}
               type="button"
-              disabled={!period}
-              onClick={() => period && onSelectPeriod(period)}
+              onClick={() => onSelectMonth(month)}
               className={cn(
                 "flex min-h-14 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-2 py-2 text-xs transition-colors",
                 isSelected
                   ? "bg-primary text-primary-foreground"
-                  : period
-                    ? "bg-surface-3 text-foreground hover:border-border-2 hover:bg-accent"
-                    : "cursor-default bg-surface-2 text-muted-foreground opacity-50",
+                  : "bg-surface-3 text-foreground hover:border-border-2 hover:bg-accent",
               )}
             >
               <span className="font-semibold">{monthName}</span>
@@ -334,11 +304,6 @@ function PeriodPicker({
           Pending
         </span>
       </div>
-      {periodByMonth.size === 0 && (
-        <div className="mt-3 rounded-md bg-warning-soft px-3 py-2 text-xs text-warning">
-          No months exist for {selectedYear}. Add the year to create all 12 months.
-        </div>
-      )}
     </div>
   );
 }

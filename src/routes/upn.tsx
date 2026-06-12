@@ -479,7 +479,7 @@ function UpnPage() {
           <Button
             variant="outline"
             onClick={downloadAll}
-            disabled={!selected || snapshot.loading || splits.length === 0 || downloading}
+            disabled={!selected?.id || snapshot.loading || splits.length === 0 || downloading}
           >
             {downloading ? (
               <Loader2 className="size-4 animate-spin" />
@@ -490,7 +490,7 @@ function UpnPage() {
           </Button>
           <Button
             onClick={sendEmails}
-            disabled={!selected || snapshot.loading || splits.length === 0 || sending}
+            disabled={!selected?.id || snapshot.loading || splits.length === 0 || sending}
           >
             {sending ? (
               <Loader2 className="size-4 animate-spin" />

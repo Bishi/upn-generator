@@ -5,13 +5,16 @@
 ## Pre-conditions
 
 - App is running with seeded building, apartment, and provider data.
-- A billing year/month exists on the Bills page.
 - Test files are available from `file-examples/` or another known local bill sample set.
 
 ## Cases
 
-- [ ] Add a new billing year and confirm all 12 months are available.
+- [ ] Open the month picker, confirm clicking outside or pressing Escape closes it.
+- [ ] Select a year/month that has no bills yet and confirm the Bills page shows the normal empty month state.
+- [ ] Cancel a local bill import for a newly selected empty month and confirm no billing period row is created.
 - [ ] Import a combined PDF and confirm one row is created per detected configured provider.
+- [ ] Confirm importing, adding a manual bill, or fetching an inbox preview for a newly selected month creates and selects that billing period.
+- [ ] Select an empty month, reload the app, and confirm the same month remains selected.
 - [ ] Import a supported image file and confirm OCR text is parsed into provider, amount, reference, purpose, and due date fields.
 - [ ] Confirm bills whose document title/period belongs to the selected month are accepted.
 - [ ] Confirm a bill for the wrong selected month is rejected or clearly blocked before save.

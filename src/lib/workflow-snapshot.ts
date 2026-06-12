@@ -45,6 +45,7 @@ export type BillingPeriodSelectionValue = {
   selectedYear: number;
   selected: BillingPeriod | null;
   loadPeriods: () => Promise<BillingPeriod[]>;
+  ensureSelectedPeriod: () => Promise<(BillingPeriod & { id: number }) | null>;
   setSelectedYear: (year: number) => void;
   setSelected: (period: BillingPeriod | null) => void;
 };
@@ -68,6 +69,12 @@ export type WorkflowSnapshot = {
 type PeriodRows = {
   bills: Bill[];
   splits: SplitRow[];
+};
+
+type PendingEnsureSelectedPeriod = {
+  month: number;
+  year: number;
+  promise: Promise<(BillingPeriod & { id: number }) | null>;
 };
 
 const BillingPeriodSelectionContext =
@@ -109,24 +116,15 @@ function periodsWithIds(periods: BillingPeriod[]) {
   );
 }
 
-function findPreferredPeriodForYear(
-  periods: BillingPeriod[],
-  year: number,
-  preferredMonth: number | null,
-) {
-  const periodsInYear = [...periods]
-    .filter((period) => period.year === year)
-    .sort((a, b) => a.month - b.month);
-
-  if (periodsInYear.length === 0) return null;
-
-  if (preferredMonth != null) {
-    const sameMonth =
-      periodsInYear.find((period) => period.month === preferredMonth) ?? null;
-    if (sameMonth) return sameMonth;
-  }
-
-  return periodsInYear[0] ?? null;
+function createVirtualBillingPeriod(month: number, year: number): BillingPeriod {
+  return {
+    id: null,
+    building_id: 1,
+    month,
+    year,
+    status: "draft",
+    created_at: "",
+  };
 }
 
 function readStoredSelection(): StoredSelection | null {
@@ -142,12 +140,29 @@ function readStoredSelection(): StoredSelection | null {
 
 function findStoredPeriod(periods: BillingPeriod[], stored: StoredSelection | null) {
   if (!stored) return null;
+  if (stored.id != null) {
+    const byId = periods.find((period) => period.id === stored.id) ?? null;
+    if (byId) return byId;
+  }
+  const { month, year } = stored;
+  if (
+    typeof month !== "number" ||
+    !Number.isInteger(month) ||
+    month < 1 ||
+    month > 12 ||
+    typeof year !== "number" ||
+    !Number.isInteger(year) ||
+    year < 1900 ||
+    year > 9999
+  ) {
+    return null;
+  }
+
   return (
-    periods.find((period) => period.id === stored.id) ??
     periods.find(
-      (period) => period.year === stored.year && period.month === stored.month,
+      (period) => period.year === year && period.month === month,
     ) ??
-    null
+    createVirtualBillingPeriod(month, year)
   );
 }
 
@@ -162,7 +177,7 @@ function resolveInitialBillingPeriod(
   const ordered = sortPeriods(periods);
   const stored = findStoredPeriod(ordered, readStoredSelection());
 
-  if (stored?.id != null && periodHasWorkflowData(statuses.get(stored.id))) {
+  if (stored) {
     return stored;
   }
 
@@ -255,6 +270,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const selectedRef = useRef<BillingPeriod | null>(null);
   const selectedDataPeriodIdRef = useRef<number | null>(null);
   const periodStatusesRef = useRef<Map<number, PeriodStatus>>(new Map());
+  const ensureSelectedPeriodRef = useRef<PendingEnsureSelectedPeriod | null>(null);
 
   useEffect(() => {
     periodsRef.current = allPeriods;
@@ -334,6 +350,60 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
     },
     [refreshSelectedPeriod],
   );
+
+  const ensureSelectedPeriod = useCallback(async () => {
+    const period = selectedRef.current;
+    if (!period) return null;
+    if (period.id != null) return period as BillingPeriod & { id: number };
+    const targetMonth = period.month;
+    const targetYear = period.year;
+
+    const existing = ensureSelectedPeriodRef.current;
+    if (existing?.month === targetMonth && existing.year === targetYear) {
+      return existing.promise;
+    }
+
+    const pending = (async () => {
+      const materialized = await ipc.createBillingPeriod(targetMonth, targetYear);
+      if (materialized.id == null) {
+        throw new Error("Created billing period did not include an id.");
+      }
+
+      setAllPeriods((current) => {
+        const next = current.filter(
+          (row) =>
+            row.id !== materialized.id &&
+            !(row.year === materialized.year && row.month === materialized.month),
+        );
+        return sortPeriods([...next, materialized]);
+      });
+      setPeriodStatuses((current) => {
+        const next = new Map(current);
+        if (!next.has(materialized.id!)) next.set(materialized.id!, EMPTY_PERIOD_STATUS);
+        return next;
+      });
+      if (
+        selectedRef.current?.month === targetMonth &&
+        selectedRef.current?.year === targetYear
+      ) {
+        applySelection(materialized);
+      }
+      return materialized as BillingPeriod & { id: number };
+    })();
+
+    ensureSelectedPeriodRef.current = {
+      month: targetMonth,
+      year: targetYear,
+      promise: pending,
+    };
+    try {
+      return await pending;
+    } finally {
+      if (ensureSelectedPeriodRef.current?.promise === pending) {
+        ensureSelectedPeriodRef.current = null;
+      }
+    }
+  }, [applySelection]);
 
   const refresh = useCallback(
     async (options: WorkflowRefreshOptions = {}) => {
@@ -454,19 +524,8 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const selectYear = useCallback(
     (year: number) => {
       setSelectedYearState(year);
-      const next = findPreferredPeriodForYear(
-        periodsRef.current,
-        year,
-        selectedRef.current?.month ?? null,
-      );
-      if (next) {
-        applySelection(next);
-      } else {
-        setSelectedState(null);
-        void refreshSelectedPeriod(null);
-      }
     },
-    [applySelection, refreshSelectedPeriod],
+    [],
   );
 
   useEffect(() => {
@@ -523,6 +582,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       selectedYear,
       selected,
       loadPeriods,
+      ensureSelectedPeriod,
       setSelectedYear: selectYear,
       setSelected: applySelection,
     }),
@@ -533,6 +593,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       selectedYear,
       selected,
       loadPeriods,
+      ensureSelectedPeriod,
       selectYear,
       applySelection,
     ],

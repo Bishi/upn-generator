@@ -103,12 +103,11 @@ Use **Restore Backup** to replace the current app data with a previously saved b
 
 ## Monthly Workflow
 
-### Step 1 - Create a billing month
+### Step 1 - Select a billing month
 
 Go to the **Bills** page.
 
-- First time using a new year: click **Add Year**, enter the year (for example `2026`) - all 12 billing months are created at once.
-- In subsequent months, the periods already exist; just select the correct month.
+Use the month picker to choose the billing month. Years and months can be browsed directly; the app creates the underlying billing period only when you import or add bills for a month.
 
 ### Step 2 - Import bills
 
