@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "@tanstack/react-router";
 import {
   Calendar,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   Layers,
   Send,
@@ -43,18 +45,6 @@ function createVirtualBillingPeriod(month: number, year: number): BillingPeriod 
   };
 }
 
-function buildYearTabs(years: number[], selectedYear: number) {
-  const currentYear = new Date().getFullYear();
-  const candidates = new Set<number>(years);
-  for (let year = currentYear - 1; year <= currentYear + 2; year += 1) {
-    candidates.add(year);
-  }
-  for (let year = selectedYear - 1; year <= selectedYear + 1; year += 1) {
-    candidates.add(year);
-  }
-  return [...candidates].sort((a, b) => a - b);
-}
-
 type WorkflowContextBarProps = {
   snapshot: WorkflowSnapshot;
 };
@@ -65,7 +55,6 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
   const location = useLocation();
   const {
     allPeriods,
-    years,
     selectedYear,
     selected,
     setSelectedYear,
@@ -111,10 +100,6 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
             ? "splits"
             : "bills"
         : "bills";
-
-  const yearTabs = useMemo(() => {
-    return buildYearTabs(years, selectedYear);
-  }, [selectedYear, years]);
 
   const periodLabel = selected
     ? `${SHORT_MONTHS[selected.month - 1]} ${selected.year}`
@@ -182,7 +167,6 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
             selected={selected}
             selectedYear={selectedYear}
             allPeriods={allPeriods}
-            yearTabs={yearTabs}
             periodStatuses={snapshot.periodStatuses}
             onSelectYear={setSelectedYear}
             onSelectMonth={(month) => {
@@ -225,7 +209,6 @@ function PeriodPicker({
   selected,
   selectedYear,
   allPeriods,
-  yearTabs,
   periodStatuses,
   onSelectYear,
   onSelectMonth,
@@ -233,7 +216,6 @@ function PeriodPicker({
   selected: BillingPeriod | null;
   selectedYear: number;
   allPeriods: BillingPeriod[];
-  yearTabs: number[];
   periodStatuses: Map<number, PeriodStatus>;
   onSelectYear: (year: number) => void;
   onSelectMonth: (month: number) => void;
@@ -246,22 +228,30 @@ function PeriodPicker({
 
   return (
     <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-80 rounded-lg border border-border-2 bg-popover p-4 text-popover-foreground shadow-pop">
-      <div className="mb-4 flex max-h-20 flex-wrap items-center gap-1.5 overflow-y-auto pr-1">
-        {yearTabs.map((year) => (
-          <button
-            key={year}
-            type="button"
-            onClick={() => onSelectYear(year)}
-            className={cn(
-              "h-7 rounded-md px-3 text-xs font-semibold transition-colors",
-              selectedYear === year
-                ? "bg-accent-soft text-accent-foreground"
-                : "bg-surface-3 text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}
-          >
-            {year}
-          </button>
-        ))}
+      <div className="mb-4 grid h-8 grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-2">
+        <button
+          type="button"
+          aria-label="Previous year"
+          title="Previous year"
+          disabled={selectedYear <= 1900}
+          onClick={() => onSelectYear(selectedYear - 1)}
+          className="grid size-8 place-items-center rounded-md bg-surface-3 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <ChevronLeft className="size-4" />
+        </button>
+        <div className="select-none text-center text-sm font-semibold tabular-nums text-foreground">
+          {selectedYear}
+        </div>
+        <button
+          type="button"
+          aria-label="Next year"
+          title="Next year"
+          disabled={selectedYear >= 9999}
+          onClick={() => onSelectYear(selectedYear + 1)}
+          className="grid size-8 place-items-center rounded-md bg-surface-3 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <ChevronRight className="size-4" />
+        </button>
       </div>
 
       <div className="grid grid-cols-4 gap-1.5">
