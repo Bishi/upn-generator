@@ -18,9 +18,15 @@
 - [ ] Confirm Download All PDFs does not mark the month delivered or create delivery history.
 - [ ] Click Mark Delivered, cancel the confirmation prompt, and confirm the month remains undelivered.
 - [ ] Click Mark Delivered, accept the confirmation prompt, and confirm all current apartment packets are marked delivered.
+- [ ] Confirm the successful Mark Delivered message appears as a toast and does not push page content down.
+- [ ] Trigger a UPN action error and confirm it appears as a manually dismissed error toast without pushing page content down.
+- [ ] Trigger a workflow error, navigate away from UPN Preview and back, and confirm no duplicate error toast appears.
+- [ ] Click Unmark Delivered, cancel the confirmation prompt, and confirm manual delivery marks remain.
+- [ ] Click Unmark Delivered, accept the confirmation prompt, and confirm manual delivery marks are removed while email delivery history remains.
 - [ ] Confirm a mixed month with some emailed packets and a manual delivered confirmation marks the UPN workflow step complete.
 - [ ] Confirm generated UPN PDFs use the selected billing month, payer, recipient, IBAN, reference, purpose, and amount.
 - [ ] Open single and apartment previews and confirm preview/open temp PDFs do not create delivery history.
+- [ ] Navigate away from and back to UPN Preview after manual delivery and confirm delivered pills, row statuses, and Mark/Unmark button do not flash through an incorrect state.
 - [ ] Send emails with allowlist enabled and confirm non-allowlisted recipients are blocked.
 - [ ] Send a test email to an allowed recipient and confirm delivery succeeds.
 - [ ] Send apartment emails with multiple comma-separated recipients and confirm per-recipient status is recorded.

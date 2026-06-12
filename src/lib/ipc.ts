@@ -110,6 +110,8 @@ export const ipc = {
     invoke<EmailResult[]>("send_emails", { billingPeriodId }),
   markUpnPeriodDelivered: (billingPeriodId: number) =>
     invoke<UpnDeliveryRollup>("mark_upn_period_delivered", { billingPeriodId }),
+  unmarkUpnPeriodDelivered: (billingPeriodId: number) =>
+    invoke<UpnDeliveryRollup>("unmark_upn_period_delivered", { billingPeriodId }),
   getUpnDeliveryEvents: (billingPeriodId: number) =>
     invoke<UpnDeliveryEvent[]>("get_upn_delivery_events", { billingPeriodId }),
   getUpnDeliveryRollup: (billingPeriodId: number) =>

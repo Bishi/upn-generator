@@ -152,7 +152,7 @@ Each apartment card shows its line items and the total amount due.
 |--------|-------------|
 | **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
 | **Download All PDFs** | Saves one combined UPN packet PDF per apartment to a folder of your choice for review or external use |
-| **Mark Delivered** | After a confirmation prompt, marks all current apartment UPN packets as delivered |
+| **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
 
 UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Downloaded PDFs do not mark a month delivered by themselves.

@@ -22,6 +22,7 @@ use commands::upn::{
     generate_upn_pdf, get_upn_delivery_events, get_upn_delivery_rollup, get_upn_packet_hashes,
     mark_upn_period_delivered, open_preview_apartment_upns, open_preview_upn, preview_upn,
     save_all_upns, save_smtp_password, send_emails, test_smtp_connection,
+    unmark_upn_period_delivered,
 };
 use db::migrations;
 use rusqlite::Connection;
@@ -103,6 +104,7 @@ pub fn run() {
             save_all_upns,
             send_emails,
             mark_upn_period_delivered,
+            unmark_upn_period_delivered,
             get_upn_delivery_events,
             get_upn_delivery_rollup,
             get_upn_packet_hashes,

@@ -71,6 +71,7 @@ export type WorkflowSnapshot = {
   providers: Provider[];
   bills: Bill[];
   splits: SplitRow[];
+  selectedDeliveryRollup: UpnDeliveryRollup | null;
   periodStatuses: Map<number, PeriodStatus>;
   selectedStatus: PeriodStatus;
   refresh: (options?: WorkflowRefreshOptions) => Promise<void>;
@@ -282,6 +283,8 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const [providers, setProviders] = useState<Provider[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
   const [splits, setSplits] = useState<SplitRow[]>([]);
+  const [selectedDeliveryRollup, setSelectedDeliveryRollup] =
+    useState<UpnDeliveryRollup | null>(null);
   const [selectedDataPeriodId, setSelectedDataPeriodId] = useState<number | null>(null);
   const [periodStatuses, setPeriodStatuses] = useState<Map<number, PeriodStatus>>(
     () => new Map(),
@@ -325,6 +328,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
         setSelectedLoading(false);
         setBills([]);
         setSplits([]);
+        setSelectedDeliveryRollup(null);
         setSelectedDataPeriodId(null);
         return;
       }
@@ -336,6 +340,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
         setError(null);
         setBills(rows.bills);
         setSplits(rows.splits);
+        setSelectedDeliveryRollup(rows.deliveryRollup);
         setSelectedDataPeriodId(period.id);
         setPeriodStatuses((current) => {
           const next = new Map(current);
@@ -351,6 +356,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
         if (selectedDataPeriodIdRef.current !== period.id) {
           setBills([]);
           setSplits([]);
+          setSelectedDeliveryRollup(null);
           setSelectedDataPeriodId(period.id);
         }
       } finally {
@@ -598,6 +604,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const selectedDataFresh = selected?.id == null || selectedDataPeriodId === selected.id;
   const exposedBills = selectedDataFresh ? bills : [];
   const exposedSplits = selectedDataFresh ? splits : [];
+  const exposedDeliveryRollup = selectedDataFresh ? selectedDeliveryRollup : null;
   const loading = initialLoading || !selectedDataFresh;
 
   const billingPeriodSelection = useMemo<BillingPeriodSelectionValue>(
@@ -637,6 +644,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       providers,
       bills: exposedBills,
       splits: exposedSplits,
+      selectedDeliveryRollup: exposedDeliveryRollup,
       periodStatuses,
       selectedStatus,
       refresh,
@@ -653,6 +661,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       providers,
       exposedBills,
       exposedSplits,
+      exposedDeliveryRollup,
       periodStatuses,
       selectedStatus,
       refresh,

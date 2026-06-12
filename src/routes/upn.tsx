@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   Mail,
@@ -10,6 +12,7 @@ import {
   Files,
   ChevronDown,
   Loader2,
+  RotateCcw,
 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -20,7 +23,6 @@ import type {
   SplitRow,
   UpnDeliveryApartmentRollup,
   UpnDeliveryEvent,
-  UpnDeliveryRollup,
   UpnPacketHash,
 } from "@/lib/types";
 import { formatEur } from "@/lib/types";
@@ -90,6 +92,32 @@ function statusClass(status: DeliveryRowStatus) {
   if (status === "partial") return "bg-warning-soft text-warning";
   if (status === "changed") return "bg-warning-soft text-warning";
   return "bg-danger-soft text-danger";
+}
+
+function summarizeEmailResults(results: EmailResult[]) {
+  const counts = results.reduce(
+    (summary, result) => {
+      if (result.status === "sent") summary.sent += 1;
+      else if (result.status === "blocked") summary.blocked += 1;
+      else if (result.status === "partial") summary.partial += 1;
+      else summary.failed += 1;
+      return summary;
+    },
+    { sent: 0, blocked: 0, failed: 0, partial: 0 },
+  );
+  const issues = counts.blocked + counts.failed + counts.partial;
+  const details = [
+    counts.sent > 0 ? `${counts.sent} sent` : null,
+    counts.partial > 0 ? `${counts.partial} partial` : null,
+    counts.blocked > 0 ? `${counts.blocked} blocked` : null,
+    counts.failed > 0 ? `${counts.failed} failed` : null,
+  ].filter(Boolean);
+
+  return {
+    hasIssues: issues > 0,
+    title: issues > 0 ? "Email send completed with issues" : "Emails sent",
+    description: details.length > 0 ? details.join(", ") : `${results.length} processed`,
+  };
 }
 
 function normalizedRecipients(raw: string) {
@@ -442,28 +470,32 @@ function UpnPage() {
   const [markingDelivered, setMarkingDelivered] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [deliveryEvents, setDeliveryEvents] = useState<UpnDeliveryEvent[]>([]);
-  const [deliveryRollup, setDeliveryRollup] = useState<UpnDeliveryRollup | null>(null);
   const [packetHashes, setPacketHashes] = useState<UpnPacketHash[]>([]);
-  const [pageMessage, setPageMessage] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
+  const lastSnapshotErrorRef = useRef<string | null>(null);
   const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
+
+  const setPageError = useCallback((message: string | null) => {
+    if (!message) return;
+    toast.error("UPN action failed", {
+      id: "upn-action-error",
+      description: message,
+      duration: Infinity,
+    });
+  }, []);
 
   const loadDeliveryState = useCallback(
     async (
       billingPeriodId: number,
       requestId?: number,
-      clearPageMessage = true,
     ) => {
-      const [events, hashes, rollup] = await Promise.all([
+      const [events, hashes] = await Promise.all([
         ipc.getUpnDeliveryEvents(billingPeriodId),
         ipc.getUpnPacketHashes(billingPeriodId),
-        ipc.getUpnDeliveryRollup(billingPeriodId),
       ]);
       if (requestId != null && loadRequestRef.current !== requestId) return;
       setDeliveryEvents(events);
       setPacketHashes(hashes);
-      setDeliveryRollup(rollup);
-      if (clearPageMessage) setPageMessage(null);
     },
     [],
   );
@@ -475,34 +507,51 @@ function UpnPage() {
       void loadDeliveryState(selected.id, requestId)
         .catch((error) => {
           if (loadRequestRef.current === requestId) {
-            setPageMessage(String(error));
+            setPageError(String(error));
             setDeliveryEvents([]);
             setPacketHashes([]);
-            setDeliveryRollup(null);
           }
         });
     } else {
       setDeliveryEvents([]);
       setPacketHashes([]);
-      setDeliveryRollup(null);
     }
     return () => {
       loadRequestRef.current += 1;
     };
   }, [loadDeliveryState, selected?.id]);
 
+  useEffect(() => {
+    if (!snapshot.error) {
+      lastSnapshotErrorRef.current = null;
+      return;
+    }
+    if (lastSnapshotErrorRef.current === snapshot.error) return;
+    lastSnapshotErrorRef.current = snapshot.error;
+    toast.error("Workflow refresh failed", {
+      id: "upn-workflow-error",
+      description: snapshot.error,
+      duration: Infinity,
+    });
+  }, [snapshot.error]);
+
   const sendEmails = async () => {
     if (!selected?.id) return;
-    setPageMessage(null);
     setSending(true);
     try {
       const results = await sendPeriodEmails(selected.id);
       setEmailResults(results);
+      const summary = summarizeEmailResults(results);
+      if (summary.hasIssues) {
+        toast.warning(summary.title, { description: summary.description });
+      } else {
+        toast.success(summary.title, { description: summary.description });
+      }
       await loadDeliveryState(selected.id);
       await snapshot.refresh({ periods: false, core: false, selected: true, statuses: true });
     } catch (e) {
-      setPageMessage(String(e));
-      await loadDeliveryState(selected.id, undefined, false).catch(() => undefined);
+      setPageError(String(e));
+      await loadDeliveryState(selected.id).catch(() => undefined);
       await snapshot
         .refresh({ periods: false, core: false, selected: true, statuses: true })
         .catch(() => undefined);
@@ -517,9 +566,11 @@ function UpnPage() {
     try {
       const result = await downloadPeriodUpnPdfs(selected.id);
       if (!result) return;
-      setPageMessage(`Saved ${result.count} PDF(s) to ${result.folder}`);
+      toast.success("PDFs saved", {
+        description: `${result.count} packet${result.count === 1 ? "" : "s"} exported.`,
+      });
     } catch (e) {
-      setPageMessage(String(e));
+      setPageError(String(e));
     } finally {
       setDownloading(false);
     }
@@ -527,25 +578,62 @@ function UpnPage() {
 
   const markDelivered = async () => {
     if (!selected?.id) return;
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       "Mark this billing period as delivered? This will count all current UPN packets as delivered.",
+      {
+        title: "Mark Delivered",
+        kind: "warning",
+        okLabel: "Mark Delivered",
+        cancelLabel: "Cancel",
+      },
     );
     if (!confirmed) return;
 
-    setPageMessage(null);
     setMarkingDelivered(true);
     try {
       const rollup = await ipc.markUpnPeriodDelivered(selected.id);
       setEmailResults([]);
-      setDeliveryRollup(rollup);
       await loadDeliveryState(selected.id);
       await snapshot.refresh({ periods: false, core: false, selected: true, statuses: true });
-      setPageMessage(
-        `Marked ${rollup.current_delivered_count} of ${rollup.packet_count} UPN packet(s) delivered.`,
-      );
+      toast.success("Marked delivered", {
+        description: `${rollup.packet_count} packet${rollup.packet_count === 1 ? "" : "s"} updated.`,
+      });
     } catch (e) {
-      setPageMessage(String(e));
-      await loadDeliveryState(selected.id, undefined, false).catch(() => undefined);
+      setPageError(String(e));
+      await loadDeliveryState(selected.id).catch(() => undefined);
+      await snapshot
+        .refresh({ periods: false, core: false, selected: true, statuses: true })
+        .catch(() => undefined);
+    } finally {
+      setMarkingDelivered(false);
+    }
+  };
+
+  const unmarkDelivered = async () => {
+    if (!selected?.id) return;
+    const confirmed = await confirm(
+      "Remove manual delivery marks for this billing period? Email delivery history will stay unchanged.",
+      {
+        title: "Unmark Delivered",
+        kind: "warning",
+        okLabel: "Unmark Delivered",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!confirmed) return;
+
+    setMarkingDelivered(true);
+    try {
+      await ipc.unmarkUpnPeriodDelivered(selected.id);
+      setEmailResults([]);
+      await loadDeliveryState(selected.id);
+      await snapshot.refresh({ periods: false, core: false, selected: true, statuses: true });
+      toast.success("Manual delivery marks removed", {
+        description: "Email delivery history was kept.",
+      });
+    } catch (e) {
+      setPageError(String(e));
+      await loadDeliveryState(selected.id).catch(() => undefined);
       await snapshot
         .refresh({ periods: false, core: false, selected: true, statuses: true })
         .catch(() => undefined);
@@ -565,7 +653,7 @@ function UpnPage() {
     new Map(packetHashes.map((hash) => [hash.apartment_id, hash])),
   );
   const rollupResultsByApartmentId = new Map(
-    (deliveryRollup?.apartments ?? []).flatMap((row) => {
+    (snapshot.selectedDeliveryRollup?.apartments ?? []).flatMap((row) => {
       const result = rollupToRowResult(
         row,
         apartmentConfigById.get(row.apartment_id) ?? null,
@@ -606,7 +694,6 @@ function UpnPage() {
   ).length;
   const missingRecipientCount = Math.max(0, apartments.length - readyRecipientCount);
   const selectedPeriodId = selected?.id ?? null;
-  const workflowError = pageMessage ?? snapshot.error;
   const selectedStatusKnown =
     selectedPeriodId !== null && snapshot.periodStatuses.has(selectedPeriodId);
   const showUpnLoading =
@@ -620,6 +707,21 @@ function UpnPage() {
     selectedStatusKnown;
   const showUpnTable =
     selectedPeriodId !== null && !snapshot.loading && apartments.length > 0;
+  const deliveryRollup = snapshot.selectedDeliveryRollup;
+  const deliveryPacketCount =
+    deliveryRollup?.packet_count ??
+    (snapshot.selectedStatus.packetCount > 0
+      ? snapshot.selectedStatus.packetCount
+      : apartments.length);
+  const deliveryDeliveredCount =
+    deliveryRollup?.current_delivered_count ??
+    (snapshot.selectedStatus.packetCount > 0
+      ? snapshot.selectedStatus.deliveredCount
+      : 0);
+  const deliveryComplete =
+    deliveryRollup?.complete ??
+    (deliveryPacketCount > 0 && snapshot.selectedStatus.sent);
+  const hasManualDelivery = (deliveryRollup?.manual_delivered_count ?? 0) > 0;
 
   return (
     <BillingPageShell
@@ -639,20 +741,37 @@ function UpnPage() {
             )}
             Download All PDFs
           </Button>
-          <Button
-            variant="outline"
-            onClick={markDelivered}
-            disabled={
-              !selected?.id || snapshot.loading || splits.length === 0 || markingDelivered
-            }
-          >
-            {markingDelivered ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="size-4" />
-            )}
-            Mark Delivered
-          </Button>
+          {hasManualDelivery ? (
+            <Button
+              variant="outline"
+              onClick={unmarkDelivered}
+              disabled={
+                !selected?.id || snapshot.loading || splits.length === 0 || markingDelivered
+              }
+            >
+              {markingDelivered ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RotateCcw className="size-4" />
+              )}
+              Unmark Delivered
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={markDelivered}
+              disabled={
+                !selected?.id || snapshot.loading || splits.length === 0 || markingDelivered
+              }
+            >
+              {markingDelivered ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="size-4" />
+              )}
+              Mark Delivered
+            </Button>
+          )}
           <Button
             onClick={sendEmails}
             disabled={!selected?.id || snapshot.loading || splits.length === 0 || sending}
@@ -667,12 +786,6 @@ function UpnPage() {
         </>
       }
     >
-      {workflowError && (
-        <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
-          {workflowError}
-        </div>
-      )}
-
       {showUpnTable && (
         <SummaryStrip>
           <SummaryChip className="bg-success-soft text-success">
@@ -691,16 +804,16 @@ function UpnPage() {
             {totalSlipCount} slips
             <span className="font-normal">across {apartments.length} packets</span>
           </SummaryChip>
-          {deliveryRollup && deliveryRollup.packet_count > 0 && (
+          {deliveryPacketCount > 0 && (
             <SummaryChip
               className={
-                deliveryRollup.complete
+                deliveryComplete
                   ? "bg-success-soft text-success"
                   : "bg-surface-3 text-muted-foreground"
               }
             >
               <CheckCircle2 className="size-3.5" />
-              {deliveryRollup.current_delivered_count}/{deliveryRollup.packet_count} delivered
+              {deliveryDeliveredCount}/{deliveryPacketCount} delivered
             </SummaryChip>
           )}
         </SummaryStrip>
@@ -767,7 +880,7 @@ function UpnPage() {
                       current === aptId ? null : aptId,
                     )
                   }
-                  onPreviewError={setPageMessage}
+                  onPreviewError={setPageError}
                 />
               ))}
             </tbody>

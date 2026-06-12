@@ -2265,6 +2265,51 @@ pub fn mark_upn_period_delivered(
 }
 
 #[tauri::command]
+pub fn unmark_upn_period_delivered(
+    db: State<DbState>,
+    billing_period_id: i64,
+) -> Result<UpnDeliveryRollup, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let packets = load_current_packet_infos(&conn, billing_period_id)?;
+    conn.execute(
+        "DELETE FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+           AND delivery_type = 'manual'
+           AND status = 'delivered'",
+        params![billing_period_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let events = query_vec(
+        &conn,
+        "SELECT id, attempt_id, billing_period_id, apartment_id, delivery_type,
+                status, recipient, original_recipient, attachment_sha256,
+                error, created_at
+         FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+         ORDER BY created_at ASC, id ASC",
+        &[&billing_period_id],
+        |r| {
+            Ok(UpnDeliveryEvent {
+                id: r.get(0)?,
+                attempt_id: r.get(1)?,
+                billing_period_id: r.get(2)?,
+                apartment_id: r.get(3)?,
+                delivery_type: r.get(4)?,
+                status: r.get(5)?,
+                recipient: r.get(6)?,
+                original_recipient: r.get(7)?,
+                attachment_sha256: r.get(8)?,
+                error: r.get(9)?,
+                created_at: r.get(10)?,
+            })
+        },
+    )?;
+
+    Ok(build_delivery_rollup(billing_period_id, packets, &events))
+}
+
+#[tauri::command]
 pub async fn test_smtp_connection(
     config: SmtpConfig,
     password: String,

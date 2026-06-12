@@ -150,6 +150,7 @@ Every user-facing feature should have a matching checklist under `tests/manual/`
 
 ### Implementation Checklists
 
+- Workflow state owned by `WorkflowSnapshot` must not be duplicated in page-local state for visible status, action buttons, or completion UI. If a page needs more than summary booleans/counts, expose the full selected domain object from `WorkflowSnapshot`; keep page-local state for transient UI state, form inputs, request spinners, or secondary details that do not drive workflow status.
 - Rust IPC changes must keep command registration, Rust types, `src/lib/ipc.ts`, and `src/lib/types.ts` in sync.
 - Database schema changes must check migrations, backup/restore behavior, and factory reset behavior.
 - UPN rendering changes must remain visually close to real Slovenian bank UPN forms and should be compared with `file-examples/`.

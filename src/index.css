@@ -378,6 +378,85 @@ h3,
   font-family: var(--font-mono);
 }
 
+.upn-toast {
+  border-radius: var(--app-radius-md) !important;
+  border-color: var(--border) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  box-shadow: var(--app-shadow-pop) !important;
+  font-family: var(--font-body) !important;
+}
+
+.upn-toast-title {
+  font-weight: 700 !important;
+}
+
+.upn-toast-description {
+  color: var(--muted-foreground) !important;
+}
+
+.upn-toast[data-type="success"] {
+  border-color: var(--success) !important;
+  background: var(--success-soft) !important;
+  color: var(--success) !important;
+}
+
+.upn-toast[data-type="error"] {
+  border-color: var(--danger) !important;
+  background: var(--danger-soft) !important;
+  color: var(--danger) !important;
+}
+
+.upn-toast[data-type="warning"] {
+  border-color: var(--warning) !important;
+  background: var(--warning-soft) !important;
+  color: var(--warning) !important;
+}
+
+.upn-toast[data-type="info"] {
+  border-color: var(--accent-strong) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent-strong) !important;
+}
+
+.upn-toast[data-type="success"] .upn-toast-description,
+.upn-toast[data-type="error"] .upn-toast-description,
+.upn-toast[data-type="warning"] .upn-toast-description,
+.upn-toast[data-type="info"] .upn-toast-description {
+  color: inherit !important;
+  opacity: 0.82;
+}
+
+.upn-toast [data-close-button] {
+  border-color: var(--border) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+}
+
+.upn-toast[data-type="success"] [data-close-button] {
+  border-color: var(--success) !important;
+  background: var(--success-soft) !important;
+  color: var(--success) !important;
+}
+
+.upn-toast[data-type="error"] [data-close-button] {
+  border-color: var(--danger) !important;
+  background: var(--danger-soft) !important;
+  color: var(--danger) !important;
+}
+
+.upn-toast[data-type="warning"] [data-close-button] {
+  border-color: var(--warning) !important;
+  background: var(--warning-soft) !important;
+  color: var(--warning) !important;
+}
+
+.upn-toast[data-type="info"] [data-close-button] {
+  border-color: var(--accent-strong) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent-strong) !important;
+}
+
 .bg-overlay {
   background-color: var(--overlay);
 }
