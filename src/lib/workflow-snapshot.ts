@@ -116,7 +116,7 @@ function periodsWithIds(periods: BillingPeriod[]) {
   );
 }
 
-function createVirtualBillingPeriod(month: number, year: number): BillingPeriod {
+export function createVirtualBillingPeriod(month: number, year: number): BillingPeriod {
   return {
     id: null,
     building_id: 1,

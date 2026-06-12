@@ -13,6 +13,7 @@ import {
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { formatEur, type BillingPeriod } from "@/lib/types";
 import {
+  createVirtualBillingPeriod,
   EMPTY_PERIOD_STATUS,
   type PeriodStatus,
   type WorkflowSnapshot,
@@ -33,17 +34,6 @@ const SHORT_MONTHS = [
   "Nov",
   "Dec",
 ];
-
-function createVirtualBillingPeriod(month: number, year: number): BillingPeriod {
-  return {
-    id: null,
-    building_id: 1,
-    month,
-    year,
-    status: "draft",
-    created_at: "",
-  };
-}
 
 type WorkflowContextBarProps = {
   snapshot: WorkflowSnapshot;

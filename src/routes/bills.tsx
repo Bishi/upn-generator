@@ -1040,6 +1040,8 @@ function BillsPage() {
         }
       }
       await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
+    } catch (e) {
+      setError(`Failed to import bills: ${e}`);
     } finally {
       setImporting(false);
     }
@@ -1053,31 +1055,36 @@ function BillsPage() {
   };
 
   const addBlankBill = async () => {
-    const billingPeriod = await ensureSelectedPeriod();
-    if (!billingPeriod) return;
-    const blank: Bill = {
-      id: null,
-      billing_period_id: billingPeriod.id,
-      provider_id: null,
-      raw_text: "",
-      amount_cents: 0,
-      creditor_name: "",
-      creditor_iban: "",
-      creditor_address: "",
-      creditor_city: "",
-      creditor_postal_code: "",
-      reference: "",
-      due_date: "",
-      purpose_code: "OTHR",
-      purpose_text: "",
-      invoice_number: "",
-      parse_note: "",
-      status: "draft",
-      source_filename: "(manual)",
-      provider_name: null,
-    };
-    await ipc.saveBill(blank);
-    await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
+    setError(null);
+    try {
+      const billingPeriod = await ensureSelectedPeriod();
+      if (!billingPeriod) return;
+      const blank: Bill = {
+        id: null,
+        billing_period_id: billingPeriod.id,
+        provider_id: null,
+        raw_text: "",
+        amount_cents: 0,
+        creditor_name: "",
+        creditor_iban: "",
+        creditor_address: "",
+        creditor_city: "",
+        creditor_postal_code: "",
+        reference: "",
+        due_date: "",
+        purpose_code: "OTHR",
+        purpose_text: "",
+        invoice_number: "",
+        parse_note: "",
+        status: "draft",
+        source_filename: "(manual)",
+        provider_name: null,
+      };
+      await ipc.saveBill(blank);
+      await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
+    } catch (e) {
+      setError(`Failed to add manual bill: ${e}`);
+    }
   };
 
   const saveBill = async (bill: Bill) => {
