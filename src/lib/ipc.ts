@@ -16,6 +16,7 @@ import type {
   SmtpConfig,
   SplitRow,
   UpnDeliveryEvent,
+  UpnDeliveryRollup,
   UpnPacketHash,
 } from "./types";
 
@@ -109,6 +110,8 @@ export const ipc = {
     invoke<EmailResult[]>("send_emails", { billingPeriodId }),
   getUpnDeliveryEvents: (billingPeriodId: number) =>
     invoke<UpnDeliveryEvent[]>("get_upn_delivery_events", { billingPeriodId }),
+  getUpnDeliveryRollup: (billingPeriodId: number) =>
+    invoke<UpnDeliveryRollup>("get_upn_delivery_rollup", { billingPeriodId }),
   getUpnPacketHashes: (billingPeriodId: number) =>
     invoke<UpnPacketHash[]>("get_upn_packet_hashes", { billingPeriodId }),
   saveSmtpPassword: (password: string) =>

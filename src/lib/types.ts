@@ -155,8 +155,8 @@ export interface UpnDeliveryEvent {
   attempt_id: string;
   billing_period_id: number;
   apartment_id: number;
-  delivery_type: "email";
-  status: "sent" | "failed" | "blocked";
+  delivery_type: "email" | "pdf";
+  status: "sent" | "saved" | "failed" | "blocked";
   recipient: string;
   original_recipient: string;
   attachment_sha256: string;
@@ -168,6 +168,34 @@ export interface UpnPacketHash {
   apartment_id: number;
   attachment_sha256: string;
   error: string;
+}
+
+export interface UpnDeliveryApartmentRollup {
+  apartment_id: number;
+  apartment_label: string;
+  packet_hash: string;
+  packet_error: string;
+  delivered: boolean;
+  email_sent: boolean;
+  pdf_saved: boolean;
+  current_failed_event_count: number;
+  current_blocked_event_count: number;
+  last_current_delivery_type: "email" | "pdf" | null;
+  last_current_delivery_status: "sent" | "saved" | "failed" | "blocked" | null;
+  last_current_delivery_at: string | null;
+}
+
+export interface UpnDeliveryRollup {
+  billing_period_id: number;
+  packet_count: number;
+  current_delivered_count: number;
+  email_sent_count: number;
+  pdf_saved_count: number;
+  current_failed_event_count: number;
+  current_blocked_event_count: number;
+  complete: boolean;
+  last_delivery_at: string | null;
+  apartments: UpnDeliveryApartmentRollup[];
 }
 
 export interface InboxImportResult {

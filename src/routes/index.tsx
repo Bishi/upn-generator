@@ -14,7 +14,10 @@ import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { serviceIconFor } from "@/lib/service-icons";
 import type { BillingPeriod, Provider } from "@/lib/types";
 import { formatEur, MONTHS } from "@/lib/types";
-import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
+import {
+  createVirtualBillingPeriod,
+  useWorkflowSnapshotContext,
+} from "@/lib/workflow-snapshot";
 import { Card } from "@/components/ui/card";
 
 export const Route = createFileRoute("/")({
@@ -38,7 +41,7 @@ type ProviderRow = {
 };
 
 function DashboardPage() {
-  const { allPeriods, selected } = useBillingPeriodSelection();
+  const { allPeriods, selected, setSelected } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
   const { apartments, providers, bills, splits } = snapshot;
   const [historySelected, setHistorySelected] = useState<BillingPeriod | null>(selected);
@@ -114,6 +117,7 @@ function DashboardPage() {
   const billsReady = billCount > 0;
   const splitsReady = splitCount > 0;
   const upnsReady = billsReady && splitsReady;
+  const deliveryComplete = selectedStatus.sent;
   const maxHistory = Math.max(1, ...history.map((entry) => entry.totalCents));
   const selectedHistoryIndex = history.findIndex((entry) =>
     historySelected?.id != null ? entry.periodId === historySelected.id : entry.isAnchor,
@@ -164,6 +168,17 @@ function DashboardPage() {
         : "Review flagged bill notes"
       : "No flagged bill notes";
   const dashboardChecking = snapshot.loading && !selectedStatusKnown;
+  const goToNextMonth = () => {
+    if (!selected) return;
+    const nextMonthValue = selected.year * 12 + selected.month;
+    const nextYear = Math.floor(nextMonthValue / 12);
+    const nextMonth = (nextMonthValue % 12) + 1;
+    const existing =
+      allPeriods.find(
+        (period) => period.year === nextYear && period.month === nextMonth,
+      ) ?? createVirtualBillingPeriod(nextMonth, nextYear);
+    setSelected(existing);
+  };
 
   const providerById = useMemo(
     () =>
@@ -225,6 +240,8 @@ function DashboardPage() {
         <DashboardActions
           billsReady={billsReady}
           splitsReady={splitsReady}
+          deliveryComplete={deliveryComplete}
+          onNextMonth={goToNextMonth}
         />
       </section>
 
@@ -454,9 +471,13 @@ function DashboardPage() {
 function DashboardActions({
   billsReady,
   splitsReady,
+  deliveryComplete,
+  onNextMonth,
 }: {
   billsReady: boolean;
   splitsReady: boolean;
+  deliveryComplete: boolean;
+  onNextMonth: () => void;
 }) {
   if (!billsReady) {
     return (
@@ -487,6 +508,28 @@ function DashboardActions({
           <Layers className="size-4" />
           Calculate splits
         </Link>
+      </div>
+    );
+  }
+
+  if (deliveryComplete) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Link
+          to="/upn"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-card px-4 text-sm font-medium shadow-card transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <CheckCircle2 className="size-4" />
+          View history
+        </Link>
+        <button
+          type="button"
+          onClick={onNextMonth}
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-card transition-colors hover:bg-primary/90"
+        >
+          <ArrowRight className="size-4" />
+          Next month
+        </button>
       </div>
     );
   }

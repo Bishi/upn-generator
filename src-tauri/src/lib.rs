@@ -19,9 +19,9 @@ use commands::inbox::{
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
-    generate_upn_pdf, get_upn_delivery_events, get_upn_packet_hashes, open_preview_apartment_upns,
-    open_preview_upn, preview_upn, save_all_upns, save_smtp_password, send_emails,
-    test_smtp_connection,
+    generate_upn_pdf, get_upn_delivery_events, get_upn_delivery_rollup, get_upn_packet_hashes,
+    open_preview_apartment_upns, open_preview_upn, preview_upn, save_all_upns, save_smtp_password,
+    send_emails, test_smtp_connection,
 };
 use db::migrations;
 use rusqlite::Connection;
@@ -103,6 +103,7 @@ pub fn run() {
             save_all_upns,
             send_emails,
             get_upn_delivery_events,
+            get_upn_delivery_rollup,
             get_upn_packet_hashes,
             test_smtp_connection,
             save_smtp_password,
