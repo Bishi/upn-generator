@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "@tanstack/react-router";
 import {
   Calendar,
@@ -62,18 +62,23 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
   } = useBillingPeriodSelection();
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement | null>(null);
+  const closePicker = useCallback(() => {
+    setPickerOpen(false);
+    const currentYear = new Date().getFullYear();
+    if (selectedYear !== currentYear) setSelectedYear(currentYear);
+  }, [selectedYear, setSelectedYear]);
 
   useEffect(() => {
     if (!pickerOpen) return;
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (!pickerRef.current?.contains(target)) setPickerOpen(false);
+      if (!pickerRef.current?.contains(target)) closePicker();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
-      setPickerOpen(false);
+      closePicker();
     };
 
     window.addEventListener("pointerdown", onPointerDown, true);
@@ -82,7 +87,7 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
       window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [pickerOpen]);
+  }, [closePicker, pickerOpen]);
 
   const selectedStatus = selected?.id
     ? snapshot.periodStatuses.get(selected.id) ?? snapshot.selectedStatus
@@ -152,7 +157,13 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
       <div ref={pickerRef} className="relative shrink-0">
         <button
           type="button"
-          onClick={() => setPickerOpen((open) => !open)}
+          onClick={() => {
+            if (pickerOpen) {
+              closePicker();
+            } else {
+              setPickerOpen(true);
+            }
+          }}
           className={cn(
             "inline-grid h-8 w-32 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-shadow",
             pickerOpen && "shadow-[0_0_0_3px_var(--accent-soft-2)]",
@@ -176,7 +187,7 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
                     candidate.year === selectedYear && candidate.month === month,
                 ) ?? createVirtualBillingPeriod(month, selectedYear);
               setSelected(period);
-              setPickerOpen(false);
+              closePicker();
             }}
           />
         )}

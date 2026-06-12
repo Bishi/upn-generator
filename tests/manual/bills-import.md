@@ -11,6 +11,7 @@
 
 - [ ] Open the month picker, confirm clicking outside or pressing Escape closes it.
 - [ ] Use the previous/next year arrows, select a month that has no bills yet, and confirm the Bills page shows the normal empty month state.
+- [ ] Change the picker year, close the picker without selecting a month, and confirm reopening starts on the current year.
 - [ ] Cancel a local bill import for a newly selected empty month and confirm no billing period row is created.
 - [ ] Import a combined PDF and confirm one row is created per detected configured provider.
 - [ ] Confirm importing, adding a manual bill, or fetching an inbox preview for a newly selected month creates and selects that billing period.
