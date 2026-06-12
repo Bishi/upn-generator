@@ -1294,7 +1294,13 @@ pub fn save_inbox_password(db: State<DbState>, password: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn test_inbox_connection(config: InboxConfig, password: String) -> Result<(), String> {
+pub async fn test_inbox_connection(config: InboxConfig, password: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || test_inbox_connection_impl(config, password))
+        .await
+        .map_err(|e| format!("Inbox test task failed: {e}"))?
+}
+
+fn test_inbox_connection_impl(config: InboxConfig, password: String) -> Result<(), String> {
     let stored_password =
         credentials::resolve_password(MailCredentialKind::Imap, &config.username, &password)?;
     let mut session = connect_tls(&config, &stored_password)?;
@@ -1381,7 +1387,10 @@ fn preview_inbox_attachments_impl(
     let connect_start = Instant::now();
     let mut imap_session = match connect_tls(&credentials.config, &credentials.password) {
         Ok(session) => {
-            debug_log.push(format!("connect_ms={}", connect_start.elapsed().as_millis()));
+            debug_log.push(format!(
+                "connect_ms={}",
+                connect_start.elapsed().as_millis()
+            ));
             session
         }
         Err(error) => {
@@ -1396,7 +1405,10 @@ fn preview_inbox_attachments_impl(
         let mailbox = imap_session
             .examine(credentials.config.folder.as_str())
             .map_err(|e| e.to_string())?;
-        debug_log.push(format!("examine_ms={}", examine_start.elapsed().as_millis()));
+        debug_log.push(format!(
+            "examine_ms={}",
+            examine_start.elapsed().as_millis()
+        ));
         let uid_validity = mailbox.uid_validity;
         let search_start = Instant::now();
         let ids = imap_session
@@ -1420,7 +1432,9 @@ fn preview_inbox_attachments_impl(
                 .map_err(|e| e.to_string())?;
             let metadata_ms = metadata_start.elapsed().as_millis();
             let Some(meta) = metadata.iter().next() else {
-                debug_log.push(format!("message_id={id} metadata_ms={metadata_ms} no_metadata=true"));
+                debug_log.push(format!(
+                    "message_id={id} metadata_ms={metadata_ms} no_metadata=true"
+                ));
                 continue;
             };
             let message_uid = meta.uid;
@@ -1769,8 +1783,20 @@ pub fn clear_inbox_preview_session(
 }
 
 #[tauri::command]
-pub fn import_inbox_attachments(
-    db: State<DbState>,
+pub async fn import_inbox_attachments(
+    app: AppHandle,
+    billing_period_id: i64,
+) -> Result<Vec<InboxImportResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<DbState>();
+        import_inbox_attachments_impl(db, billing_period_id)
+    })
+    .await
+    .map_err(|e| format!("Inbox import task failed: {e}"))?
+}
+
+fn import_inbox_attachments_impl(
+    db: State<'_, DbState>,
     billing_period_id: i64,
 ) -> Result<Vec<InboxImportResult>, String> {
     let credentials = load_credentials(&db, true)?;

@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::BufWriter;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, State};
+use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::credentials::{self, MailCredentialKind};
@@ -76,6 +76,7 @@ const LEFT_WIDTH_MM: f32 = 60.0;
 const TOP_RIGHT_HEIGHT_MM: f32 = 50.0;
 const MONO_WIDTH_FACTOR: f32 = 0.62;
 const MIN_FONT_SIZE_PT: f32 = 7.5;
+const SMTP_TIMEOUT_SECS: u64 = 20;
 
 #[derive(Clone, Copy)]
 struct Rect {
@@ -1355,17 +1356,23 @@ fn build_mailer(
     use_tls: bool,
 ) -> Result<SmtpTransport, String> {
     let creds = Credentials::new(smtp_user.to_string(), smtp_pass.to_string());
+    let timeout = Some(StdDuration::from_secs(SMTP_TIMEOUT_SECS));
     if use_tls {
         let builder = if smtp_port == 465 {
             SmtpTransport::relay(smtp_host).map_err(|e| e.to_string())?
         } else {
             SmtpTransport::starttls_relay(smtp_host).map_err(|e| e.to_string())?
         };
-        Ok(builder.port(smtp_port as u16).credentials(creds).build())
+        Ok(builder
+            .port(smtp_port as u16)
+            .credentials(creds)
+            .timeout(timeout)
+            .build())
     } else {
         Ok(SmtpTransport::builder_dangerous(smtp_host)
             .port(smtp_port as u16)
             .credentials(creds)
+            .timeout(timeout)
             .build())
     }
 }
@@ -1526,7 +1533,34 @@ pub fn save_smtp_password(db: State<DbState>, password: String) -> Result<(), St
 }
 
 #[tauri::command]
-pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<EmailResult>, String> {
+pub async fn send_emails(
+    app: AppHandle,
+    billing_period_id: i64,
+) -> Result<Vec<EmailResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<DbState>();
+        send_emails_impl(db, billing_period_id)
+    })
+    .await
+    .map_err(|e| format!("Email send task failed: {e}"))?
+}
+
+fn log_send_email_phase(overall_start: Instant, previous: &mut Instant, label: &str) {
+    let now = Instant::now();
+    eprintln!(
+        "[send_emails] {label}: phase={}ms total={}ms",
+        now.duration_since(*previous).as_millis(),
+        now.duration_since(overall_start).as_millis()
+    );
+    *previous = now;
+}
+
+fn send_emails_impl(
+    db: State<'_, DbState>,
+    billing_period_id: i64,
+) -> Result<Vec<EmailResult>, String> {
+    let overall_start = Instant::now();
+    let mut previous_phase = overall_start;
     let (
         smtp_host,
         smtp_port,
@@ -1556,6 +1590,7 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         )
         .map_err(|e| e.to_string())?
     };
+    log_send_email_phase(overall_start, &mut previous_phase, "loaded SMTP config");
 
     if smtp_host.trim().is_empty() {
         return Err("SMTP host not configured.".to_string());
@@ -1570,6 +1605,7 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         )
         .map_err(|e| e.to_string())?
     };
+    log_send_email_phase(overall_start, &mut previous_phase, "loaded billing period");
 
     let apartments: Vec<(i64, String, String)> = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -1585,6 +1621,11 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?
     };
+    log_send_email_phase(
+        overall_start,
+        &mut previous_phase,
+        "loaded recipient apartments",
+    );
 
     let apartments: Vec<(i64, String, String, Vec<String>)> = apartments
         .into_iter()
@@ -1609,17 +1650,31 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
     let mut results = Vec::new();
 
     for (apt_id, apt_label, raw_email, recipients) in &apartments {
+        let load_start = Instant::now();
         let packet_items = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
             load_apartment_upn_data(&conn, billing_period_id, *apt_id)
         };
+        eprintln!(
+            "[send_emails] apartment={} db_load={}ms",
+            apt_label,
+            load_start.elapsed().as_millis()
+        );
+
         let (attachment_bytes, attachment_sha256, pdf_error) = match packet_items {
             Ok(items) => {
                 let hash = packet_data_hash(&items);
-                match render_upn_pdf_batch(&items) {
+                let pdf_start = Instant::now();
+                let result = match render_upn_pdf_batch(&items) {
                     Ok(bytes) => (Some(bytes), hash, String::new()),
                     Err(e) => (None, String::new(), e),
-                }
+                };
+                eprintln!(
+                    "[send_emails] apartment={} pdf_prepare={}ms",
+                    apt_label,
+                    pdf_start.elapsed().as_millis()
+                );
+                result
             }
             Err(e) => (None, String::new(), e),
         };
@@ -1665,13 +1720,27 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
                 ));
             }
         } else if !allowed_valid.is_empty() {
-            let mailer = mailer.get_or_insert_with(|| {
-                credentials::resolve_password(MailCredentialKind::Smtp, &smtp_user, "").and_then(
-                    |smtp_pass| {
-                        build_mailer(&smtp_host, smtp_port, &smtp_user, &smtp_pass, use_tls)
-                    },
-                )
-            });
+            if mailer.is_none() {
+                let mailer_start = Instant::now();
+                let mailer_result =
+                    credentials::resolve_password(MailCredentialKind::Smtp, &smtp_user, "")
+                        .and_then(|smtp_pass| {
+                            build_mailer(&smtp_host, smtp_port, &smtp_user, &smtp_pass, use_tls)
+                        });
+                match &mailer_result {
+                    Ok(_) => eprintln!(
+                        "[send_emails] SMTP mailer init ok in {}ms",
+                        mailer_start.elapsed().as_millis()
+                    ),
+                    Err(error) => eprintln!(
+                        "[send_emails] SMTP mailer init failed in {}ms: {}",
+                        mailer_start.elapsed().as_millis(),
+                        error
+                    ),
+                }
+                mailer = Some(mailer_result);
+            }
+            let mailer = mailer.as_ref().expect("mailer initialized");
             match (&from_addr, mailer.as_ref()) {
                 (Ok(from_addr), Ok(mailer)) => {
                     let subject = format!("Poloznice za {}/{}", month, year);
@@ -1697,29 +1766,38 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
                     );
 
                     match builder.multipart(mp) {
-                        Ok(msg) => match mailer.send(&msg) {
-                            Ok(_) => {
-                                for (normalized, original, _) in &allowed_valid {
-                                    event_rows.push((
-                                        "sent".to_string(),
-                                        normalized.clone(),
-                                        original.clone(),
-                                        String::new(),
-                                    ));
+                        Ok(msg) => {
+                            let send_start = Instant::now();
+                            let send_result = mailer.send(&msg);
+                            eprintln!(
+                                "[send_emails] apartment={} smtp_send={}ms",
+                                apt_label,
+                                send_start.elapsed().as_millis()
+                            );
+                            match send_result {
+                                Ok(_) => {
+                                    for (normalized, original, _) in &allowed_valid {
+                                        event_rows.push((
+                                            "sent".to_string(),
+                                            normalized.clone(),
+                                            original.clone(),
+                                            String::new(),
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    let error = e.to_string();
+                                    for (normalized, original, _) in &allowed_valid {
+                                        event_rows.push((
+                                            "failed".to_string(),
+                                            normalized.clone(),
+                                            original.clone(),
+                                            error.clone(),
+                                        ));
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                let error = e.to_string();
-                                for (normalized, original, _) in &allowed_valid {
-                                    event_rows.push((
-                                        "failed".to_string(),
-                                        normalized.clone(),
-                                        original.clone(),
-                                        error.clone(),
-                                    ));
-                                }
-                            }
-                        },
+                        }
                         Err(e) => {
                             let error = e.to_string();
                             for (normalized, original, _) in &allowed_valid {
@@ -1779,6 +1857,11 @@ pub fn send_emails(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Ema
         ));
     }
 
+    eprintln!(
+        "[send_emails] completed apartments={} total={}ms",
+        apartments.len(),
+        overall_start.elapsed().as_millis()
+    );
     Ok(results)
 }
 
@@ -1859,7 +1942,19 @@ pub fn get_upn_packet_hashes(
 }
 
 #[tauri::command]
-pub fn test_smtp_connection(
+pub async fn test_smtp_connection(
+    config: SmtpConfig,
+    password: String,
+    test_recipient: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        test_smtp_connection_impl(config, password, test_recipient)
+    })
+    .await
+    .map_err(|e| format!("SMTP test task failed: {e}"))?
+}
+
+fn test_smtp_connection_impl(
     config: SmtpConfig,
     password: String,
     test_recipient: String,
