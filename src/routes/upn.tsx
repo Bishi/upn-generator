@@ -870,8 +870,8 @@ function UpnPage() {
                   contactEmail={contactEmail}
                   splits={aptSplits}
                   deliveryResult={
-                    runResultsByApartmentId.get(aptId) ??
                     rollupResultsByApartmentId.get(aptId) ??
+                    runResultsByApartmentId.get(aptId) ??
                     historyResultsByApartmentId.get(aptId)
                   }
                   expanded={expandedApartmentId === aptId}

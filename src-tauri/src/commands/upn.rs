@@ -105,6 +105,7 @@ struct UpnData {
 struct CurrentPacketInfo {
     apartment_id: i64,
     apartment_label: String,
+    current_recipients: Vec<String>,
     packet_hash: String,
     packet_error: String,
 }
@@ -1307,6 +1308,17 @@ fn parse_allowlist(raw: &str) -> HashSet<String> {
         .collect()
 }
 
+fn normalize_recipient_set(raw: &str) -> Vec<String> {
+    let mut recipients = parse_recipient_list(raw)
+        .into_iter()
+        .map(|recipient| normalize_email(&recipient))
+        .filter(|recipient| !recipient.is_empty())
+        .collect::<Vec<_>>();
+    recipients.sort();
+    recipients.dedup();
+    recipients
+}
+
 fn hash_text_field(hasher: &mut Sha256, value: &str) {
     let bytes = value.as_bytes();
     hasher.update((bytes.len() as u64).to_le_bytes());
@@ -1437,19 +1449,25 @@ fn load_current_packet_infos(
 ) -> Result<Vec<CurrentPacketInfo>, String> {
     let apartments = query_vec(
         conn,
-        "SELECT DISTINCT a.id, a.label
+        "SELECT DISTINCT a.id, a.label, a.contact_email
          FROM bill_splits bs
          JOIN bills b ON bs.bill_id = b.id
          JOIN apartments a ON bs.apartment_id = a.id
          WHERE b.billing_period_id = ?1
          ORDER BY a.label",
         &[&billing_period_id],
-        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        },
     )?;
 
     apartments
         .into_iter()
-        .map(|(apartment_id, apartment_label)| {
+        .map(|(apartment_id, apartment_label, contact_email)| {
             let packet_items = load_apartment_upn_data(conn, billing_period_id, apartment_id);
             let (packet_hash, packet_error) = match packet_items {
                 Ok(items) => (packet_data_hash(&items), String::new()),
@@ -1459,6 +1477,7 @@ fn load_current_packet_infos(
             Ok(CurrentPacketInfo {
                 apartment_id,
                 apartment_label,
+                current_recipients: normalize_recipient_set(&contact_email),
                 packet_hash,
                 packet_error,
             })
@@ -1510,9 +1529,19 @@ fn build_delivery_rollup(
             })
             .collect::<Vec<_>>();
 
-        let email_sent = current_events
-            .iter()
-            .any(|event| event.delivery_type == "email" && event.status == "sent");
+        let email_sent = if packet.current_recipients.is_empty() {
+            false
+        } else {
+            let mut sent_recipients = current_events
+                .iter()
+                .filter(|event| event.delivery_type == "email" && event.status == "sent")
+                .map(|event| normalize_email(&event.recipient))
+                .filter(|recipient| !recipient.is_empty())
+                .collect::<Vec<_>>();
+            sent_recipients.sort();
+            sent_recipients.dedup();
+            sent_recipients == packet.current_recipients
+        };
         let manual_delivered = current_events
             .iter()
             .any(|event| event.delivery_type == "manual" && event.status == "delivered");
@@ -2456,6 +2485,24 @@ mod tests {
         status: &str,
         hash: &str,
     ) -> UpnDeliveryEvent {
+        test_event_with_recipient(
+            id,
+            apartment_id,
+            delivery_type,
+            status,
+            hash,
+            "tenant@example.com",
+        )
+    }
+
+    fn test_event_with_recipient(
+        id: i64,
+        apartment_id: i64,
+        delivery_type: &str,
+        status: &str,
+        hash: &str,
+        recipient: &str,
+    ) -> UpnDeliveryEvent {
         UpnDeliveryEvent {
             id,
             attempt_id: format!("attempt-{id}"),
@@ -2463,8 +2510,8 @@ mod tests {
             apartment_id,
             delivery_type: delivery_type.to_string(),
             status: status.to_string(),
-            recipient: String::new(),
-            original_recipient: String::new(),
+            recipient: normalize_email(recipient),
+            original_recipient: recipient.to_string(),
             attachment_sha256: hash.to_string(),
             error: String::new(),
             created_at: format!("2026-06-{:02} 12:00:00", id),
@@ -2475,6 +2522,7 @@ mod tests {
         CurrentPacketInfo {
             apartment_id,
             apartment_label: format!("Apartment {apartment_id}"),
+            current_recipients: vec!["tenant@example.com".to_string()],
             packet_hash: hash.to_string(),
             packet_error: String::new(),
         }
@@ -2600,6 +2648,45 @@ mod tests {
     }
 
     #[test]
+    fn delivery_rollup_requires_current_email_recipients() {
+        let mut packet = test_packet(1, "hash-a");
+        packet.current_recipients = vec![
+            "new@example.com".to_string(),
+            "tenant@example.com".to_string(),
+        ];
+        let packets = vec![packet];
+        let events = vec![test_event(1, 1, "email", "sent", "hash-a")];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(!rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 0);
+        assert_eq!(rollup.email_sent_count, 0);
+        assert!(!rollup.apartments[0].email_sent);
+    }
+
+    #[test]
+    fn delivery_rollup_counts_email_when_all_current_recipients_sent() {
+        let mut packet = test_packet(1, "hash-a");
+        packet.current_recipients = vec![
+            "new@example.com".to_string(),
+            "tenant@example.com".to_string(),
+        ];
+        let packets = vec![packet];
+        let events = vec![
+            test_event(1, 1, "email", "sent", "hash-a"),
+            test_event_with_recipient(2, 1, "email", "sent", "hash-a", "New@Example.com"),
+        ];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 1);
+        assert_eq!(rollup.email_sent_count, 1);
+        assert!(rollup.apartments[0].email_sent);
+    }
+
+    #[test]
     fn delivery_rollup_does_not_treat_failed_or_blocked_as_delivered() {
         let packets = vec![test_packet(1, "hash-a")];
         let events = vec![
@@ -2620,6 +2707,7 @@ mod tests {
         let packets = vec![CurrentPacketInfo {
             apartment_id: 1,
             apartment_label: "Apartment 1".to_string(),
+            current_recipients: Vec::new(),
             packet_hash: String::new(),
             packet_error: "missing split".to_string(),
         }];
