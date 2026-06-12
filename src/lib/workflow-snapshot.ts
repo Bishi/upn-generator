@@ -10,7 +10,15 @@ import {
   type ReactNode,
 } from "react";
 import { ipc } from "@/lib/ipc";
-import type { Apartment, Bill, BillingPeriod, Building, Provider, SplitRow } from "@/lib/types";
+import type {
+  Apartment,
+  Bill,
+  BillingPeriod,
+  Building,
+  Provider,
+  SplitRow,
+  UpnDeliveryRollup,
+} from "@/lib/types";
 
 const STORAGE_KEY = "selected-billing-period";
 const EVENT_NAME = "billing-period-selection-changed";
@@ -29,6 +37,8 @@ export type PeriodStatus = {
   splitCount: number;
   totalCents: number;
   needsReview: number;
+  packetCount: number;
+  deliveredCount: number;
 };
 
 export type WorkflowRefreshOptions = {
@@ -61,6 +71,7 @@ export type WorkflowSnapshot = {
   providers: Provider[];
   bills: Bill[];
   splits: SplitRow[];
+  selectedDeliveryRollup: UpnDeliveryRollup | null;
   periodStatuses: Map<number, PeriodStatus>;
   selectedStatus: PeriodStatus;
   refresh: (options?: WorkflowRefreshOptions) => Promise<void>;
@@ -69,6 +80,7 @@ export type WorkflowSnapshot = {
 type PeriodRows = {
   bills: Bill[];
   splits: SplitRow[];
+  deliveryRollup: UpnDeliveryRollup | null;
 };
 
 type PendingEnsureSelectedPeriod = {
@@ -89,17 +101,25 @@ export const EMPTY_PERIOD_STATUS: PeriodStatus = {
   splitCount: 0,
   totalCents: 0,
   needsReview: 0,
+  packetCount: 0,
+  deliveredCount: 0,
 };
 
-function summarizePeriod(bills: Bill[], splits: SplitRow[]): PeriodStatus {
+function summarizePeriod(
+  bills: Bill[],
+  splits: SplitRow[],
+  deliveryRollup: UpnDeliveryRollup | null,
+): PeriodStatus {
   return {
     bills: bills.length > 0,
     splits: splits.length > 0,
-    sent: false,
+    sent: deliveryRollup?.complete ?? false,
     billCount: bills.length,
     splitCount: splits.length,
     totalCents: bills.reduce((sum, bill) => sum + bill.amount_cents, 0),
     needsReview: bills.filter((bill) => bill.parse_note?.trim()).length,
+    packetCount: deliveryRollup?.packet_count ?? 0,
+    deliveredCount: deliveryRollup?.current_delivered_count ?? 0,
   };
 }
 
@@ -198,11 +218,12 @@ function resolveInitialBillingPeriod(
 }
 
 async function fetchPeriodRows(periodId: number): Promise<PeriodRows> {
-  const [bills, splits] = await Promise.all([
+  const [bills, splits, deliveryRollup] = await Promise.all([
     ipc.getBills(periodId),
     ipc.getSplits(periodId),
+    ipc.getUpnDeliveryRollup(periodId),
   ]);
-  return { bills, splits };
+  return { bills, splits, deliveryRollup };
 }
 
 async function fetchPeriodStatuses(periods: BillingPeriod[]) {
@@ -211,7 +232,10 @@ async function fetchPeriodStatuses(periods: BillingPeriod[]) {
     periodsWithIds(periods).map(async (period) => {
       const rows = await fetchPeriodRows(period.id);
       rowsByPeriod.set(period.id, rows);
-      return [period.id, summarizePeriod(rows.bills, rows.splits)] as const;
+      return [
+        period.id,
+        summarizePeriod(rows.bills, rows.splits, rows.deliveryRollup),
+      ] as const;
     }),
   );
 
@@ -259,6 +283,8 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const [providers, setProviders] = useState<Provider[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
   const [splits, setSplits] = useState<SplitRow[]>([]);
+  const [selectedDeliveryRollup, setSelectedDeliveryRollup] =
+    useState<UpnDeliveryRollup | null>(null);
   const [selectedDataPeriodId, setSelectedDataPeriodId] = useState<number | null>(null);
   const [periodStatuses, setPeriodStatuses] = useState<Map<number, PeriodStatus>>(
     () => new Map(),
@@ -302,6 +328,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
         setSelectedLoading(false);
         setBills([]);
         setSplits([]);
+        setSelectedDeliveryRollup(null);
         setSelectedDataPeriodId(null);
         return;
       }
@@ -313,10 +340,14 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
         setError(null);
         setBills(rows.bills);
         setSplits(rows.splits);
+        setSelectedDeliveryRollup(rows.deliveryRollup);
         setSelectedDataPeriodId(period.id);
         setPeriodStatuses((current) => {
           const next = new Map(current);
-          next.set(period.id!, summarizePeriod(rows.bills, rows.splits));
+          next.set(
+            period.id!,
+            summarizePeriod(rows.bills, rows.splits, rows.deliveryRollup),
+          );
           return next;
         });
       } catch (error) {
@@ -325,6 +356,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
         if (selectedDataPeriodIdRef.current !== period.id) {
           setBills([]);
           setSplits([]);
+          setSelectedDeliveryRollup(null);
           setSelectedDataPeriodId(period.id);
         }
       } finally {
@@ -572,6 +604,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const selectedDataFresh = selected?.id == null || selectedDataPeriodId === selected.id;
   const exposedBills = selectedDataFresh ? bills : [];
   const exposedSplits = selectedDataFresh ? splits : [];
+  const exposedDeliveryRollup = selectedDataFresh ? selectedDeliveryRollup : null;
   const loading = initialLoading || !selectedDataFresh;
 
   const billingPeriodSelection = useMemo<BillingPeriodSelectionValue>(
@@ -611,6 +644,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       providers,
       bills: exposedBills,
       splits: exposedSplits,
+      selectedDeliveryRollup: exposedDeliveryRollup,
       periodStatuses,
       selectedStatus,
       refresh,
@@ -627,6 +661,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       providers,
       exposedBills,
       exposedSplits,
+      exposedDeliveryRollup,
       periodStatuses,
       selectedStatus,
       refresh,

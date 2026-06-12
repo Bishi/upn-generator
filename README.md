@@ -151,10 +151,11 @@ Each apartment card shows its line items and the total amount due.
 | Action | Description |
 |--------|-------------|
 | **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
-| **Download All PDFs** | Saves all UPN slips to a folder of your choice |
+| **Download All PDFs** | Saves one combined UPN packet PDF per apartment to a folder of your choice for review or external use |
+| **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
 
-UPN Preview keeps email delivery history for the selected month. After reload, apartment rows can show sent, failed, blocked, or partial status based on the latest send attempt.
+UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Downloaded PDFs do not mark a month delivered by themselves.
 
 ---
 
@@ -192,7 +193,7 @@ All data is stored locally in a SQLite database at:
 %APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, inbox import history, and UPN email delivery history, but intentionally exclude saved SMTP and inbox passwords. Mail passwords are stored in Windows Credential Manager and are matched to the configured username before use.
+Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, inbox import history, and UPN email/manual delivery history, but intentionally exclude saved SMTP and inbox passwords. Mail passwords are stored in Windows Credential Manager and are matched to the configured username before use.
 
 Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings. Inbox imports connect directly to the IMAP server you configure, store only import metadata, and do not persist raw extracted text from inbox attachments.
 

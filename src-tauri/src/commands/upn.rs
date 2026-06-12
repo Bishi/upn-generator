@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::BufWriter;
+use std::path::Path;
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
@@ -53,6 +54,36 @@ pub struct UpnPacketHash {
     pub error: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpnDeliveryApartmentRollup {
+    pub apartment_id: i64,
+    pub apartment_label: String,
+    pub packet_hash: String,
+    pub packet_error: String,
+    pub delivered: bool,
+    pub email_sent: bool,
+    pub manual_delivered: bool,
+    pub current_failed_event_count: i64,
+    pub current_blocked_event_count: i64,
+    pub last_current_delivery_type: Option<String>,
+    pub last_current_delivery_status: Option<String>,
+    pub last_current_delivery_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpnDeliveryRollup {
+    pub billing_period_id: i64,
+    pub packet_count: i64,
+    pub current_delivered_count: i64,
+    pub email_sent_count: i64,
+    pub manual_delivered_count: i64,
+    pub current_failed_event_count: i64,
+    pub current_blocked_event_count: i64,
+    pub complete: bool,
+    pub last_delivery_at: Option<String>,
+    pub apartments: Vec<UpnDeliveryApartmentRollup>,
+}
+
 #[derive(Clone)]
 struct UpnData {
     payer_name: String,
@@ -68,6 +99,20 @@ struct UpnData {
     creditor_name: String,
     creditor_address: String,
     creditor_city: String,
+}
+
+#[derive(Clone)]
+struct CurrentPacketInfo {
+    apartment_id: i64,
+    apartment_label: String,
+    current_recipients: Vec<String>,
+    packet_hash: String,
+    packet_error: String,
+}
+
+struct SavedUpnPacket {
+    filename: String,
+    pdf_bytes: Vec<u8>,
 }
 
 const FORM_WIDTH_MM: f32 = 210.0;
@@ -1263,6 +1308,17 @@ fn parse_allowlist(raw: &str) -> HashSet<String> {
         .collect()
 }
 
+fn normalize_recipient_set(raw: &str) -> Vec<String> {
+    let mut recipients = parse_recipient_list(raw)
+        .into_iter()
+        .map(|recipient| normalize_email(&recipient))
+        .filter(|recipient| !recipient.is_empty())
+        .collect::<Vec<_>>();
+    recipients.sort();
+    recipients.dedup();
+    recipients
+}
+
 fn hash_text_field(hasher: &mut Sha256, value: &str) {
     let bytes = value.as_bytes();
     hasher.update((bytes.len() as u64).to_le_bytes());
@@ -1309,12 +1365,12 @@ fn packet_data_hash(items: &[UpnData]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn next_attempt_id() -> String {
+fn next_attempt_id(prefix: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    format!("email-{}-{}", std::process::id(), nanos)
+    format!("{}-{}-{}", prefix, std::process::id(), nanos)
 }
 
 fn insert_delivery_event(
@@ -1322,6 +1378,7 @@ fn insert_delivery_event(
     attempt_id: &str,
     billing_period_id: i64,
     apartment_id: i64,
+    delivery_type: &str,
     status: &str,
     recipient: &str,
     original_recipient: &str,
@@ -1332,11 +1389,12 @@ fn insert_delivery_event(
         "INSERT INTO upn_delivery_events (
             attempt_id, billing_period_id, apartment_id, delivery_type, status,
             recipient, original_recipient, attachment_sha256, error
-         ) VALUES (?1, ?2, ?3, 'email', ?4, ?5, ?6, ?7, ?8)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             attempt_id,
             billing_period_id,
             apartment_id,
+            delivery_type,
             status,
             recipient,
             original_recipient,
@@ -1346,6 +1404,217 @@ fn insert_delivery_event(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn safe_filename_component(value: &str) -> String {
+    let normalized = normalize_spaces(value);
+    let mut output = String::new();
+
+    for ch in normalized.chars() {
+        let replacement = match ch {
+            'č' | 'ć' => Some('c'),
+            'Č' | 'Ć' => Some('C'),
+            'š' => Some('s'),
+            'Š' => Some('S'),
+            'ž' => Some('z'),
+            'Ž' => Some('Z'),
+            'đ' => Some('d'),
+            'Đ' => Some('D'),
+            other if other.is_ascii_alphanumeric() => Some(other),
+            _ => None,
+        };
+
+        if let Some(ch) = replacement {
+            output.push(ch);
+        } else if ch.is_whitespace() || matches!(ch, '-' | '_' | '.') {
+            output.push('_');
+        }
+    }
+
+    let compact = output
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    if compact.is_empty() {
+        "apartment".to_string()
+    } else {
+        compact
+    }
+}
+
+fn load_current_packet_infos(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+) -> Result<Vec<CurrentPacketInfo>, String> {
+    let apartments = query_vec(
+        conn,
+        "SELECT DISTINCT a.id, a.label, a.contact_email
+         FROM bill_splits bs
+         JOIN bills b ON bs.bill_id = b.id
+         JOIN apartments a ON bs.apartment_id = a.id
+         WHERE b.billing_period_id = ?1
+         ORDER BY a.label",
+        &[&billing_period_id],
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        },
+    )?;
+
+    apartments
+        .into_iter()
+        .map(|(apartment_id, apartment_label, contact_email)| {
+            let packet_items = load_apartment_upn_data(conn, billing_period_id, apartment_id);
+            let (packet_hash, packet_error) = match packet_items {
+                Ok(items) => (packet_data_hash(&items), String::new()),
+                Err(error) => (String::new(), error),
+            };
+
+            Ok(CurrentPacketInfo {
+                apartment_id,
+                apartment_label,
+                current_recipients: normalize_recipient_set(&contact_email),
+                packet_hash,
+                packet_error,
+            })
+        })
+        .collect()
+}
+
+fn has_current_manual_delivered_event(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+    apartment_id: i64,
+    attachment_sha256: &str,
+) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM upn_delivery_events
+             WHERE billing_period_id = ?1
+               AND apartment_id = ?2
+               AND delivery_type = 'manual'
+               AND status = 'delivered'
+               AND attachment_sha256 = ?3",
+            params![billing_period_id, apartment_id, attachment_sha256],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+fn build_delivery_rollup(
+    billing_period_id: i64,
+    packets: Vec<CurrentPacketInfo>,
+    events: &[UpnDeliveryEvent],
+) -> UpnDeliveryRollup {
+    let mut apartments = Vec::new();
+    let mut current_delivered_count = 0i64;
+    let mut email_sent_count = 0i64;
+    let mut manual_delivered_count = 0i64;
+    let mut current_failed_event_count = 0i64;
+    let mut current_blocked_event_count = 0i64;
+
+    for packet in packets {
+        let current_events = events
+            .iter()
+            .filter(|event| {
+                event.apartment_id == packet.apartment_id
+                    && !packet.packet_hash.is_empty()
+                    && event.attachment_sha256 == packet.packet_hash
+            })
+            .collect::<Vec<_>>();
+
+        let email_sent = if packet.current_recipients.is_empty() {
+            false
+        } else {
+            let mut sent_recipients = current_events
+                .iter()
+                .filter(|event| event.delivery_type == "email" && event.status == "sent")
+                .map(|event| normalize_email(&event.recipient))
+                .filter(|recipient| !recipient.is_empty())
+                .collect::<Vec<_>>();
+            sent_recipients.sort();
+            sent_recipients.dedup();
+            sent_recipients == packet.current_recipients
+        };
+        let manual_delivered = current_events
+            .iter()
+            .any(|event| event.delivery_type == "manual" && event.status == "delivered");
+        let failed_count = current_events
+            .iter()
+            .filter(|event| event.status == "failed")
+            .count() as i64;
+        let blocked_count = current_events
+            .iter()
+            .filter(|event| event.status == "blocked")
+            .count() as i64;
+        let delivered = packet.packet_error.is_empty() && (email_sent || manual_delivered);
+
+        let latest_current = current_events.iter().max_by(|left, right| {
+            let created_cmp = left.created_at.cmp(&right.created_at);
+            if created_cmp == std::cmp::Ordering::Equal {
+                left.id.cmp(&right.id)
+            } else {
+                created_cmp
+            }
+        });
+
+        if delivered {
+            current_delivered_count += 1;
+        }
+        if email_sent {
+            email_sent_count += 1;
+        }
+        if manual_delivered {
+            manual_delivered_count += 1;
+        }
+        current_failed_event_count += failed_count;
+        current_blocked_event_count += blocked_count;
+
+        apartments.push(UpnDeliveryApartmentRollup {
+            apartment_id: packet.apartment_id,
+            apartment_label: packet.apartment_label,
+            packet_hash: packet.packet_hash,
+            packet_error: packet.packet_error,
+            delivered,
+            email_sent,
+            manual_delivered,
+            current_failed_event_count: failed_count,
+            current_blocked_event_count: blocked_count,
+            last_current_delivery_type: latest_current.map(|event| event.delivery_type.clone()),
+            last_current_delivery_status: latest_current.map(|event| event.status.clone()),
+            last_current_delivery_at: latest_current.map(|event| event.created_at.clone()),
+        });
+    }
+
+    let packet_count = apartments.len() as i64;
+    let last_delivery_at = apartments
+        .iter()
+        .filter_map(|apartment| apartment.last_current_delivery_at.as_deref())
+        .max()
+        .map(|value| value.to_string());
+    let complete = packet_count > 0
+        && apartments
+            .iter()
+            .all(|apartment| apartment.delivered && apartment.packet_error.is_empty());
+
+    UpnDeliveryRollup {
+        billing_period_id,
+        packet_count,
+        current_delivered_count,
+        email_sent_count,
+        manual_delivered_count,
+        current_failed_event_count,
+        current_blocked_event_count,
+        complete,
+        last_delivery_at,
+        apartments,
+    }
 }
 
 fn build_mailer(
@@ -1643,7 +1912,7 @@ fn send_emails_impl(
         return Err("No apartments with email addresses have splits in this period.".to_string());
     }
 
-    let attempt_id = next_attempt_id();
+    let attempt_id = next_attempt_id("email");
     let allowlist = parse_allowlist(&recipient_allowlist);
     let from_addr = smtp_from.parse::<Mailbox>();
     let mut mailer: Option<Result<SmtpTransport, String>> = None;
@@ -1841,6 +2110,7 @@ fn send_emails_impl(
                 &attempt_id,
                 billing_period_id,
                 *apt_id,
+                "email",
                 status,
                 recipient,
                 original,
@@ -1903,42 +2173,169 @@ pub fn get_upn_packet_hashes(
     db: State<DbState>,
     billing_period_id: i64,
 ) -> Result<Vec<UpnPacketHash>, String> {
-    let apartment_ids: Vec<i64> = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        query_vec(
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    load_current_packet_infos(&conn, billing_period_id).map(|packets| {
+        packets
+            .into_iter()
+            .map(|packet| UpnPacketHash {
+                apartment_id: packet.apartment_id,
+                attachment_sha256: packet.packet_hash,
+                error: packet.packet_error,
+            })
+            .collect()
+    })
+}
+
+#[tauri::command]
+pub fn get_upn_delivery_rollup(
+    db: State<DbState>,
+    billing_period_id: i64,
+) -> Result<UpnDeliveryRollup, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let packets = load_current_packet_infos(&conn, billing_period_id)?;
+    let events = query_vec(
+        &conn,
+        "SELECT id, attempt_id, billing_period_id, apartment_id, delivery_type,
+                status, recipient, original_recipient, attachment_sha256,
+                error, created_at
+         FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+         ORDER BY created_at ASC, id ASC",
+        &[&billing_period_id],
+        |r| {
+            Ok(UpnDeliveryEvent {
+                id: r.get(0)?,
+                attempt_id: r.get(1)?,
+                billing_period_id: r.get(2)?,
+                apartment_id: r.get(3)?,
+                delivery_type: r.get(4)?,
+                status: r.get(5)?,
+                recipient: r.get(6)?,
+                original_recipient: r.get(7)?,
+                attachment_sha256: r.get(8)?,
+                error: r.get(9)?,
+                created_at: r.get(10)?,
+            })
+        },
+    )?;
+
+    Ok(build_delivery_rollup(billing_period_id, packets, &events))
+}
+
+#[tauri::command]
+pub fn mark_upn_period_delivered(
+    db: State<DbState>,
+    billing_period_id: i64,
+) -> Result<UpnDeliveryRollup, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let packets = load_current_packet_infos(&conn, billing_period_id)?;
+    let packet_errors = packets
+        .iter()
+        .filter(|packet| !packet.packet_error.trim().is_empty())
+        .map(|packet| format!("{}: {}", packet.apartment_label, packet.packet_error))
+        .collect::<Vec<_>>();
+    if !packet_errors.is_empty() {
+        return Err(format!(
+            "Cannot mark delivered until current UPN packets can be generated: {}",
+            packet_errors.join("; ")
+        ));
+    }
+
+    let attempt_id = next_attempt_id("manual");
+    for packet in &packets {
+        if !has_current_manual_delivered_event(
             &conn,
-            "SELECT DISTINCT bs.apartment_id
-             FROM bill_splits bs
-             JOIN bills b ON bs.bill_id = b.id
-             WHERE b.billing_period_id = ?1
-             ORDER BY bs.apartment_id",
-            &[&billing_period_id],
-            |r| r.get::<_, i64>(0),
-        )?
-    };
-
-    let mut hashes = Vec::new();
-    for apartment_id in apartment_ids {
-        let packet_items = {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
-            load_apartment_upn_data(&conn, billing_period_id, apartment_id)
-        };
-
-        match packet_items {
-            Ok(items) => hashes.push(UpnPacketHash {
-                apartment_id,
-                attachment_sha256: packet_data_hash(&items),
-                error: String::new(),
-            }),
-            Err(error) => hashes.push(UpnPacketHash {
-                apartment_id,
-                attachment_sha256: String::new(),
-                error,
-            }),
+            billing_period_id,
+            packet.apartment_id,
+            &packet.packet_hash,
+        )? {
+            insert_delivery_event(
+                &conn,
+                &attempt_id,
+                billing_period_id,
+                packet.apartment_id,
+                "manual",
+                "delivered",
+                "Manual confirmation",
+                "Manual confirmation",
+                &packet.packet_hash,
+                "",
+            )?;
         }
     }
 
-    Ok(hashes)
+    let events = query_vec(
+        &conn,
+        "SELECT id, attempt_id, billing_period_id, apartment_id, delivery_type,
+                status, recipient, original_recipient, attachment_sha256,
+                error, created_at
+         FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+         ORDER BY created_at ASC, id ASC",
+        &[&billing_period_id],
+        |r| {
+            Ok(UpnDeliveryEvent {
+                id: r.get(0)?,
+                attempt_id: r.get(1)?,
+                billing_period_id: r.get(2)?,
+                apartment_id: r.get(3)?,
+                delivery_type: r.get(4)?,
+                status: r.get(5)?,
+                recipient: r.get(6)?,
+                original_recipient: r.get(7)?,
+                attachment_sha256: r.get(8)?,
+                error: r.get(9)?,
+                created_at: r.get(10)?,
+            })
+        },
+    )?;
+
+    Ok(build_delivery_rollup(billing_period_id, packets, &events))
+}
+
+#[tauri::command]
+pub fn unmark_upn_period_delivered(
+    db: State<DbState>,
+    billing_period_id: i64,
+) -> Result<UpnDeliveryRollup, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let packets = load_current_packet_infos(&conn, billing_period_id)?;
+    conn.execute(
+        "DELETE FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+           AND delivery_type = 'manual'
+           AND status = 'delivered'",
+        params![billing_period_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let events = query_vec(
+        &conn,
+        "SELECT id, attempt_id, billing_period_id, apartment_id, delivery_type,
+                status, recipient, original_recipient, attachment_sha256,
+                error, created_at
+         FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+         ORDER BY created_at ASC, id ASC",
+        &[&billing_period_id],
+        |r| {
+            Ok(UpnDeliveryEvent {
+                id: r.get(0)?,
+                attempt_id: r.get(1)?,
+                billing_period_id: r.get(2)?,
+                apartment_id: r.get(3)?,
+                delivery_type: r.get(4)?,
+                status: r.get(5)?,
+                recipient: r.get(6)?,
+                original_recipient: r.get(7)?,
+                attachment_sha256: r.get(8)?,
+                error: r.get(9)?,
+                created_at: r.get(10)?,
+            })
+        },
+    )?;
+
+    Ok(build_delivery_rollup(billing_period_id, packets, &events))
 }
 
 #[tauri::command]
@@ -2012,32 +2409,67 @@ pub fn save_all_upns(
     billing_period_id: i64,
     folder_path: String,
 ) -> Result<Vec<String>, String> {
-    let splits: Vec<(i64, i64, String)> = {
+    let (month, year) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT month, year FROM billing_periods WHERE id=?1",
+            [billing_period_id],
+            |r| Ok((r.get::<_, i32>(0)?, r.get::<_, i32>(1)?)),
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    let apartments: Vec<(i64, String)> = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         query_vec(
             &conn,
-            "SELECT bs.bill_id, bs.apartment_id, a.label
+            "SELECT DISTINCT a.id, a.label
              FROM bill_splits bs
              JOIN bills b ON bs.bill_id = b.id
              JOIN apartments a ON bs.apartment_id = a.id
              WHERE b.billing_period_id = ?1
-             ORDER BY a.label, b.id",
+             ORDER BY a.label",
             &[&billing_period_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?
     };
 
-    let mut saved: Vec<String> = Vec::new();
-    for (bill_id, apt_id, apt_label) in &splits {
-        let data = {
+    let mut used_filenames = HashSet::new();
+    let mut packets: Vec<SavedUpnPacket> = Vec::new();
+    for (apt_id, apt_label) in &apartments {
+        let items = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
-            load_upn_data(&conn, *bill_id, *apt_id)?
+            load_apartment_upn_data(&conn, billing_period_id, *apt_id)?
         };
-        let pdf_bytes = render_upn_pdf(&data)?;
-        let filename = format!("UPN_{}_{}.pdf", apt_label.replace(' ', "_"), bill_id);
-        let full_path = format!("{}\\{}", folder_path, filename);
-        std::fs::write(&full_path, &pdf_bytes).map_err(|e| e.to_string())?;
-        saved.push(filename);
+        let pdf_bytes = render_upn_pdf_batch(&items)?;
+        let base_name = safe_filename_component(apt_label);
+        let mut suffix = 0usize;
+        let filename = loop {
+            let candidate = match suffix {
+                0 => format!("UPN_{}_{:02}_{}.pdf", base_name, month, year),
+                1 => format!("UPN_{}_{}_{:02}_{}.pdf", base_name, apt_id, month, year),
+                _ => format!(
+                    "UPN_{}_{}_{}_{:02}_{}.pdf",
+                    base_name, apt_id, suffix, month, year
+                ),
+            };
+            if used_filenames.insert(candidate.clone()) {
+                break candidate;
+            }
+            suffix += 1;
+        };
+
+        packets.push(SavedUpnPacket {
+            filename,
+            pdf_bytes,
+        });
+    }
+
+    let mut saved: Vec<String> = Vec::new();
+    for packet in &packets {
+        let full_path = Path::new(&folder_path).join(&packet.filename);
+        std::fs::write(&full_path, &packet.pdf_bytes).map_err(|e| e.to_string())?;
+        saved.push(packet.filename.clone());
     }
     Ok(saved)
 }
@@ -2045,6 +2477,56 @@ pub fn save_all_upns(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_event(
+        id: i64,
+        apartment_id: i64,
+        delivery_type: &str,
+        status: &str,
+        hash: &str,
+    ) -> UpnDeliveryEvent {
+        test_event_with_recipient(
+            id,
+            apartment_id,
+            delivery_type,
+            status,
+            hash,
+            "tenant@example.com",
+        )
+    }
+
+    fn test_event_with_recipient(
+        id: i64,
+        apartment_id: i64,
+        delivery_type: &str,
+        status: &str,
+        hash: &str,
+        recipient: &str,
+    ) -> UpnDeliveryEvent {
+        UpnDeliveryEvent {
+            id,
+            attempt_id: format!("attempt-{id}"),
+            billing_period_id: 1,
+            apartment_id,
+            delivery_type: delivery_type.to_string(),
+            status: status.to_string(),
+            recipient: normalize_email(recipient),
+            original_recipient: recipient.to_string(),
+            attachment_sha256: hash.to_string(),
+            error: String::new(),
+            created_at: format!("2026-06-{:02} 12:00:00", id),
+        }
+    }
+
+    fn test_packet(apartment_id: i64, hash: &str) -> CurrentPacketInfo {
+        CurrentPacketInfo {
+            apartment_id,
+            apartment_label: format!("Apartment {apartment_id}"),
+            current_recipients: vec!["tenant@example.com".to_string()],
+            packet_hash: hash.to_string(),
+            packet_error: String::new(),
+        }
+    }
 
     #[test]
     fn allowlist_normalizes_trimmed_case_insensitive_addresses() {
@@ -2120,5 +2602,128 @@ mod tests {
 
         assert_eq!(result.status, "blocked");
         assert!(!result.success);
+    }
+
+    #[test]
+    fn delivery_rollup_counts_email_and_manual_packets_as_complete() {
+        let packets = vec![test_packet(1, "hash-a"), test_packet(2, "hash-b")];
+        let events = vec![
+            test_event(1, 1, "email", "sent", "hash-a"),
+            test_event(2, 2, "manual", "delivered", "hash-b"),
+        ];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(rollup.complete);
+        assert_eq!(rollup.packet_count, 2);
+        assert_eq!(rollup.current_delivered_count, 2);
+        assert_eq!(rollup.email_sent_count, 1);
+        assert_eq!(rollup.manual_delivered_count, 1);
+    }
+
+    #[test]
+    fn delivery_rollup_does_not_treat_pdf_save_as_delivered() {
+        let packets = vec![test_packet(1, "hash-a")];
+        let events = vec![test_event(1, 1, "pdf", "saved", "hash-a")];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(!rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 0);
+        assert_eq!(rollup.email_sent_count, 0);
+        assert_eq!(rollup.manual_delivered_count, 0);
+        assert!(!rollup.apartments[0].delivered);
+    }
+
+    #[test]
+    fn delivery_rollup_ignores_stale_hashes() {
+        let packets = vec![test_packet(1, "current-hash")];
+        let events = vec![test_event(1, 1, "email", "sent", "old-hash")];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(!rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 0);
+        assert!(!rollup.apartments[0].delivered);
+    }
+
+    #[test]
+    fn delivery_rollup_requires_current_email_recipients() {
+        let mut packet = test_packet(1, "hash-a");
+        packet.current_recipients = vec![
+            "new@example.com".to_string(),
+            "tenant@example.com".to_string(),
+        ];
+        let packets = vec![packet];
+        let events = vec![test_event(1, 1, "email", "sent", "hash-a")];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(!rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 0);
+        assert_eq!(rollup.email_sent_count, 0);
+        assert!(!rollup.apartments[0].email_sent);
+    }
+
+    #[test]
+    fn delivery_rollup_counts_email_when_all_current_recipients_sent() {
+        let mut packet = test_packet(1, "hash-a");
+        packet.current_recipients = vec![
+            "new@example.com".to_string(),
+            "tenant@example.com".to_string(),
+        ];
+        let packets = vec![packet];
+        let events = vec![
+            test_event(1, 1, "email", "sent", "hash-a"),
+            test_event_with_recipient(2, 1, "email", "sent", "hash-a", "New@Example.com"),
+        ];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 1);
+        assert_eq!(rollup.email_sent_count, 1);
+        assert!(rollup.apartments[0].email_sent);
+    }
+
+    #[test]
+    fn delivery_rollup_does_not_treat_failed_or_blocked_as_delivered() {
+        let packets = vec![test_packet(1, "hash-a")];
+        let events = vec![
+            test_event(1, 1, "email", "failed", "hash-a"),
+            test_event(2, 1, "email", "blocked", "hash-a"),
+        ];
+
+        let rollup = build_delivery_rollup(1, packets, &events);
+
+        assert!(!rollup.complete);
+        assert_eq!(rollup.current_failed_event_count, 1);
+        assert_eq!(rollup.current_blocked_event_count, 1);
+        assert!(!rollup.apartments[0].delivered);
+    }
+
+    #[test]
+    fn delivery_rollup_packet_error_blocks_completion() {
+        let packets = vec![CurrentPacketInfo {
+            apartment_id: 1,
+            apartment_label: "Apartment 1".to_string(),
+            current_recipients: Vec::new(),
+            packet_hash: String::new(),
+            packet_error: "missing split".to_string(),
+        }];
+
+        let rollup = build_delivery_rollup(1, packets, &[]);
+
+        assert!(!rollup.complete);
+        assert_eq!(rollup.current_delivered_count, 0);
+        assert_eq!(rollup.apartments[0].packet_error, "missing split");
+    }
+
+    #[test]
+    fn safe_filename_component_removes_path_separators() {
+        assert_eq!(
+            safe_filename_component("Mrvar Jernej\\Dusan"),
+            "Mrvar_JernejDusan"
+        );
     }
 }

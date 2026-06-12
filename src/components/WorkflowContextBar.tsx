@@ -134,10 +134,18 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
     },
     {
       label: "Send UPNs",
-      detail: splitsReady
-        ? `${new Set(snapshot.splits.map((split) => split.apartment_id)).size} packets ready`
-        : "Waiting for splits",
-      state: !splitsReady ? "blocked" : routeStage === "upn" ? "now" : "todo",
+      detail: selectedStatus.packetCount > 0
+        ? `${selectedStatus.deliveredCount}/${selectedStatus.packetCount} delivered`
+        : splitsReady
+          ? `${new Set(snapshot.splits.map((split) => split.apartment_id)).size} packets ready`
+          : "Waiting for splits",
+      state: !splitsReady
+        ? "blocked"
+        : selectedStatus.sent
+          ? "done"
+          : routeStage === "upn"
+            ? "now"
+            : "todo",
       icon: Send,
     },
   ];
