@@ -421,21 +421,10 @@ pub fn create_billing_period(
         params![month, year],
     )
     .map_err(|e| e.to_string())?;
-    let id = conn.last_insert_rowid();
-    // If INSERT was ignored (duplicate), fetch existing
-    let id = if id == 0 {
-        conn.query_row(
-            "SELECT id FROM billing_periods WHERE building_id=1 AND month=?1 AND year=?2",
-            params![month, year],
-            |r| r.get::<_, i64>(0),
-        )
-        .map_err(|e| e.to_string())?
-    } else {
-        id
-    };
     conn.query_row(
-        "SELECT id, building_id, month, year, status, created_at FROM billing_periods WHERE id=?1",
-        [id],
+        "SELECT id, building_id, month, year, status, created_at
+         FROM billing_periods WHERE building_id=1 AND month=?1 AND year=?2",
+        params![month, year],
         |row| {
             Ok(BillingPeriod {
                 id: Some(row.get(0)?),

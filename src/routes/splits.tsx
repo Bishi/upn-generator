@@ -217,7 +217,7 @@ function SplitsPage() {
       title="Splits"
       subtitle={null}
       actions={
-        <Button onClick={recalculate} disabled={!selected || calculating}>
+        <Button onClick={recalculate} disabled={!selected?.id || calculating}>
           {calculating ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (

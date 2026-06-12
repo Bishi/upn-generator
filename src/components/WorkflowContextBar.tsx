@@ -1,19 +1,19 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "@tanstack/react-router";
 import {
   Calendar,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   Layers,
-  Loader2,
-  Plus,
   Send,
 } from "lucide-react";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import { ipc } from "@/lib/ipc";
 import { formatEur, type BillingPeriod } from "@/lib/types";
 import {
+  createVirtualBillingPeriod,
   EMPTY_PERIOD_STATUS,
   type PeriodStatus,
   type WorkflowSnapshot,
@@ -45,15 +45,39 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
   const location = useLocation();
   const {
     allPeriods,
-    years,
     selectedYear,
     selected,
-    loadPeriods,
     setSelectedYear,
     setSelected,
   } = useBillingPeriodSelection();
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [creatingYear, setCreatingYear] = useState<number | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const closePicker = useCallback(() => {
+    setPickerOpen(false);
+    const currentYear = new Date().getFullYear();
+    if (selectedYear !== currentYear) setSelectedYear(currentYear);
+  }, [selectedYear, setSelectedYear]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!pickerRef.current?.contains(target)) closePicker();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      closePicker();
+    };
+
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [closePicker, pickerOpen]);
 
   const selectedStatus = selected?.id
     ? snapshot.periodStatuses.get(selected.id) ?? snapshot.selectedStatus
@@ -72,41 +96,9 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
             : "bills"
         : "bills";
 
-  const createAndSelectYear = useCallback(
-    async (year: number) => {
-      setCreatingYear(year);
-      try {
-        await ipc.createYearPeriods(year);
-        const periods = await loadPeriods();
-        const preferredMonth = selected?.month ?? 1;
-        const next =
-          periods.find(
-            (period) => period.year === year && period.month === preferredMonth,
-          ) ??
-          periods.find((period) => period.year === year && period.month === 1) ??
-          null;
-        if (next) setSelected(next);
-      } finally {
-        setCreatingYear(null);
-      }
-    },
-    [loadPeriods, selected, setSelected],
-  );
-
-  const yearTabs = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    return [...new Set([...years, selectedYear, currentYear])].sort((a, b) => a - b);
-  }, [selectedYear, years]);
-  const yearHasPeriods = allPeriods.some((period) => period.year === selectedYear);
-  const nextAddYear = yearHasPeriods
-    ? Math.max(...yearTabs, new Date().getFullYear()) + 1
-    : selectedYear;
-
   const periodLabel = selected
     ? `${SHORT_MONTHS[selected.month - 1]} ${selected.year}`
-    : yearHasPeriods
-      ? `Select ${selectedYear}`
-      : `Add ${selectedYear}`;
+    : "Pick month";
 
   const steps: Array<{
     label: string;
@@ -152,10 +144,16 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
 
   return (
     <div className="relative z-20 flex min-h-[62px] items-center gap-4 border-b border-border bg-card px-6">
-      <div className="relative shrink-0">
+      <div ref={pickerRef} className="relative shrink-0">
         <button
           type="button"
-          onClick={() => setPickerOpen((open) => !open)}
+          onClick={() => {
+            if (pickerOpen) {
+              closePicker();
+            } else {
+              setPickerOpen(true);
+            }
+          }}
           className={cn(
             "inline-grid h-8 w-32 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-shadow",
             pickerOpen && "shadow-[0_0_0_3px_var(--accent-soft-2)]",
@@ -170,16 +168,17 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
             selected={selected}
             selectedYear={selectedYear}
             allPeriods={allPeriods}
-            yearTabs={yearTabs}
             periodStatuses={snapshot.periodStatuses}
-            creatingYear={creatingYear}
-            nextAddYear={nextAddYear}
             onSelectYear={setSelectedYear}
-            onSelectPeriod={(period) => {
+            onSelectMonth={(month) => {
+              const period =
+                allPeriods.find(
+                  (candidate) =>
+                    candidate.year === selectedYear && candidate.month === month,
+                ) ?? createVirtualBillingPeriod(month, selectedYear);
               setSelected(period);
-              setPickerOpen(false);
+              closePicker();
             }}
-            onAddYear={createAndSelectYear}
           />
         )}
       </div>
@@ -211,24 +210,16 @@ function PeriodPicker({
   selected,
   selectedYear,
   allPeriods,
-  yearTabs,
   periodStatuses,
-  creatingYear,
-  nextAddYear,
   onSelectYear,
-  onSelectPeriod,
-  onAddYear,
+  onSelectMonth,
 }: {
   selected: BillingPeriod | null;
   selectedYear: number;
   allPeriods: BillingPeriod[];
-  yearTabs: number[];
   periodStatuses: Map<number, PeriodStatus>;
-  creatingYear: number | null;
-  nextAddYear: number;
   onSelectYear: (year: number) => void;
-  onSelectPeriod: (period: BillingPeriod) => void;
-  onAddYear: (year: number) => Promise<void>;
+  onSelectMonth: (month: number) => void;
 }) {
   const periodByMonth = new Map(
     allPeriods
@@ -238,34 +229,29 @@ function PeriodPicker({
 
   return (
     <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-80 rounded-lg border border-border-2 bg-popover p-4 text-popover-foreground shadow-pop">
-      <div className="mb-4 flex items-center gap-1.5">
-        {yearTabs.map((year) => (
-          <button
-            key={year}
-            type="button"
-            onClick={() => onSelectYear(year)}
-            className={cn(
-              "h-7 rounded-md px-3 text-xs font-semibold transition-colors",
-              selectedYear === year
-                ? "bg-accent-soft text-accent-foreground"
-                : "bg-surface-3 text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}
-          >
-            {year}
-          </button>
-        ))}
+      <div className="mb-4 grid h-8 grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-2">
         <button
           type="button"
-          onClick={() => void onAddYear(nextAddYear)}
-          disabled={creatingYear != null}
-          className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-accent-foreground hover:bg-accent disabled:opacity-60"
+          aria-label="Previous year"
+          title="Previous year"
+          disabled={selectedYear <= 1900}
+          onClick={() => onSelectYear(selectedYear - 1)}
+          className="grid size-8 place-items-center rounded-md bg-surface-3 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-40"
         >
-          {creatingYear != null ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <Plus className="size-3" />
-          )}
-          Add year
+          <ChevronLeft className="size-4" />
+        </button>
+        <div className="select-none text-center text-sm font-semibold tabular-nums text-foreground">
+          {selectedYear}
+        </div>
+        <button
+          type="button"
+          aria-label="Next year"
+          title="Next year"
+          disabled={selectedYear >= 9999}
+          onClick={() => onSelectYear(selectedYear + 1)}
+          className="grid size-8 place-items-center rounded-md bg-surface-3 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <ChevronRight className="size-4" />
         </button>
       </div>
 
@@ -277,21 +263,18 @@ function PeriodPicker({
             period?.id != null
               ? periodStatuses.get(period.id) ?? EMPTY_PERIOD_STATUS
               : EMPTY_PERIOD_STATUS;
-          const isSelected = selected?.id != null && selected.id === period?.id;
+          const isSelected = selected?.year === selectedYear && selected.month === month;
 
           return (
             <button
               key={month}
               type="button"
-              disabled={!period}
-              onClick={() => period && onSelectPeriod(period)}
+              onClick={() => onSelectMonth(month)}
               className={cn(
                 "flex min-h-14 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-2 py-2 text-xs transition-colors",
                 isSelected
                   ? "bg-primary text-primary-foreground"
-                  : period
-                    ? "bg-surface-3 text-foreground hover:border-border-2 hover:bg-accent"
-                    : "cursor-default bg-surface-2 text-muted-foreground opacity-50",
+                  : "bg-surface-3 text-foreground hover:border-border-2 hover:bg-accent",
               )}
             >
               <span className="font-semibold">{monthName}</span>
@@ -312,11 +295,6 @@ function PeriodPicker({
           Pending
         </span>
       </div>
-      {periodByMonth.size === 0 && (
-        <div className="mt-3 rounded-md bg-warning-soft px-3 py-2 text-xs text-warning">
-          No months exist for {selectedYear}. Add the year to create all 12 months.
-        </div>
-      )}
     </div>
   );
 }

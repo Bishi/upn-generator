@@ -6,7 +6,7 @@ import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FileP
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
-import type { Bill, InboxConfig, InboxImportResult, InboxPreviewCandidate, InboxPreviewSession } from "@/lib/types";
+import type { Bill, BillingPeriod, InboxConfig, InboxImportResult, InboxPreviewCandidate, InboxPreviewSession } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
@@ -515,14 +515,16 @@ function InboxStatusChip({ candidate }: { candidate: InboxPreviewCandidate }) {
 
 function InboxImportDrawer({
   open,
-  billingPeriodId,
+  canEnsurePeriod,
   periodLabel,
+  ensureBillingPeriod,
   onClose,
   onImported,
 }: {
   open: boolean;
-  billingPeriodId: number | null;
+  canEnsurePeriod: boolean;
   periodLabel: string;
+  ensureBillingPeriod: () => Promise<(BillingPeriod & { id: number }) | null>;
   onClose: () => void;
   onImported: (results: InboxImportResult[]) => Promise<void>;
 }) {
@@ -588,11 +590,13 @@ function InboxImportDrawer({
   }, [open, busy, closeDrawer]);
 
   const fetchPreview = async () => {
-    if (!billingPeriodId) return;
+    if (!canEnsurePeriod) return;
     setError(null);
     setResults([]);
     setLoadingPreview(true);
     try {
+      const billingPeriod = await ensureBillingPeriod();
+      if (!billingPeriod) return;
       if (preview?.session_id) {
         await ipc.clearInboxPreviewSession(preview.session_id);
       }
@@ -600,7 +604,7 @@ function InboxImportDrawer({
       setSelectedIds(new Set());
       const clampedDays = clampInboxScanDays(daysToScan);
       setDaysToScan(clampedDays);
-      const nextPreview = await ipc.previewInboxAttachments(billingPeriodId, clampedDays);
+      const nextPreview = await ipc.previewInboxAttachments(billingPeriod.id, clampedDays);
       setPreview(nextPreview);
       setSelectedIds(new Set(defaultInboxPreviewSelection(nextPreview.candidates)));
     } catch (e) {
@@ -737,7 +741,7 @@ function InboxImportDrawer({
                   {senderEntries.length > 0 ? <> from <span className="font-semibold text-foreground">{senderEntries.length} senders</span></> : null}. Only bills for the <span className="font-semibold text-foreground">{periodLabel}</span> billing month will be offered.
                 </p>
               </div>
-              <Button onClick={fetchPreview} disabled={!billingPeriodId || loadingConfig || loadingPreview || importing} className="h-10 px-6">
+              <Button onClick={fetchPreview} disabled={!canEnsurePeriod || loadingConfig || loadingPreview || importing} className="h-10 px-6">
                 {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />}
                 Fetch preview
               </Button>
@@ -966,7 +970,7 @@ function InboxImportDrawer({
                 <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
                   Close
                 </Button>
-                <Button variant="ghost" onClick={fetchPreview} disabled={!billingPeriodId || loadingPreview || importing}>
+                <Button variant="ghost" onClick={fetchPreview} disabled={!canEnsurePeriod || loadingPreview || importing}>
                   {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                   Import again
                 </Button>
@@ -1002,7 +1006,7 @@ function InboxImportDrawer({
 }
 
 function BillsPage() {
-  const { selected } = useBillingPeriodSelection();
+  const { selected, ensureSelectedPeriod } = useBillingPeriodSelection();
   const snapshot = useWorkflowSnapshotContext();
   const bills = snapshot.bills;
   const [importing, setImporting] = useState(false);
@@ -1011,7 +1015,7 @@ function BillsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const importFiles = async () => {
-    if (!selected?.id) return;
+    if (!selected) return;
     setError(null);
     setImporting(true);
     try {
@@ -1025,15 +1029,19 @@ function BillsPage() {
         ],
       });
       if (!paths) return;
+      const billingPeriod = await ensureSelectedPeriod();
+      if (!billingPeriod) return;
       const pathArr = Array.isArray(paths) ? paths : [paths];
       for (const path of pathArr) {
         try {
-          await ipc.importBills(path, selected.id);
+          await ipc.importBills(path, billingPeriod.id);
         } catch (e) {
           setError(`Failed to import ${path}: ${e}`);
         }
       }
-      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+      await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
+    } catch (e) {
+      setError(`Failed to import bills: ${e}`);
     } finally {
       setImporting(false);
     }
@@ -1041,36 +1049,42 @@ function BillsPage() {
 
   const handleInboxImported = async (results: InboxImportResult[]) => {
     setInboxResults(results);
-    if (selected?.id) {
-      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    if (selected) {
+      await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
     }
   };
 
   const addBlankBill = async () => {
-    if (!selected?.id) return;
-    const blank: Bill = {
-      id: null,
-      billing_period_id: selected.id,
-      provider_id: null,
-      raw_text: "",
-      amount_cents: 0,
-      creditor_name: "",
-      creditor_iban: "",
-      creditor_address: "",
-      creditor_city: "",
-      creditor_postal_code: "",
-      reference: "",
-      due_date: "",
-      purpose_code: "OTHR",
-      purpose_text: "",
-      invoice_number: "",
-      parse_note: "",
-      status: "draft",
-      source_filename: "(manual)",
-      provider_name: null,
-    };
-    await ipc.saveBill(blank);
-    await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    setError(null);
+    try {
+      const billingPeriod = await ensureSelectedPeriod();
+      if (!billingPeriod) return;
+      const blank: Bill = {
+        id: null,
+        billing_period_id: billingPeriod.id,
+        provider_id: null,
+        raw_text: "",
+        amount_cents: 0,
+        creditor_name: "",
+        creditor_iban: "",
+        creditor_address: "",
+        creditor_city: "",
+        creditor_postal_code: "",
+        reference: "",
+        due_date: "",
+        purpose_code: "OTHR",
+        purpose_text: "",
+        invoice_number: "",
+        parse_note: "",
+        status: "draft",
+        source_filename: "(manual)",
+        provider_name: null,
+      };
+      await ipc.saveBill(blank);
+      await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
+    } catch (e) {
+      setError(`Failed to add manual bill: ${e}`);
+    }
   };
 
   const saveBill = async (bill: Bill) => {
@@ -1141,15 +1155,16 @@ function BillsPage() {
     >
       <InboxImportDrawer
         open={inboxDrawerOpen}
-        billingPeriodId={selected?.id ?? null}
+        canEnsurePeriod={selected != null}
         periodLabel={formatBillingPeriodLabel(selected?.month, selected?.year)}
+        ensureBillingPeriod={ensureSelectedPeriod}
         onClose={() => setInboxDrawerOpen(false)}
         onImported={handleInboxImported}
       />
 
       {!selected && (
         <div className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-          No billing period selected. Use the month picker above to add or select a year.
+          No billing month selected. Use the month picker above to choose one.
         </div>
       )}
 
