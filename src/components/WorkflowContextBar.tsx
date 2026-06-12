@@ -282,11 +282,13 @@ function PeriodPicker({
               ? periodStatuses.get(period.id) ?? EMPTY_PERIOD_STATUS
               : EMPTY_PERIOD_STATUS;
           const isSelected = selected?.year === selectedYear && selected.month === month;
+          const isClosed = status.sent;
 
           return (
             <button
               key={month}
               type="button"
+              title={isClosed ? `${monthName} ${selectedYear} is closed` : undefined}
               onClick={() => onSelectMonth(month)}
               className={cn(
                 "flex min-h-14 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-2 py-2 text-xs transition-colors",
@@ -296,10 +298,23 @@ function PeriodPicker({
               )}
             >
               <span className="font-semibold">{monthName}</span>
-              <span className="flex gap-1">
-                <StatusDot active={status.bills} selected={isSelected} />
-                <StatusDot active={status.splits} selected={isSelected} />
-              </span>
+              {isClosed ? (
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                    isSelected
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-success-soft text-success",
+                  )}
+                >
+                  Closed
+                </span>
+              ) : (
+                <span className="flex gap-1">
+                  <StatusDot active={status.bills} selected={isSelected} />
+                  <StatusDot active={status.splits} selected={isSelected} />
+                </span>
+              )}
             </button>
           );
         })}

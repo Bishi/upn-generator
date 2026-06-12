@@ -95,7 +95,7 @@ Choose the app theme. **Refined** is the default and the polished production dir
 
 ### Settings -> App -> Data
 
-Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme.
+Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme. While backup or restore is running, the app shows a loading overlay and temporarily blocks other clicks.
 
 Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, saved SMTP and inbox passwords are not included in backups. Existing Windows Credential Manager passwords are kept and reused only when the restored username still matches; otherwise enter the password again in **Settings -> Delivery**.
 
@@ -107,7 +107,7 @@ Use **Restore Backup** to replace the current app data with a previously saved b
 
 Go to the **Bills** page.
 
-Use the month picker to choose the billing month. Years and months can be browsed directly; the app creates the underlying billing period only when you import or add bills for a month.
+Use the month picker to choose the billing month. Years and months can be browsed directly; the app creates the underlying billing period only when you import or add bills for a month. Months with all current UPN packets delivered are marked as closed in the picker.
 
 ### Step 2 - Import bills
 

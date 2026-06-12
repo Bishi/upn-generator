@@ -44,6 +44,13 @@ function SettingsPage() {
     if (search.tab) setActiveTab(search.tab);
   }, [search.tab]);
 
+  const selectTab = (tab: Tab) => {
+    setActiveTab(tab);
+    const searchParams = new URLSearchParams(window.location.search);
+    searchParams.set("tab", tab);
+    window.history.replaceState(null, "", `${window.location.pathname}?${searchParams}`);
+  };
+
   return (
     <div className="flex flex-col gap-5">
       <section>
@@ -57,7 +64,7 @@ function SettingsPage() {
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => selectTab(tab.id)}
             className={cn(
               "-mb-px flex h-10 items-center gap-2 whitespace-nowrap border-b-2 px-4 text-sm font-semibold transition-colors",
               activeTab === tab.id
