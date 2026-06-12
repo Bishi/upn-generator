@@ -285,8 +285,8 @@ function SplitsPage() {
       )}
 
       {showSplitsTable && (
-        <BillingTableFrame scrollX>
-          <BillingTable className="min-w-max">
+        <BillingTableFrame>
+          <BillingTable>
             <thead>
               <BillingTableHeaderRow>
                 <BillingTableHeaderCell className="min-w-48">

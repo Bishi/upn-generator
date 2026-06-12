@@ -1,9 +1,10 @@
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, KeyboardEvent, PointerEvent, ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export const billingTableCellClass = "px-3 py-2";
-export const billingTableTallCellClass = "px-3 py-3";
+export const billingTableCellClass = "whitespace-nowrap px-3 py-2";
+export const billingTableTallCellClass = "whitespace-nowrap px-3 py-3";
 export const billingTableNumericCellClass = `${billingTableCellClass} text-right font-mono`;
 export const billingTableBodyRowClass = "border-b border-border transition-colors hover:bg-accent/10";
 export const billingTableZebraRowClass =
@@ -14,24 +15,210 @@ type BillingTableFrameProps = ComponentPropsWithoutRef<"div"> & {
   minHeight?: boolean;
 };
 
+type ScrollMetrics = {
+  hasOverflow: boolean;
+  maxScrollLeft: number;
+  scrollLeft: number;
+  thumbLeftPercent: number;
+  thumbWidthPercent: number;
+};
+
+const emptyScrollMetrics: ScrollMetrics = {
+  hasOverflow: false,
+  maxScrollLeft: 0,
+  scrollLeft: 0,
+  thumbLeftPercent: 0,
+  thumbWidthPercent: 100,
+};
+
 export function BillingTableFrame({
   className,
-  scrollX = false,
+  scrollX = true,
   minHeight = false,
   children,
   ...props
 }: BillingTableFrameProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    maxScrollLeft: number;
+    pointerId: number;
+    startScrollLeft: number;
+    startX: number;
+    thumbWidth: number;
+    trackWidth: number;
+  } | null>(null);
+  const [scrollMetrics, setScrollMetrics] = useState<ScrollMetrics>(emptyScrollMetrics);
+
+  const updateScrollMetrics = useCallback(() => {
+    const viewport = scrollRef.current;
+    if (!viewport || !scrollX) {
+      setScrollMetrics(emptyScrollMetrics);
+      return;
+    }
+
+    const { clientWidth, scrollLeft, scrollWidth } = viewport;
+    const maxScrollLeft = Math.max(0, scrollWidth - clientWidth);
+    const hasOverflow = maxScrollLeft > 1;
+    const thumbWidthPercent = hasOverflow
+      ? Math.max(12, (clientWidth / scrollWidth) * 100)
+      : 100;
+    const thumbLeftPercent =
+      hasOverflow && maxScrollLeft > 0
+        ? (scrollLeft / maxScrollLeft) * (100 - thumbWidthPercent)
+        : 0;
+
+    setScrollMetrics({
+      hasOverflow,
+      maxScrollLeft,
+      scrollLeft,
+      thumbLeftPercent,
+      thumbWidthPercent,
+    });
+  }, [scrollX]);
+
+  useLayoutEffect(() => {
+    if (!scrollX) {
+      setScrollMetrics(emptyScrollMetrics);
+      return;
+    }
+
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+
+    updateScrollMetrics();
+    const resizeObserver = new ResizeObserver(updateScrollMetrics);
+    resizeObserver.observe(viewport);
+    if (viewport.firstElementChild) resizeObserver.observe(viewport.firstElementChild);
+    window.addEventListener("resize", updateScrollMetrics);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateScrollMetrics);
+    };
+  }, [scrollX, children, updateScrollMetrics]);
+
+  const scrollToThumbPosition = (position: number) => {
+    const viewport = scrollRef.current;
+    const track = trackRef.current;
+    if (!viewport || !track || scrollMetrics.maxScrollLeft <= 0) return;
+
+    const thumbWidth = (scrollMetrics.thumbWidthPercent / 100) * track.clientWidth;
+    const maxThumbLeft = Math.max(1, track.clientWidth - thumbWidth);
+    viewport.scrollLeft =
+      (Math.min(maxThumbLeft, Math.max(0, position)) / maxThumbLeft) *
+      scrollMetrics.maxScrollLeft;
+  };
+
+  const handleTrackPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+
+    const track = trackRef.current;
+    if (!track) return;
+
+    const rect = track.getBoundingClientRect();
+    const thumbWidth = (scrollMetrics.thumbWidthPercent / 100) * track.clientWidth;
+    scrollToThumbPosition(event.clientX - rect.left - thumbWidth / 2);
+  };
+
+  const handleThumbPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    const viewport = scrollRef.current;
+    const track = trackRef.current;
+    if (!viewport || !track || scrollMetrics.maxScrollLeft <= 0) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      maxScrollLeft: scrollMetrics.maxScrollLeft,
+      pointerId: event.pointerId,
+      startScrollLeft: viewport.scrollLeft,
+      startX: event.clientX,
+      thumbWidth: (scrollMetrics.thumbWidthPercent / 100) * track.clientWidth,
+      trackWidth: track.clientWidth,
+    };
+  };
+
+  const handleThumbPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const viewport = scrollRef.current;
+    const drag = dragRef.current;
+    if (!viewport || !drag || drag.pointerId !== event.pointerId) return;
+
+    const maxThumbTravel = Math.max(1, drag.trackWidth - drag.thumbWidth);
+    const nextScrollLeft =
+      drag.startScrollLeft +
+      ((event.clientX - drag.startX) / maxThumbTravel) * drag.maxScrollLeft;
+    viewport.scrollLeft = Math.min(drag.maxScrollLeft, Math.max(0, nextScrollLeft));
+  };
+
+  const endThumbDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleThumbKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+
+    const step = Math.max(48, viewport.clientWidth * 0.2);
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      viewport.scrollLeft -= step;
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      viewport.scrollLeft += step;
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      viewport.scrollLeft = 0;
+    } else if (event.key === "End") {
+      event.preventDefault();
+      viewport.scrollLeft = scrollMetrics.maxScrollLeft;
+    }
+  };
+
   return (
     <div
       className={cn(
         minHeight && "min-h-[268px]",
-        scrollX ? "overflow-x-auto" : "overflow-hidden",
-        "rounded-lg border border-border bg-card shadow-card",
+        "overflow-hidden rounded-lg border border-border bg-card shadow-card",
         className,
       )}
       {...props}
     >
-      {children}
+      <div
+        ref={scrollRef}
+        className={cn(
+          scrollX && "billing-table-scroll overflow-x-auto",
+        )}
+        onScroll={updateScrollMetrics}
+      >
+        {children}
+      </div>
+      {scrollX && scrollMetrics.hasOverflow && (
+        <div className="bg-card px-3 py-1.5">
+          <div
+            ref={trackRef}
+            className="relative h-2 rounded-full bg-surface-3"
+            onPointerDown={handleTrackPointerDown}
+          >
+            <button
+              type="button"
+              aria-label="Scroll table horizontally"
+              className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-border-2 transition-colors hover:bg-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              style={{
+                left: `${scrollMetrics.thumbLeftPercent}%`,
+                width: `${scrollMetrics.thumbWidthPercent}%`,
+              }}
+              onKeyDown={handleThumbKeyDown}
+              onPointerCancel={endThumbDrag}
+              onPointerDown={handleThumbPointerDown}
+              onPointerMove={handleThumbPointerMove}
+              onPointerUp={endThumbDrag}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -40,7 +227,7 @@ export function BillingTable({
   className,
   ...props
 }: ComponentPropsWithoutRef<"table">) {
-  return <table className={cn("w-full text-sm", className)} {...props} />;
+  return <table className={cn("w-full min-w-max text-sm", className)} {...props} />;
 }
 
 export function BillingTableHeaderRow({
@@ -62,7 +249,7 @@ export function BillingTableHeaderCell({
   className,
   ...props
 }: ComponentPropsWithoutRef<"th">) {
-  return <th className={cn("px-3 pt-3.5 pb-2.5", className)} {...props} />;
+  return <th className={cn("whitespace-nowrap px-3 pt-3.5 pb-2.5", className)} {...props} />;
 }
 
 export function BillingTableFooterRow({
