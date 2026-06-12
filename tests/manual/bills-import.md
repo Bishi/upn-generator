@@ -21,8 +21,10 @@
 - [ ] Confirm a bill for the wrong selected month is rejected or clearly blocked before save.
 - [ ] Confirm unknown providers are not silently added as configured providers.
 - [ ] Confirm duplicate provider/month imports do not create duplicate bill rows.
+- [ ] If duplicate provider bills are created manually or from restored data, confirm UPN validation blocks delivery actions for that month.
 - [ ] Add a bill manually and confirm it participates in the month total.
 - [ ] Edit an imported bill and confirm amount/reference/purpose/due date changes persist after reload.
+- [ ] Clear or invalidate a bill IBAN, reference, purpose code, purpose text, or due date and confirm UPN validation blocks delivery actions.
 - [ ] Delete a bill and confirm totals and downstream split warnings update.
 - [ ] Open `%APPDATA%\si.upn-generator\import_debug.log` and confirm it contains useful parser diagnostics for local imports.
 

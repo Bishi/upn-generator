@@ -24,6 +24,7 @@ use commands::upn::{
     save_all_upns, save_smtp_password, send_emails, test_smtp_connection,
     unmark_upn_period_delivered,
 };
+use commands::upn_validation::validate_upn_pre_send;
 use db::migrations;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -108,6 +109,7 @@ pub fn run() {
             get_upn_delivery_events,
             get_upn_delivery_rollup,
             get_upn_packet_hashes,
+            validate_upn_pre_send,
             test_smtp_connection,
             save_smtp_password,
         ])

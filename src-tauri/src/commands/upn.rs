@@ -19,6 +19,9 @@ use tauri_plugin_opener::OpenerExt;
 use crate::credentials::{self, MailCredentialKind};
 
 use super::config::{DbState, SmtpConfig};
+use super::upn_validation::{
+    ensure_validation_allows, ACTION_DOWNLOAD_ALL, ACTION_MARK_DELIVERED, ACTION_SEND_EMAILS,
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EmailResult {
@@ -1830,6 +1833,16 @@ fn send_emails_impl(
 ) -> Result<Vec<EmailResult>, String> {
     let overall_start = Instant::now();
     let mut previous_phase = overall_start;
+    {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_validation_allows(&conn, billing_period_id, ACTION_SEND_EMAILS)?;
+    }
+    log_send_email_phase(
+        overall_start,
+        &mut previous_phase,
+        "validated pre-send gates",
+    );
+
     let (
         smtp_host,
         smtp_port,
@@ -2228,6 +2241,7 @@ pub fn mark_upn_period_delivered(
     billing_period_id: i64,
 ) -> Result<UpnDeliveryRollup, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_validation_allows(&conn, billing_period_id, ACTION_MARK_DELIVERED)?;
     let packets = load_current_packet_infos(&conn, billing_period_id)?;
     let packet_errors = packets
         .iter()
@@ -2411,6 +2425,7 @@ pub fn save_all_upns(
 ) -> Result<Vec<String>, String> {
     let (month, year) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_validation_allows(&conn, billing_period_id, ACTION_DOWNLOAD_ALL)?;
         conn.query_row(
             "SELECT month, year FROM billing_periods WHERE id=?1",
             [billing_period_id],

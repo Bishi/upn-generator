@@ -84,6 +84,10 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
     : EMPTY_PERIOD_STATUS;
   const billsReady = selectedStatus.bills;
   const splitsReady = selectedStatus.splits;
+  const validationErrorCount =
+    snapshot.selectedPreSendValidation?.error_count ??
+    selectedStatus.validationErrorCount ??
+    0;
   const routeStage = location.pathname.includes("/splits")
     ? "splits"
     : location.pathname.includes("/upn")
@@ -135,14 +139,20 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
     {
       label: "Send UPNs",
       detail: selectedStatus.packetCount > 0
-        ? `${selectedStatus.deliveredCount}/${selectedStatus.packetCount} delivered`
+        ? validationErrorCount > 0
+          ? `Blocked: ${validationErrorCount} validation issue${validationErrorCount === 1 ? "" : "s"}`
+          : `${selectedStatus.deliveredCount}/${selectedStatus.packetCount} delivered`
         : splitsReady
-          ? `${new Set(snapshot.splits.map((split) => split.apartment_id)).size} packets ready`
+          ? validationErrorCount > 0
+            ? `Blocked: ${validationErrorCount} validation issue${validationErrorCount === 1 ? "" : "s"}`
+            : `${new Set(snapshot.splits.map((split) => split.apartment_id)).size} packets ready`
           : "Waiting for splits",
       state: !splitsReady
         ? "blocked"
         : selectedStatus.sent
           ? "done"
+          : validationErrorCount > 0
+            ? "blocked"
           : routeStage === "upn"
             ? "now"
             : "todo",

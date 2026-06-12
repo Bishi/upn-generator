@@ -147,6 +147,7 @@ Individual amounts can be manually adjusted by clicking a cell.
 Go to the **UPN** page and select the billing period.
 
 Each apartment card shows its line items and the total amount due.
+Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. Warnings can be reviewed from the same panel, but do not stop delivery actions.
 
 | Action | Description |
 |--------|-------------|
@@ -219,7 +220,7 @@ Make sure a PDF viewer is installed (for example Adobe Acrobat or Microsoft Edge
 
 Check the SMTP settings under **Settings -> Delivery**. For Gmail, you must use an **App Password** - your regular account password will be rejected.
 
-If rows show **blocked**, the Email safety allowlist is enabled and the recipient is not listed. Add the test recipient to the allowlist or turn the allowlist off when you are ready to send to tenants.
+If the validation panel reports an email safety blocker, the recipient is not listed while the allowlist is enabled. Add the test recipient to the allowlist or turn the allowlist off when you are ready to send to tenants. Pre-send validation stops the send before any SMTP connection or delivery event is created.
 
 **Inbox import not connecting**
 

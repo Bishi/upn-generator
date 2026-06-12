@@ -24,6 +24,9 @@ import type {
   UpnDeliveryApartmentRollup,
   UpnDeliveryEvent,
   UpnPacketHash,
+  UpnPreSendValidation,
+  UpnValidationAction,
+  UpnValidationIssue,
 } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
@@ -127,6 +130,157 @@ function normalizedRecipients(raw: string) {
 function sameRecipients(left: string[], right: string[]) {
   if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
+}
+
+function issueBlocks(issue: UpnValidationIssue, action: UpnValidationAction) {
+  return issue.blocks.includes(action);
+}
+
+function actionDisabledTitle(
+  validation: UpnPreSendValidation | null,
+  canRun: boolean,
+  label: string,
+  checking: boolean,
+) {
+  if (!validation) {
+    return checking
+      ? "Checking UPN validation..."
+      : "UPN validation could not be loaded. Refresh or reselect the period.";
+  }
+  if (!canRun) return `${label} is blocked by UPN validation issues.`;
+  return undefined;
+}
+
+function ValidationIssueList({ issues }: { issues: UpnValidationIssue[] }) {
+  if (issues.length === 0) {
+    return <div className="text-xs text-muted-foreground">No issues.</div>;
+  }
+
+  return (
+    <ul className="space-y-1.5">
+      {issues.map((issue, index) => (
+        <li key={`${issue.code}-${issue.bill_id ?? ""}-${issue.apartment_id ?? ""}-${index}`} className="text-xs">
+          <span
+            className={
+              issue.severity === "error"
+                ? "font-semibold text-danger"
+                : "font-semibold text-warning"
+            }
+          >
+            {issue.label}
+          </span>
+          <span className="text-muted-foreground"> - {issue.message}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function UpnValidationPanel({
+  validation,
+  expanded,
+  onToggle,
+  checking,
+}: {
+  validation: UpnPreSendValidation | null;
+  expanded: boolean;
+  onToggle: () => void;
+  checking: boolean;
+}) {
+  if (!validation) {
+    return (
+      <div className="rounded-md border border-border bg-surface-2 px-4 py-3 text-sm text-muted-foreground">
+        {checking
+          ? "Checking UPN validation..."
+          : "UPN validation could not be loaded. Refresh or reselect the period before delivery actions."}
+      </div>
+    );
+  }
+
+  const allActionBlockers = validation.issues.filter(
+    (issue) =>
+      issue.severity === "error" &&
+      issueBlocks(issue, "send_emails") &&
+      issueBlocks(issue, "mark_delivered") &&
+      issueBlocks(issue, "download_all"),
+  );
+  const emailBlockers = validation.issues.filter(
+    (issue) =>
+      issue.severity === "error" &&
+      issueBlocks(issue, "send_emails") &&
+      !issueBlocks(issue, "mark_delivered") &&
+      !issueBlocks(issue, "download_all"),
+  );
+  const deliveryBlockers = validation.issues.filter(
+    (issue) =>
+      issue.severity === "error" &&
+      !issueBlocks(issue, "send_emails") &&
+      (issueBlocks(issue, "mark_delivered") || issueBlocks(issue, "download_all")),
+  );
+  const warnings = validation.issues.filter((issue) => issue.severity === "warning");
+  const hasIssues = validation.error_count > 0 || validation.warning_count > 0;
+  const previewIssues = validation.issues.slice(0, 3);
+  const issueGroups = [
+    { title: "Blocks all actions", issues: allActionBlockers },
+    { title: "Blocks email sending", issues: emailBlockers },
+    { title: "Blocks delivery/download", issues: deliveryBlockers },
+    { title: "Warnings", issues: warnings },
+  ].filter((group) => group.issues.length > 0);
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border px-4 py-3",
+        validation.error_count > 0
+          ? "border-danger/30 bg-danger-soft/40"
+          : validation.warning_count > 0
+            ? "border-warning/30 bg-warning-soft/50"
+            : "border-success/20 bg-success-soft/40",
+      )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            {validation.error_count > 0 ? (
+              <XCircle className="size-4 text-danger" />
+            ) : validation.warning_count > 0 ? (
+              <AlertTriangle className="size-4 text-warning" />
+            ) : (
+              <CheckCircle2 className="size-4 text-success" />
+            )}
+            {validation.error_count > 0
+              ? `${validation.error_count} validation issue${validation.error_count === 1 ? "" : "s"} blocking UPN actions`
+              : validation.warning_count > 0
+                ? `${validation.warning_count} validation warning${validation.warning_count === 1 ? "" : "s"}`
+                : "Ready for UPN actions"}
+          </div>
+          {hasIssues && !expanded && (
+            <div className="mt-2">
+              <ValidationIssueList issues={previewIssues} />
+            </div>
+          )}
+        </div>
+        {hasIssues && (
+          <Button variant="ghost" size="sm" onClick={onToggle}>
+            {expanded ? "Show less" : "Show all"}
+          </Button>
+        )}
+      </div>
+
+      {hasIssues && expanded && (
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {issueGroups.map((group) => (
+            <div key={group.title}>
+              <div className="mb-1 text-xs font-semibold text-foreground">
+                {group.title}
+              </div>
+              <ValidationIssueList issues={group.issues} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function aggregateHistoryEvents(
@@ -474,6 +628,11 @@ function UpnPage() {
   const loadRequestRef = useRef(0);
   const lastSnapshotErrorRef = useRef<string | null>(null);
   const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
+  const [validationExpanded, setValidationExpanded] = useState(false);
+
+  useEffect(() => {
+    setValidationExpanded(false);
+  }, [selected?.id]);
 
   const setPageError = useCallback((message: string | null) => {
     if (!message) return;
@@ -578,8 +737,11 @@ function UpnPage() {
 
   const markDelivered = async () => {
     if (!selected?.id) return;
+    const warningCount = snapshot.selectedPreSendValidation?.warning_count ?? 0;
     const confirmed = await confirm(
-      "Mark this billing period as delivered? This will count all current UPN packets as delivered.",
+      warningCount > 0
+        ? `Mark this billing period as delivered? This will count all current UPN packets as delivered. There ${warningCount === 1 ? "is" : "are"} ${warningCount} validation warning${warningCount === 1 ? "" : "s"} to review.`
+        : "Mark this billing period as delivered? This will count all current UPN packets as delivered.",
       {
         title: "Mark Delivered",
         kind: "warning",
@@ -722,6 +884,16 @@ function UpnPage() {
     deliveryRollup?.complete ??
     (deliveryPacketCount > 0 && snapshot.selectedStatus.sent);
   const hasManualDelivery = (deliveryRollup?.manual_delivered_count ?? 0) > 0;
+  const validation = snapshot.selectedPreSendValidation;
+  const validationReady = !!validation;
+  const canDownloadAll = validation?.can_download_all ?? false;
+  const canMarkDelivered = validation?.can_mark_delivered ?? false;
+  const canSendEmails = validation?.can_send_emails ?? false;
+  const validationBlocked =
+    validation != null &&
+    (!validation.can_download_all ||
+      !validation.can_mark_delivered ||
+      !validation.can_send_emails);
 
   return (
     <BillingPageShell
@@ -732,7 +904,20 @@ function UpnPage() {
           <Button
             variant="outline"
             onClick={downloadAll}
-            disabled={!selected?.id || snapshot.loading || splits.length === 0 || downloading}
+            title={actionDisabledTitle(
+              validation,
+              canDownloadAll,
+              "Download All PDFs",
+              snapshot.loading,
+            )}
+            disabled={
+              !selected?.id ||
+              snapshot.loading ||
+              splits.length === 0 ||
+              downloading ||
+              !validationReady ||
+              !canDownloadAll
+            }
           >
             {downloading ? (
               <Loader2 className="size-4 animate-spin" />
@@ -760,8 +945,19 @@ function UpnPage() {
             <Button
               variant="outline"
               onClick={markDelivered}
+              title={actionDisabledTitle(
+                validation,
+                canMarkDelivered,
+                "Mark Delivered",
+                snapshot.loading,
+              )}
               disabled={
-                !selected?.id || snapshot.loading || splits.length === 0 || markingDelivered
+                !selected?.id ||
+                snapshot.loading ||
+                splits.length === 0 ||
+                markingDelivered ||
+                !validationReady ||
+                !canMarkDelivered
               }
             >
               {markingDelivered ? (
@@ -774,7 +970,20 @@ function UpnPage() {
           )}
           <Button
             onClick={sendEmails}
-            disabled={!selected?.id || snapshot.loading || splits.length === 0 || sending}
+            title={actionDisabledTitle(
+              validation,
+              canSendEmails,
+              "Send All Emails",
+              snapshot.loading,
+            )}
+            disabled={
+              !selected?.id ||
+              snapshot.loading ||
+              splits.length === 0 ||
+              sending ||
+              !validationReady ||
+              !canSendEmails
+            }
           >
             {sending ? (
               <Loader2 className="size-4 animate-spin" />
@@ -816,7 +1025,23 @@ function UpnPage() {
               {deliveryDeliveredCount}/{deliveryPacketCount} delivered
             </SummaryChip>
           )}
+          {validationBlocked && (
+            <SummaryChip className="bg-danger-soft text-danger">
+              <AlertTriangle className="size-3.5" />
+              {validation.error_count} validation
+              <span className="font-normal">issue{validation.error_count === 1 ? "" : "s"}</span>
+            </SummaryChip>
+          )}
         </SummaryStrip>
+      )}
+
+      {selected?.id && !snapshot.loading && (
+        <UpnValidationPanel
+          validation={validation}
+          expanded={validationExpanded}
+          onToggle={() => setValidationExpanded((current) => !current)}
+          checking={snapshot.loading}
+        />
       )}
 
       {!selected && (

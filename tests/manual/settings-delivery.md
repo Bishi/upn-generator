@@ -15,6 +15,7 @@
 - [ ] Change SMTP username and confirm the old saved password is not reused for the new username.
 - [ ] Send a test email using the current SMTP form values.
 - [ ] Toggle email safety allowlist and confirm the saved state survives reload.
+- [ ] With the allowlist enabled, confirm UPN validation blocks Send Emails for non-allowlisted apartment recipients before any SMTP connection is attempted.
 - [ ] Save IMAP settings with a new password and confirm the form reports a saved password state after reload.
 - [ ] Leave IMAP password blank on a later save and confirm the existing saved password is kept.
 - [ ] Change IMAP username and confirm the old saved password is not reused for the new username.

@@ -18,6 +18,7 @@ import type {
   UpnDeliveryEvent,
   UpnDeliveryRollup,
   UpnPacketHash,
+  UpnPreSendValidation,
 } from "./types";
 
 export const ipc = {
@@ -118,6 +119,8 @@ export const ipc = {
     invoke<UpnDeliveryRollup>("get_upn_delivery_rollup", { billingPeriodId }),
   getUpnPacketHashes: (billingPeriodId: number) =>
     invoke<UpnPacketHash[]>("get_upn_packet_hashes", { billingPeriodId }),
+  validateUpnPreSend: (billingPeriodId: number) =>
+    invoke<UpnPreSendValidation>("validate_upn_pre_send", { billingPeriodId }),
   saveSmtpPassword: (password: string) =>
     invoke<void>("save_smtp_password", { password }),
 };

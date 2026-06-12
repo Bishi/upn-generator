@@ -107,6 +107,14 @@ function DashboardPage() {
     : bills.filter((bill) => bill.parse_note?.trim());
   const firstReviewBill = reviewBills[0] ?? null;
   const needsReview = useStatusSummary ? selectedStatus.needsReview : reviewBills.length;
+  const validationErrorCount =
+    snapshot.selectedPreSendValidation?.error_count ??
+    selectedStatus.validationErrorCount ??
+    0;
+  const validationWarningCount =
+    snapshot.selectedPreSendValidation?.warning_count ??
+    selectedStatus.validationWarningCount ??
+    0;
   const unmatchedBillCount = useStatusSummary
     ? 0
     : bills.filter((bill) => bill.provider_id == null).length;
@@ -416,16 +424,24 @@ function DashboardPage() {
 
           <Card
             className={`p-5 ${
-              needsReview > 0 ? "border-warning bg-warning-soft" : ""
+              validationErrorCount > 0
+                ? "border-danger bg-danger-soft"
+                : needsReview > 0 || validationWarningCount > 0
+                  ? "border-warning bg-warning-soft"
+                  : ""
             }`}
           >
             <div className="flex gap-3">
               <span
                 className={`mt-0.5 ${
-                  needsReview > 0 ? "text-warning" : "text-success"
+                  validationErrorCount > 0
+                    ? "text-danger"
+                    : needsReview > 0 || validationWarningCount > 0
+                      ? "text-warning"
+                      : "text-success"
                 }`}
               >
-                {needsReview > 0 ? (
+                {validationErrorCount > 0 || needsReview > 0 || validationWarningCount > 0 ? (
                   <AlertTriangle className="size-5" />
                 ) : (
                   <CheckCircle2 className="size-5" />
@@ -434,23 +450,43 @@ function DashboardPage() {
               <div>
                 <h3
                   className={`text-sm font-semibold ${
-                    needsReview > 0 ? "text-warning" : ""
+                    validationErrorCount > 0
+                      ? "text-danger"
+                      : needsReview > 0 || validationWarningCount > 0
+                        ? "text-warning"
+                        : ""
                   }`}
                 >
-                  {needsReview > 0
+                  {validationErrorCount > 0
+                    ? `UPN validation blocked: ${validationErrorCount} issue${validationErrorCount === 1 ? "" : "s"}`
+                    : needsReview > 0
                     ? `${needsReview} bill${needsReview === 1 ? "" : "s"} needs review`
+                    : validationWarningCount > 0
+                      ? `${validationWarningCount} UPN validation warning${validationWarningCount === 1 ? "" : "s"}`
                     : "No alerts this billing month"}
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {needsReview > 0
+                  {validationErrorCount > 0
+                    ? "Open UPN Preview to fix blockers before sending emails, marking delivered, or exporting PDFs."
+                    : needsReview > 0
                     ? firstReviewBill
                       ? `${reviewLabel} - ${reviewNote || "Verify parser and OCR notes before sending UPN packets."}`
                       : "Review flagged bill notes before sending UPN packets."
+                    : validationWarningCount > 0
+                      ? "Review warnings before closing out delivery."
                     : upnsReady
                       ? "Bills and splits are ready for UPN preview."
                       : "The next workflow step will appear here as the period progresses."}
                 </p>
-                {needsReview > 0 && (
+                {validationErrorCount > 0 ? (
+                  <Link
+                    to="/upn"
+                    className="mt-3 inline-flex h-8 items-center gap-2 rounded-md bg-danger px-3 text-xs font-semibold text-white"
+                  >
+                    Open UPN
+                    <ArrowRight className="size-3.5" />
+                  </Link>
+                ) : needsReview > 0 ? (
                   <Link
                     to="/bills"
                     className="mt-3 inline-flex h-8 items-center gap-2 rounded-md bg-warning px-3 text-xs font-semibold text-white"
@@ -458,7 +494,7 @@ function DashboardPage() {
                     Open bills
                     <ArrowRight className="size-3.5" />
                   </Link>
-                )}
+                ) : null}
               </div>
             </div>
           </Card>

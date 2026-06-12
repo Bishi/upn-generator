@@ -19,6 +19,9 @@
 - [ ] Change a source bill amount and confirm the Splits page warns or requires recalculation.
 - [ ] Recalculate after a bill/provider/apartment change and confirm stale split data is replaced.
 - [ ] Confirm inactive apartments are handled according to the current product rule.
+- [ ] Confirm UPN validation blocks delivery actions when a bill has no splits, split totals do not match the bill total, or a split belongs to an inactive apartment.
+- [ ] Set all active apartments to zero occupants for an occupant-based provider and confirm UPN validation blocks delivery actions until occupants or split basis are corrected.
+- [ ] Change m2 percentages so active apartments no longer total 100 and confirm UPN validation shows a warning without blocking delivery actions.
 
 ## Notes
 

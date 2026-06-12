@@ -198,6 +198,42 @@ export interface UpnDeliveryRollup {
   apartments: UpnDeliveryApartmentRollup[];
 }
 
+export type UpnValidationAction =
+  | "send_emails"
+  | "mark_delivered"
+  | "download_all";
+
+export type UpnValidationSeverity = "error" | "warning";
+
+export type UpnValidationEntityType =
+  | "period"
+  | "bill"
+  | "apartment"
+  | "provider"
+  | "split";
+
+export interface UpnValidationIssue {
+  severity: UpnValidationSeverity;
+  code: string;
+  message: string;
+  entity_type: UpnValidationEntityType;
+  bill_id: number | null;
+  apartment_id: number | null;
+  provider_id: number | null;
+  label: string;
+  blocks: UpnValidationAction[];
+}
+
+export interface UpnPreSendValidation {
+  billing_period_id: number;
+  error_count: number;
+  warning_count: number;
+  can_send_emails: boolean;
+  can_mark_delivered: boolean;
+  can_download_all: boolean;
+  issues: UpnValidationIssue[];
+}
+
 export interface InboxImportResult {
   sender: string;
   subject: string;

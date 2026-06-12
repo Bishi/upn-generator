@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { Check, CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SmtpConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,7 @@ const emptyConfig: SmtpConfig = {
 
 export function SmtpSection() {
   const queryClient = useQueryClient();
+  const snapshot = useWorkflowSnapshotContext();
   const { data, isLoading } = useQuery({
     queryKey: ["smtp_config"],
     queryFn: ipc.getSmtpConfig,
@@ -44,8 +46,9 @@ export function SmtpSection() {
       await ipc.saveSmtpConfig(cfg);
       if (password) await ipc.saveSmtpPassword(password);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
       setPassword("");
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -167,7 +170,7 @@ export function SmtpSection() {
                 <h4 className="text-sm font-semibold">Email safety</h4>
                 <p className="mt-1 text-xs text-muted-foreground">
                   When enabled, UPN emails are sent only to listed test recipients.
-                  Other recipients are skipped and recorded.
+                  Other recipients block the email send before any delivery event is recorded.
                 </p>
               </div>
             </div>
