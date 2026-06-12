@@ -1,12 +1,13 @@
 # Status
 
-- Current version: `0.5.2`
-- Current tag: `v0.5.2`
-- Release status: prepared on `feat/tweaks` for PR review
+- Current version: `0.5.3`
+- Current tag: `v0.5.3`
+- Release status: prepared on `main`
 
 ## Latest Included Changes
 
 - Consolidated Bills, Splits, and UPN preview table chrome for more consistent row, header, footer, and empty-state styling
+- Stopped tracking local `docs/` notes and `file-examples/` bill samples; both folders are now ignored for local reference use
 - Moved the Splits total column to the end and simplified the Splits header labels/dividers
 - Added custom horizontal table scrollbars so wide tables preserve rounded table chrome
 - Added today-only inbox scan support with `0` as a valid scan window, while preserving calendar-date IMAP `SINCE` semantics for positive values

@@ -16,8 +16,9 @@ dist
 dist-ssr
 *.local
 
-# Local design references
-docs/design/
+# Local docs and sample bill files
+docs/
+file-examples/
 
 # Local agent/session config and private workflow notes
 .claude/
