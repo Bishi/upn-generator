@@ -1,12 +1,12 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::credentials::{self, MailCredentialKind};
 use crate::db::migrations;
 
-pub struct DbState(pub Mutex<Connection>);
+pub struct DbState(pub Arc<Mutex<Connection>>);
 
 // --- Building ---
 

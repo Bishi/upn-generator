@@ -132,6 +132,10 @@ function sameRecipients(left: string[], right: string[]) {
   return left.every((value, index) => value === right[index]);
 }
 
+function upnArchiveFilename(month: number, year: number) {
+  return `UPN_${year}_${String(month).padStart(2, "0")}.zip`;
+}
+
 function issueBlocks(issue: UpnValidationIssue, action: UpnValidationAction) {
   return issue.blocks.includes(action);
 }
@@ -723,9 +727,12 @@ function UpnPage() {
     if (!selected?.id) return;
     setDownloading(true);
     try {
-      const result = await downloadPeriodUpnPdfs(selected.id);
+      const result = await downloadPeriodUpnPdfs(
+        selected.id,
+        upnArchiveFilename(selected.month, selected.year),
+      );
       if (!result) return;
-      toast.success("PDFs saved", {
+      toast.success("PDF ZIP saved", {
         description: `${result.count} packet${result.count === 1 ? "" : "s"} exported.`,
       });
     } catch (e) {
@@ -924,7 +931,7 @@ function UpnPage() {
             ) : (
               <Download className="size-4" />
             )}
-            Download All PDFs
+            {downloading ? "Preparing ZIP..." : "Download All PDFs"}
           </Button>
           {hasManualDelivery ? (
             <Button
@@ -995,6 +1002,22 @@ function UpnPage() {
         </>
       }
     >
+      {downloading && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-background/70 backdrop-blur-sm">
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex min-w-72 flex-col items-center gap-3 rounded-md border border-border bg-popover px-6 py-5 text-popover-foreground shadow-pop"
+          >
+            <Loader2 className="size-6 animate-spin text-primary" />
+            <div className="text-sm font-semibold">Preparing PDF ZIP...</div>
+            <div className="text-center text-xs text-muted-foreground">
+              Keep the app open until this finishes.
+            </div>
+          </div>
+        </div>
+      )}
+
       {showUpnTable && (
         <SummaryStrip>
           <SummaryChip className="bg-success-soft text-success">

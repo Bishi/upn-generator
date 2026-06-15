@@ -170,6 +170,12 @@ export interface UpnPacketHash {
   error: string;
 }
 
+export interface UpnZipExportResult {
+  path: string;
+  count: number;
+  filenames: string[];
+}
+
 export interface UpnDeliveryApartmentRollup {
   apartment_id: number;
   apartment_label: string;

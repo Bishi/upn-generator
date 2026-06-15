@@ -1,28 +1,30 @@
-import { open } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
 import { ipc } from "@/lib/ipc";
-import type { EmailResult } from "@/lib/types";
+import type { EmailResult, UpnZipExportResult } from "@/lib/types";
 
-export type DownloadUpnResult = {
-  folder: string;
-  count: number;
-  paths: string[];
-};
+function waitForPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function ensureZipExtension(path: string) {
+  return path.toLowerCase().endsWith(".zip") ? path : `${path}.zip`;
+}
 
 export async function downloadPeriodUpnPdfs(
   billingPeriodId: number,
-): Promise<DownloadUpnResult | null> {
-  const folder = await open({
-    directory: true,
-    title: "Choose folder to save UPN PDFs",
+  defaultFilename: string,
+): Promise<UpnZipExportResult | null> {
+  const outputPath = await save({
+    title: "Save UPN PDF ZIP",
+    defaultPath: defaultFilename,
+    filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
   });
-  if (!folder || typeof folder !== "string") return null;
+  if (!outputPath) return null;
 
-  const paths = await ipc.saveAllUpns(billingPeriodId, folder);
-  return {
-    folder,
-    count: paths.length,
-    paths,
-  };
+  await waitForPaint();
+  return ipc.saveAllUpnsZip(billingPeriodId, ensureZipExtension(outputPath));
 }
 
 export function sendPeriodEmails(

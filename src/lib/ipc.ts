@@ -19,6 +19,7 @@ import type {
   UpnDeliveryRollup,
   UpnPacketHash,
   UpnPreSendValidation,
+  UpnZipExportResult,
 } from "./types";
 
 export const ipc = {
@@ -105,8 +106,8 @@ export const ipc = {
     invoke<string>("open_preview_upn", { billId, apartmentId }),
   openPreviewApartmentUpns: (billingPeriodId: number, apartmentId: number) =>
     invoke<string>("open_preview_apartment_upns", { billingPeriodId, apartmentId }),
-  saveAllUpns: (billingPeriodId: number, folderPath: string) =>
-    invoke<string[]>("save_all_upns", { billingPeriodId, folderPath }),
+  saveAllUpnsZip: (billingPeriodId: number, outputPath: string) =>
+    invoke<UpnZipExportResult>("save_all_upns_zip", { billingPeriodId, outputPath }),
   sendEmails: (billingPeriodId: number) =>
     invoke<EmailResult[]>("send_emails", { billingPeriodId }),
   markUpnPeriodDelivered: (billingPeriodId: number) =>

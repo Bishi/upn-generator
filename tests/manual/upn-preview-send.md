@@ -21,7 +21,9 @@
 - [ ] Open a single apartment preview and confirm a PDF is generated without an app error.
 - [ ] Confirm single-apartment previews remain available when validation only blocks delivery actions.
 - [ ] Confirm the preview opens through the system PDF viewer or reports a clear launch failure.
-- [ ] Download all PDFs and confirm one combined PDF packet is created for each apartment.
+- [ ] Download all PDFs and confirm the save dialog is pre-populated with a `.zip` filename for the selected month.
+- [ ] While Download All PDFs is preparing the export, confirm the page shows a loading overlay and blocks other clicks until the export completes or fails.
+- [ ] Open the exported ZIP and confirm it contains one combined PDF packet for each apartment.
 - [ ] Confirm Download All PDFs does not mark the month delivered or create delivery history.
 - [ ] Click Mark Delivered, cancel the confirmation prompt, and confirm the month remains undelivered.
 - [ ] Click Mark Delivered, accept the confirmation prompt, and confirm all current apartment packets are marked delivered.

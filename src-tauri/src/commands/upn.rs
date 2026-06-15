@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
@@ -116,6 +117,13 @@ struct CurrentPacketInfo {
 struct SavedUpnPacket {
     filename: String,
     pdf_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpnZipExportResult {
+    pub path: String,
+    pub count: usize,
+    pub filenames: Vec<String>,
 }
 
 const FORM_WIDTH_MM: f32 = 210.0;
@@ -2417,14 +2425,148 @@ fn test_smtp_connection_impl(
     Ok(())
 }
 
+fn write_u16_le(output: &mut Vec<u8>, value: u16) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32_le(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+fn checked_zip_u16(value: usize, label: &str) -> Result<u16, String> {
+    u16::try_from(value).map_err(|_| format!("{label} is too large for a ZIP archive."))
+}
+
+fn checked_zip_u32(value: usize, label: &str) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| format!("{label} is too large for a ZIP archive."))
+}
+
+fn create_stored_zip(packets: &[SavedUpnPacket]) -> Result<Vec<u8>, String> {
+    struct CentralDirectoryEntry {
+        filename: Vec<u8>,
+        crc32: u32,
+        size: u32,
+        local_header_offset: u32,
+    }
+
+    const LOCAL_FILE_HEADER_SIGNATURE: u32 = 0x0403_4b50;
+    const CENTRAL_DIRECTORY_SIGNATURE: u32 = 0x0201_4b50;
+    const END_OF_CENTRAL_DIRECTORY_SIGNATURE: u32 = 0x0605_4b50;
+    const VERSION_NEEDED: u16 = 20;
+    const STORED_METHOD: u16 = 0;
+    const DOS_TIME: u16 = 0;
+    const DOS_DATE: u16 = ((2026 - 1980) << 9) | (1 << 5) | 1;
+
+    if packets.is_empty() {
+        return Err("No UPN PDFs to export.".to_string());
+    }
+
+    let mut output = Vec::new();
+    let mut central_directory = Vec::new();
+
+    for packet in packets {
+        let filename = packet.filename.as_bytes().to_vec();
+        let filename_len = checked_zip_u16(filename.len(), "ZIP filename")?;
+        let size = checked_zip_u32(packet.pdf_bytes.len(), "UPN PDF")?;
+        let local_header_offset = checked_zip_u32(output.len(), "ZIP archive")?;
+        let crc32 = crc32fast::hash(&packet.pdf_bytes);
+
+        write_u32_le(&mut output, LOCAL_FILE_HEADER_SIGNATURE);
+        write_u16_le(&mut output, VERSION_NEEDED);
+        write_u16_le(&mut output, 0);
+        write_u16_le(&mut output, STORED_METHOD);
+        write_u16_le(&mut output, DOS_TIME);
+        write_u16_le(&mut output, DOS_DATE);
+        write_u32_le(&mut output, crc32);
+        write_u32_le(&mut output, size);
+        write_u32_le(&mut output, size);
+        write_u16_le(&mut output, filename_len);
+        write_u16_le(&mut output, 0);
+        output.extend_from_slice(&filename);
+        output.extend_from_slice(&packet.pdf_bytes);
+
+        central_directory.push(CentralDirectoryEntry {
+            filename,
+            crc32,
+            size,
+            local_header_offset,
+        });
+    }
+
+    let central_directory_offset = checked_zip_u32(output.len(), "ZIP archive")?;
+    for entry in &central_directory {
+        let filename_len = checked_zip_u16(entry.filename.len(), "ZIP filename")?;
+
+        write_u32_le(&mut output, CENTRAL_DIRECTORY_SIGNATURE);
+        write_u16_le(&mut output, VERSION_NEEDED);
+        write_u16_le(&mut output, VERSION_NEEDED);
+        write_u16_le(&mut output, 0);
+        write_u16_le(&mut output, STORED_METHOD);
+        write_u16_le(&mut output, DOS_TIME);
+        write_u16_le(&mut output, DOS_DATE);
+        write_u32_le(&mut output, entry.crc32);
+        write_u32_le(&mut output, entry.size);
+        write_u32_le(&mut output, entry.size);
+        write_u16_le(&mut output, filename_len);
+        write_u16_le(&mut output, 0);
+        write_u16_le(&mut output, 0);
+        write_u16_le(&mut output, 0);
+        write_u16_le(&mut output, 0);
+        write_u32_le(&mut output, 0);
+        write_u32_le(&mut output, entry.local_header_offset);
+        output.extend_from_slice(&entry.filename);
+    }
+
+    let central_directory_size = checked_zip_u32(
+        output.len() - central_directory_offset as usize,
+        "ZIP directory",
+    )?;
+    let entry_count = checked_zip_u16(central_directory.len(), "ZIP entry count")?;
+
+    write_u32_le(&mut output, END_OF_CENTRAL_DIRECTORY_SIGNATURE);
+    write_u16_le(&mut output, 0);
+    write_u16_le(&mut output, 0);
+    write_u16_le(&mut output, entry_count);
+    write_u16_le(&mut output, entry_count);
+    write_u32_le(&mut output, central_directory_size);
+    write_u32_le(&mut output, central_directory_offset);
+    write_u16_le(&mut output, 0);
+
+    Ok(output)
+}
+
+fn write_zip_file(output_path: &Path, zip_bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let mut output_file = std::fs::File::create(output_path).map_err(|e| e.to_string())?;
+    output_file.write_all(zip_bytes).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-pub fn save_all_upns(
-    db: State<DbState>,
+pub async fn save_all_upns_zip(
+    db: State<'_, DbState>,
     billing_period_id: i64,
-    folder_path: String,
-) -> Result<Vec<String>, String> {
+    output_path: String,
+) -> Result<UpnZipExportResult, String> {
+    let db = db.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        save_all_upns_zip_blocking(db, billing_period_id, output_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn save_all_upns_zip_blocking(
+    db: Arc<Mutex<rusqlite::Connection>>,
+    billing_period_id: i64,
+    output_path: String,
+) -> Result<UpnZipExportResult, String> {
     let (month, year) = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let conn = db.lock().map_err(|e| e.to_string())?;
         ensure_validation_allows(&conn, billing_period_id, ACTION_DOWNLOAD_ALL)?;
         conn.query_row(
             "SELECT month, year FROM billing_periods WHERE id=?1",
@@ -2435,7 +2577,7 @@ pub fn save_all_upns(
     };
 
     let apartments: Vec<(i64, String)> = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let conn = db.lock().map_err(|e| e.to_string())?;
         query_vec(
             &conn,
             "SELECT DISTINCT a.id, a.label
@@ -2453,7 +2595,7 @@ pub fn save_all_upns(
     let mut packets: Vec<SavedUpnPacket> = Vec::new();
     for (apt_id, apt_label) in &apartments {
         let items = {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let conn = db.lock().map_err(|e| e.to_string())?;
             load_apartment_upn_data(&conn, billing_period_id, *apt_id)?
         };
         let pdf_bytes = render_upn_pdf_batch(&items)?;
@@ -2480,13 +2622,15 @@ pub fn save_all_upns(
         });
     }
 
-    let mut saved: Vec<String> = Vec::new();
-    for packet in &packets {
-        let full_path = Path::new(&folder_path).join(&packet.filename);
-        std::fs::write(&full_path, &packet.pdf_bytes).map_err(|e| e.to_string())?;
-        saved.push(packet.filename.clone());
-    }
-    Ok(saved)
+    let zip_bytes = create_stored_zip(&packets)?;
+    let output_path = Path::new(&output_path);
+    write_zip_file(output_path, &zip_bytes)?;
+
+    Ok(UpnZipExportResult {
+        path: output_path.display().to_string(),
+        count: packets.len(),
+        filenames: packets.into_iter().map(|packet| packet.filename).collect(),
+    })
 }
 
 #[cfg(test)]
@@ -2740,5 +2884,47 @@ mod tests {
             safe_filename_component("Mrvar Jernej\\Dusan"),
             "Mrvar_JernejDusan"
         );
+    }
+
+    #[test]
+    fn create_stored_zip_contains_pdf_entries() {
+        let packets = vec![
+            SavedUpnPacket {
+                filename: "UPN_A_06_2026.pdf".to_string(),
+                pdf_bytes: b"%PDF-one".to_vec(),
+            },
+            SavedUpnPacket {
+                filename: "UPN_B_06_2026.pdf".to_string(),
+                pdf_bytes: b"%PDF-two".to_vec(),
+            },
+        ];
+
+        let archive = create_stored_zip(&packets).expect("zip archive");
+
+        assert_eq!(&archive[0..4], &[0x50, 0x4b, 0x03, 0x04]);
+        assert_eq!(
+            &archive[archive.len() - 22..archive.len() - 18],
+            &[0x50, 0x4b, 0x05, 0x06]
+        );
+        assert!(archive
+            .windows("UPN_A_06_2026.pdf".len())
+            .any(|window| window == b"UPN_A_06_2026.pdf"));
+        assert!(archive
+            .windows("UPN_B_06_2026.pdf".len())
+            .any(|window| window == b"UPN_B_06_2026.pdf"));
+    }
+
+    #[test]
+    fn write_zip_file_creates_missing_parent_directory() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let output_path = temp_dir
+            .path()
+            .join("missing")
+            .join("nested")
+            .join("upn.zip");
+
+        write_zip_file(&output_path, b"zip-body").expect("write zip");
+
+        assert_eq!(std::fs::read(output_path).expect("zip file"), b"zip-body");
     }
 }

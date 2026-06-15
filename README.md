@@ -152,7 +152,7 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 | Action | Description |
 |--------|-------------|
 | **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
-| **Download All PDFs** | Saves one combined UPN packet PDF per apartment to a folder of your choice for review or external use |
+| **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
 
