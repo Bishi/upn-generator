@@ -313,6 +313,57 @@ fn find_due_date(text: &str) -> String {
     String::new()
 }
 
+fn clamp_start_to_char_boundary(text: &str, mut index: usize) -> usize {
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn clamp_end_to_char_boundary(text: &str, mut index: usize) -> usize {
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+fn find_nearest_due_date(text: &str, anchor_start: usize, anchor_end: usize) -> String {
+    let patterns = [
+        r"(?i)rok\s+pla[Äc]ila:\s*\n?\s*(\d{2}\.\s*\d{2}\.\s*\d{4})",
+        r"(?i)zapadlost:\s*(\d{2}\.\d{2}\.\d{4})",
+        r"(?i)zapade:\s*\n?\s*(\d\s*\d\s*\.\s*\d\s*\d\s*\.\s*\d\s*\d\s*\d\s*\d)",
+        r"(?i)datum:\s*(\d{2}\.\d{2}\.\d{4})",
+    ];
+    let window_start = clamp_start_to_char_boundary(text, anchor_start.saturating_sub(1800));
+    let window_end = clamp_end_to_char_boundary(text, (anchor_end + 1200).min(text.len()));
+    let window = &text[window_start..window_end];
+    let mut best: Option<(usize, String)> = None;
+
+    for pattern in patterns {
+        let Ok(re) = Regex::new(pattern) else {
+            continue;
+        };
+        for caps in re.captures_iter(window) {
+            let Some(date) = caps.get(1) else {
+                continue;
+            };
+            let absolute_start = window_start + date.start();
+            let distance = if absolute_start < anchor_start {
+                anchor_start - absolute_start
+            } else {
+                absolute_start.saturating_sub(anchor_end)
+            };
+            let normalized = date.as_str().replace(' ', "").trim().to_string();
+            match &best {
+                Some((best_distance, _)) if *best_distance <= distance => {}
+                _ => best = Some((distance, normalized)),
+            }
+        }
+    }
+
+    best.map(|(_, date)| date).unwrap_or_default()
+}
+
 fn find_source_period_month_year(text: &str) -> Option<(i32, i32)> {
     let compact = text.replace(' ', "");
     let range_re = Regex::new(r"(\d{2})\.(\d{2})\.(\d{4})[-–](\d{2})\.(\d{2})\.(\d{4})").ok()?;
@@ -814,13 +865,8 @@ pub fn import_bill(
         )
     };
 
-    let parse_note = import_review_parse_note(
-        "",
-        amount_cents,
-        &creditor_iban,
-        &reference,
-        &due_date,
-    );
+    let parse_note =
+        import_review_parse_note("", amount_cents, &creditor_iban, &reference, &due_date);
     let status = if parse_note.is_empty() {
         "draft".to_string()
     } else {
@@ -950,12 +996,16 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             ("OTHR".to_string(), String::new())
         };
 
-        let before_start = m.start().saturating_sub(500);
-        let context = &text[before_start..after_end];
+        let before_start = clamp_start_to_char_boundary(text, m.start().saturating_sub(500));
+        let context_end = clamp_end_to_char_boundary(text, after_end);
+        let context = &text[before_start..context_end];
         let stub_offset_in_context = m.start() - before_start;
         let parsed_from_context =
             extract_upn_purpose_from_context(context, stub_offset_in_context, &purpose_code_re);
-        let mut due_date = find_due_date(context);
+        let mut due_date = find_nearest_due_date(text, m.start(), m.end());
+        if due_date.is_empty() {
+            due_date = find_due_date(context);
+        }
         // Fallback: date embedded in purpose text (e.g. "SCVE ... 16.02.2026")
         if due_date.is_empty() {
             if let Ok(date_re) = Regex::new(r"(\d{2}\.\d{2}\.\d{4})") {
@@ -1953,7 +2003,11 @@ mod tests {
 
     #[test]
     fn prepared_bill_preview_marks_missing_due_date_for_review() {
-        let providers = vec![test_provider(7, "SI56 0400 1004 9142 226", "JP VOKA SNAGA d.o.o.")];
+        let providers = vec![test_provider(
+            7,
+            "SI56 0400 1004 9142 226",
+            "JP VOKA SNAGA d.o.o.",
+        )];
         let mut bill = test_extracted_bill("SI56 0400 1004 9142 226");
         bill.due_date = String::new();
         let prepared = test_prepared(vec![bill]);
@@ -1964,6 +2018,21 @@ mod tests {
         assert_eq!(preview[0].status, "needs_review");
         assert!(preview[0].parse_note.contains("due date"));
         assert!(preview[0].parse_note.contains("Review this import"));
+    }
+
+    #[test]
+    fn upn_stub_finds_due_date_far_before_marker() {
+        let text = format!(
+            "JP VOKA SNAGA\nRok placila:\n15.06.2026\n{}***93,87\nSCVE komunalne storitve\nSI56 0400 1004 9142 226\nSI12 2000263445522\n",
+            "x".repeat(900)
+        );
+
+        let bills = parse_upn_stubs(&text);
+
+        assert_eq!(bills.len(), 1);
+        assert_eq!(bills[0].amount_cents, 9387);
+        assert_eq!(bills[0].reference, "SI12 2000263445522");
+        assert_eq!(bills[0].due_date, "15.06.2026");
     }
 
     #[test]
