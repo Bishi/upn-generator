@@ -40,6 +40,14 @@ function ReviewIndicator({ note }: { note: string }) {
   );
 }
 
+function MissingField() {
+  return <span className="font-semibold text-danger">missing</span>;
+}
+
+function TextFieldValue({ value }: { value: string }) {
+  return value.trim() ? <>{value}</> : <MissingField />;
+}
+
 function BillRow({
   bill,
   onSave,
@@ -170,8 +178,12 @@ function BillRow({
             </div>
           </div>
         </td>
-        <td className={`${billingTableCellClass} text-xs font-mono`}>{bill.reference}</td>
-        <td className={`${billingTableCellClass} text-sm`}>{bill.due_date}</td>
+        <td className={`${billingTableCellClass} text-xs font-mono`}>
+          <TextFieldValue value={bill.reference} />
+        </td>
+        <td className={`${billingTableCellClass} text-sm`}>
+          <TextFieldValue value={bill.due_date} />
+        </td>
         <td className={billingTableCellClass}>
           {bill.parse_note ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
@@ -882,7 +894,9 @@ function InboxImportDrawer({
                                 {attachmentCell}
                                 <td className="px-3 py-4 align-top">
                                   <div className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</div>
-                                  <div className="mt-1 truncate text-xs text-muted-foreground">{bill.reference || "No reference"} / {bill.due_date || "No due date"}</div>
+                                  <div className="mt-1 truncate text-xs text-muted-foreground">
+                                    <TextFieldValue value={bill.reference} /> / <TextFieldValue value={bill.due_date} />
+                                  </div>
                                   {bill.parse_note && (
                                     <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
                                   )}
