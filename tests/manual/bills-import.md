@@ -15,6 +15,7 @@
 - [ ] Change the picker year, close the picker without selecting a month, and confirm reopening starts on the current year.
 - [ ] Cancel a local bill import for a newly selected empty month and confirm no billing period row is created.
 - [ ] Import a combined PDF and confirm one row is created per detected configured provider.
+- [ ] Import or preview a combined PDF where one detected bill is missing a due date, and confirm that bill is marked for review on Bills instead of appearing as a clean auto-match.
 - [ ] Confirm importing, adding a manual bill, or fetching an inbox preview for a newly selected month creates and selects that billing period.
 - [ ] Select an empty month, reload the app, and confirm the same month remains selected.
 - [ ] Import a supported image file and confirm OCR text is parsed into provider, amount, reference, purpose, and due date fields.
