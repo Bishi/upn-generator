@@ -313,55 +313,14 @@ fn find_due_date(text: &str) -> String {
     String::new()
 }
 
-fn clamp_start_to_char_boundary(text: &str, mut index: usize) -> usize {
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn clamp_end_to_char_boundary(text: &str, mut index: usize) -> usize {
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
-}
-
-fn find_nearest_due_date(text: &str, anchor_start: usize, anchor_end: usize) -> String {
-    let patterns = [
-        r"(?i)rok\s+pla[Äc]ila:\s*\n?\s*(\d{2}\.\s*\d{2}\.\s*\d{4})",
-        r"(?i)zapadlost:\s*(\d{2}\.\d{2}\.\d{4})",
-        r"(?i)zapade:\s*\n?\s*(\d\s*\d\s*\.\s*\d\s*\d\s*\.\s*\d\s*\d\s*\d\s*\d)",
-        r"(?i)datum:\s*(\d{2}\.\d{2}\.\d{4})",
-    ];
-    let window_start = clamp_start_to_char_boundary(text, anchor_start.saturating_sub(1800));
-    let window_end = clamp_end_to_char_boundary(text, (anchor_end + 1200).min(text.len()));
-    let window = &text[window_start..window_end];
-    let mut best: Option<(usize, String)> = None;
-
-    for pattern in patterns {
-        let Ok(re) = Regex::new(pattern) else {
-            continue;
-        };
-        for caps in re.captures_iter(window) {
-            let Some(date) = caps.get(1) else {
-                continue;
-            };
-            let absolute_start = window_start + date.start();
-            let distance = if absolute_start < anchor_start {
-                anchor_start - absolute_start
-            } else {
-                absolute_start.saturating_sub(anchor_end)
-            };
-            let normalized = date.as_str().replace(' ', "").trim().to_string();
-            match &best {
-                Some((best_distance, _)) if *best_distance <= distance => {}
-                _ => best = Some((distance, normalized)),
-            }
-        }
-    }
-
-    best.map(|(_, date)| date).unwrap_or_default()
+fn first_date_in_text(text: &str) -> String {
+    Regex::new(r"(\d{2}\.\d{2}\.\d{4})")
+        .ok()
+        .and_then(|re| {
+            re.captures(text)
+                .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        })
+        .unwrap_or_default()
 }
 
 fn find_source_period_month_year(text: &str) -> Option<(i32, i32)> {
@@ -996,23 +955,20 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             ("OTHR".to_string(), String::new())
         };
 
-        let before_start = clamp_start_to_char_boundary(text, m.start().saturating_sub(500));
-        let context_end = clamp_end_to_char_boundary(text, after_end);
-        let context = &text[before_start..context_end];
+        let before_start = m.start().saturating_sub(500);
+        let context = &text[before_start..after_end];
         let stub_offset_in_context = m.start() - before_start;
         let parsed_from_context =
             extract_upn_purpose_from_context(context, stub_offset_in_context, &purpose_code_re);
-        let mut due_date = find_nearest_due_date(text, m.start(), m.end());
+        let mut due_date = parsed_from_context
+            .as_ref()
+            .map(|(_, context_text)| first_date_in_text(context_text))
+            .unwrap_or_default();
         if due_date.is_empty() {
             due_date = find_due_date(context);
         }
-        // Fallback: date embedded in purpose text (e.g. "SCVE ... 16.02.2026")
         if due_date.is_empty() {
-            if let Ok(date_re) = Regex::new(r"(\d{2}\.\d{2}\.\d{4})") {
-                if let Some(caps) = date_re.captures(&purpose_text) {
-                    due_date = caps.get(1).unwrap().as_str().to_string();
-                }
-            }
+            due_date = first_date_in_text(&purpose_text);
         }
 
         if !seen_ibans.insert(iban_norm.clone()) {
@@ -2021,18 +1977,34 @@ mod tests {
     }
 
     #[test]
-    fn upn_stub_finds_due_date_far_before_marker() {
-        let text = format!(
-            "JP VOKA SNAGA\nRok placila:\n15.06.2026\n{}***93,87\nSCVE komunalne storitve\nSI56 0400 1004 9142 226\nSI12 2000263445522\n",
-            "x".repeat(900)
-        );
+    fn upn_stub_uses_context_purpose_date_before_marker() {
+        let text = "
+Ravnanje z odpadki 05/2026
+***93,87
+SI56 0400 1004 9142 226
+SI12 2000263445522
+JP VOKA SNAGA d.o.o.
 
-        let bills = parse_upn_stubs(&text);
+SCVE Ravnanje z odpadki 05/2026 0040113249 15.06.2026
+***93,87
+SI56 0400 1004 9142 226
+SI12 2000263445522
 
-        assert_eq!(bills.len(), 1);
-        assert_eq!(bills[0].amount_cents, 9387);
-        assert_eq!(bills[0].reference, "SI12 2000263445522");
-        assert_eq!(bills[0].due_date, "15.06.2026");
+Energetika Ljubljana
+Rok plačila: 19.06.2026
+***249,06
+SI56 0292 4025 3764 022
+SI12 6330017789210
+";
+
+        let bills = parse_upn_stubs(text);
+
+        let waste = bills
+            .iter()
+            .find(|bill| bill.reference == "SI12 2000263445522")
+            .expect("waste bill");
+        assert_eq!(waste.purpose_text, "Ravnanje z odpadki 05/2026 0040113249 15.06.2026");
+        assert_eq!(waste.due_date, "15.06.2026");
     }
 
     #[test]
