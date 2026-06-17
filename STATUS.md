@@ -1,8 +1,8 @@
 # Status
 
-- Current version: `0.5.3`
-- Current tag: `v0.5.3`
-- Release status: prepared on `main`
+- Current version: `0.5.6`
+- Current tag: `v0.5.6`
+- Release status: prepared on `feat/validation-gates`
 
 ## Latest Included Changes
 
@@ -19,4 +19,8 @@
 - Fixed backup restore failures caused by foreign-key delete order and improved restore error display in the Data Backup card
 - Moved mail and inbox network commands off the UI thread and added SMTP timeout/timing diagnostics
 - Fixed blocked email safety attempts so they can be recorded without requiring an SMTP password
+- Added current-packet delivery rollups with manual Mark/Unmark Delivered confirmation while keeping PDF downloads as export-only actions
+- Added backend-owned UPN pre-send validation gates for blocking incorrect sends/delivery state
+- Added settings dirty-form discard confirmations and guarded settings tab switching
+- Restyled the UPN validation issue panel with grouped details and a calmer collapsed summary
 - Surfaced factory-reset warnings when saved Windows mail credentials cannot be deleted

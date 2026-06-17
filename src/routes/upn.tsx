@@ -246,12 +246,10 @@ function UpnValidationPanel({
     ? {
         iconChip: "bg-danger-soft",
         icon: "text-danger",
-        button: "bg-danger text-primary-foreground hover:bg-danger/90",
       }
     : {
         iconChip: "bg-warning-soft",
         icon: "text-warning",
-        button: "bg-warning text-warning-foreground hover:bg-warning/90",
       };
 
   return (
@@ -278,8 +276,9 @@ function UpnValidationPanel({
         <Button
           type="button"
           size="sm"
+          variant="outline"
           onClick={onToggle}
-          className={cn("shrink-0 gap-2", accentClasses.button)}
+          className="shrink-0 gap-2 bg-card"
           aria-expanded={expanded}
         >
           Review all
