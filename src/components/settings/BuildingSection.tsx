@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Check, Loader2, Save } from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Building } from "@/lib/types";
@@ -19,6 +19,16 @@ const emptyBuilding: Building = {
   postal_code: "",
 };
 
+function sameBuilding(left: Building | undefined, right: Building) {
+  return (
+    !!left &&
+    left.name === right.name &&
+    left.address === right.address &&
+    left.city === right.city &&
+    left.postal_code === right.postal_code
+  );
+}
+
 export function BuildingSection() {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
@@ -29,7 +39,6 @@ export function BuildingSection() {
   });
 
   const [form, setForm] = useState<Building>(emptyBuilding);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (building) setForm(building);
@@ -40,13 +49,14 @@ export function BuildingSection() {
     onSuccess: async (updated) => {
       queryClient.setQueryData(["building"], updated);
       await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     },
   });
 
+  const isDirty = !sameBuilding(building, form);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isDirty || mutation.isPending) return;
     mutation.mutate(form);
   };
 
@@ -100,15 +110,17 @@ export function BuildingSection() {
               />
             </div>
           </div>
-          <Button type="submit" disabled={mutation.isPending} className="gap-2">
+          <Button
+            type="submit"
+            disabled={!isDirty || mutation.isPending}
+            className={mutation.isPending ? "gap-2 disabled:opacity-100" : "gap-2"}
+          >
             {mutation.isPending ? (
               <Loader2 className="size-4 animate-spin" />
-            ) : saved ? (
-              <Check className="size-4" />
             ) : (
               <Save className="size-4" />
             )}
-            Save
+            Save changes
           </Button>
         </form>
       </CardContent>

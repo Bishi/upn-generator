@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Check, CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SmtpConfig } from "@/lib/types";
@@ -22,6 +22,19 @@ const emptyConfig: SmtpConfig = {
   password_configured: false,
 };
 
+function sameSmtpConfig(left: SmtpConfig | undefined, right: SmtpConfig) {
+  return (
+    !!left &&
+    left.host === right.host &&
+    left.port === right.port &&
+    left.username === right.username &&
+    left.from_email === right.from_email &&
+    left.use_tls === right.use_tls &&
+    left.allowlist_enabled === right.allowlist_enabled &&
+    left.recipient_allowlist === right.recipient_allowlist
+  );
+}
+
 export function SmtpSection() {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
@@ -33,7 +46,6 @@ export function SmtpSection() {
   const [form, setForm] = useState<SmtpConfig>(emptyConfig);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
   const [testStatus, setTestStatus] = useState<string | null>(null);
 
@@ -50,8 +62,6 @@ export function SmtpSection() {
       await queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
       await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
       setPassword("");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -67,10 +77,13 @@ export function SmtpSection() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isDirty || mutation.isPending) return;
     mutation.mutate(form);
   };
 
   if (isLoading) return <SettingsLoadingCard rows={5} />;
+
+  const isDirty = !sameSmtpConfig(data, form) || password.trim().length > 0;
 
   return (
     <Card className={`${SETTINGS_PANEL_WIDTH} overflow-hidden`}>
@@ -240,15 +253,17 @@ export function SmtpSection() {
               </p>
             )}
           </div>
-          <Button type="submit" disabled={mutation.isPending} className="gap-2">
+          <Button
+            type="submit"
+            disabled={!isDirty || mutation.isPending}
+            className={mutation.isPending ? "gap-2 disabled:opacity-100" : "gap-2"}
+          >
             {mutation.isPending ? (
               <Loader2 className="size-4 animate-spin" />
-            ) : saved ? (
-              <Check className="size-4" />
             ) : (
               <Save className="size-4" />
             )}
-            Save
+            Save changes
           </Button>
         </form>
       </CardContent>

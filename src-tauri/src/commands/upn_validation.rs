@@ -613,15 +613,6 @@ fn validate_recipients(
                 "Apartment has UPN packets but no email recipient.".to_string(),
                 send_only(),
             ));
-            issues.push(apartment_issue(
-                SEVERITY_WARNING,
-                "missing_recipient_manual_delivery",
-                packet.id,
-                &packet.label,
-                "Manual delivery or PDF export can proceed, but no email recipient is configured."
-                    .to_string(),
-                vec![],
-            ));
             continue;
         }
 
@@ -636,16 +627,6 @@ fn validate_recipients(
                     format!("Invalid email recipient: {original}"),
                     send_only(),
                 ));
-                issues.push(apartment_issue(
-                    SEVERITY_WARNING,
-                    "invalid_recipient_manual_delivery",
-                    packet.id,
-                    &packet.label,
-                    format!(
-                        "Manual delivery or PDF export can proceed, but this email is invalid: {original}"
-                    ),
-                    vec![],
-                ));
                 continue;
             }
 
@@ -657,16 +638,6 @@ fn validate_recipients(
                     &packet.label,
                     format!("Recipient is outside the enabled email safety allowlist: {original}"),
                     send_only(),
-                ));
-                issues.push(apartment_issue(
-                    SEVERITY_WARNING,
-                    "recipient_not_allowlisted_manual_delivery",
-                    packet.id,
-                    &packet.label,
-                    format!(
-                        "Manual delivery or PDF export can proceed, but this recipient is outside the email safety allowlist: {original}"
-                    ),
-                    vec![],
                 ));
             }
         }

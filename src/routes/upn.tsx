@@ -140,6 +140,18 @@ function issueBlocks(issue: UpnValidationIssue, action: UpnValidationAction) {
   return issue.blocks.includes(action);
 }
 
+function apartmentValidationBlocker(
+  validation: UpnPreSendValidation | null,
+  apartmentId: number,
+) {
+  return validation?.issues.find(
+    (issue) =>
+      issue.severity === "error" &&
+      issue.apartment_id === apartmentId &&
+      issueBlocks(issue, "send_emails"),
+  );
+}
+
 function actionDisabledTitle(
   validation: UpnPreSendValidation | null,
   canRun: boolean,
@@ -442,6 +454,7 @@ function ApartmentRows({
   contactEmail,
   splits,
   deliveryResult,
+  validationIssue,
   expanded,
   onToggle,
   onPreviewError,
@@ -453,6 +466,7 @@ function ApartmentRows({
   contactEmail: string;
   splits: SplitRow[];
   deliveryResult?: DeliveryRowResult;
+  validationIssue?: UpnValidationIssue;
   expanded: boolean;
   onToggle: () => void;
   onPreviewError: (message: string | null) => void;
@@ -551,9 +565,18 @@ function ApartmentRows({
               {statusLabel(deliveryResult.status)}
             </span>
           ) : hasRecipient ? (
-            <span className="inline-flex rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
-              ready
-            </span>
+            validationIssue ? (
+              <span
+                title={validationIssue.message}
+                className="inline-flex rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning"
+              >
+                blocked
+              </span>
+            ) : (
+              <span className="inline-flex rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
+                ready
+              </span>
+            )
           ) : (
             <span className="inline-flex rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
               hold
@@ -1020,10 +1043,10 @@ function UpnPage() {
 
       {showUpnTable && (
         <SummaryStrip>
-          <SummaryChip className="bg-success-soft text-success">
+          <SummaryChip className="bg-surface-3 text-muted-foreground">
             <CheckCircle2 className="size-3.5" />
-            {readyRecipientCount} ready
-            <span className="font-normal text-muted-foreground">recipient on file</span>
+            {readyRecipientCount} email
+            <span className="font-normal">on file</span>
           </SummaryChip>
           {missingRecipientCount > 0 && (
             <SummaryChip className="bg-warning-soft text-warning">
@@ -1122,6 +1145,7 @@ function UpnPage() {
                     runResultsByApartmentId.get(aptId) ??
                     historyResultsByApartmentId.get(aptId)
                   }
+                  validationIssue={apartmentValidationBlocker(validation, aptId)}
                   expanded={expandedApartmentId === aptId}
                   onToggle={() =>
                     setExpandedApartmentId((current) =>
