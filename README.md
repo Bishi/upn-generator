@@ -184,6 +184,8 @@ Five tabs for configuring the application:
 - **Delivery** - SMTP settings for sending emails and IMAP settings for manual read-only bill attachment import
 - **App** - Database-backed visual theme selector plus manual SQLite backup and restore
 
+Editable settings forms enable **Save changes** and **Discard** only when there are unsaved changes. Switching away from a dirty settings tab asks whether to stay or discard those changes before moving.
+
 ---
 
 ## Data & Privacy

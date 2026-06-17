@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { serviceIconFor } from "@/lib/service-icons";
@@ -12,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { cn } from "@/lib/utils";
+import type { SettingsDirtyRegistrar } from "@/components/settings/dirty-state";
 
 const PURPOSE_CODES = ["OTHR", "ENRG", "WTER", "SCVE", "SALA", "RENT", "COST"];
 
@@ -83,7 +85,11 @@ function providersEqual(a: Provider | null, b: Provider | null) {
   );
 }
 
-export function ProvidersSection() {
+export function ProvidersSection({
+  onDirtyEntry,
+}: {
+  onDirtyEntry?: SettingsDirtyRegistrar;
+}) {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
   const { data: providers = [], isLoading } = useQuery({
@@ -152,28 +158,10 @@ export function ProvidersSection() {
     },
   });
 
-  const handleSelect = (provider: Provider) => {
-    const draft = cloneProvider(provider);
-    setSelectedId(provider.id);
-    setEditing(draft);
-    setBaseline(cloneProvider(provider));
-    setIsNew(false);
-  };
+  const isDirty = !providersEqual(editing, baseline);
+  const hasUnsavedDraft = isNew || isDirty;
 
-  const handleNew = () => {
-    const draft = newProvider();
-    setSelectedId(null);
-    setEditing(draft);
-    setBaseline(cloneProvider(draft));
-    setIsNew(true);
-  };
-
-  const handleSave = (event: FormEvent) => {
-    event.preventDefault();
-    if (editing && !providersEqual(editing, baseline)) saveMutation.mutate(editing);
-  };
-
-  const handleDiscard = () => {
+  const discardChanges = useCallback(() => {
     if (isNew) {
       setIsNew(false);
       if (selectedProvider) {
@@ -187,9 +175,69 @@ export function ProvidersSection() {
       return;
     }
     if (baseline) setEditing(cloneProvider(baseline));
+  }, [baseline, isNew, selectedProvider]);
+
+  useEffect(() => {
+    if (!onDirtyEntry) return undefined;
+    return onDirtyEntry("providers", {
+      tab: "providers",
+      label: "Providers",
+      isDirty: !isLoading && hasUnsavedDraft,
+      isBusy: saveMutation.isPending || deleteMutation.isPending,
+      discard: discardChanges,
+    });
+  }, [
+    deleteMutation.isPending,
+    discardChanges,
+    hasUnsavedDraft,
+    isLoading,
+    onDirtyEntry,
+    saveMutation.isPending,
+  ]);
+
+  const confirmDiscard = async (message: string) => {
+    if (!hasUnsavedDraft) return true;
+    return confirm(message, {
+      title: "Discard Unsaved Changes",
+      kind: "warning",
+      okLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+    });
   };
 
-  const isDirty = !providersEqual(editing, baseline);
+  const handleSelect = async (provider: Provider) => {
+    if (saveMutation.isPending || deleteMutation.isPending) return;
+    if (provider.id === selectedId && !isNew) return;
+    const confirmed = await confirmDiscard("Discard unsaved provider changes?");
+    if (!confirmed) return;
+    const draft = cloneProvider(provider);
+    setSelectedId(provider.id);
+    setEditing(draft);
+    setBaseline(cloneProvider(provider));
+    setIsNew(false);
+  };
+
+  const handleNew = async () => {
+    if (saveMutation.isPending || deleteMutation.isPending) return;
+    const confirmed = await confirmDiscard("Discard unsaved provider changes?");
+    if (!confirmed) return;
+    const draft = newProvider();
+    setSelectedId(null);
+    setEditing(draft);
+    setBaseline(cloneProvider(draft));
+    setIsNew(true);
+  };
+
+  const handleSave = (event: FormEvent) => {
+    event.preventDefault();
+    if (editing && !providersEqual(editing, baseline)) saveMutation.mutate(editing);
+  };
+
+  const handleDiscard = async () => {
+    if (!hasUnsavedDraft || saveMutation.isPending || deleteMutation.isPending) return;
+    const confirmed = await confirmDiscard("Discard unsaved provider changes?");
+    if (confirmed) discardChanges();
+  };
 
   if (isLoading) return <SettingsLoadingCard className="max-w-none" rows={3} />;
 

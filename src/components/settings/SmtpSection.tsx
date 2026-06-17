@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
-import { CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SmtpConfig } from "@/lib/types";
@@ -10,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
+import type { SettingsDirtyRegistrar } from "@/components/settings/dirty-state";
 
 const emptyConfig: SmtpConfig = {
   host: "",
@@ -35,7 +37,11 @@ function sameSmtpConfig(left: SmtpConfig | undefined, right: SmtpConfig) {
   );
 }
 
-export function SmtpSection() {
+export function SmtpSection({
+  onDirtyEntry,
+}: {
+  onDirtyEntry?: SettingsDirtyRegistrar;
+}) {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
   const { data, isLoading } = useQuery({
@@ -81,9 +87,40 @@ export function SmtpSection() {
     mutation.mutate(form);
   };
 
-  if (isLoading) return <SettingsLoadingCard rows={5} />;
-
   const isDirty = !sameSmtpConfig(data, form) || password.trim().length > 0;
+
+  const discardChanges = useCallback(() => {
+    setForm(data ?? emptyConfig);
+    setPassword("");
+    setTestStatus(null);
+  }, [data]);
+
+  useEffect(() => {
+    if (!onDirtyEntry) return undefined;
+    return onDirtyEntry("smtp", {
+      tab: "delivery",
+      label: "Email settings",
+      isDirty: !isLoading && isDirty,
+      isBusy: mutation.isPending,
+      discard: discardChanges,
+    });
+  }, [discardChanges, isDirty, isLoading, mutation.isPending, onDirtyEntry]);
+
+  const handleDiscard = async () => {
+    if (!isDirty || mutation.isPending) return;
+    const confirmed = await confirm(
+      "Discard unsaved email settings changes?",
+      {
+        title: "Discard Unsaved Changes",
+        kind: "warning",
+        okLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+      },
+    );
+    if (confirmed) discardChanges();
+  };
+
+  if (isLoading) return <SettingsLoadingCard rows={5} />;
 
   return (
     <Card className={`${SETTINGS_PANEL_WIDTH} overflow-hidden`}>
@@ -253,18 +290,30 @@ export function SmtpSection() {
               </p>
             )}
           </div>
-          <Button
-            type="submit"
-            disabled={!isDirty || mutation.isPending}
-            className={mutation.isPending ? "gap-2 disabled:opacity-100" : "gap-2"}
-          >
-            {mutation.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            Save changes
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="submit"
+              disabled={!isDirty || mutation.isPending}
+              className={mutation.isPending ? "gap-2 disabled:opacity-100" : "gap-2"}
+            >
+              {mutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save changes
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!isDirty || mutation.isPending}
+              onClick={handleDiscard}
+              className="gap-2"
+            >
+              <X className="size-4" />
+              Discard
+            </Button>
+          </div>
         </form>
       </CardContent>
     </Card>

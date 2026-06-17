@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { CheckCircle2, Eye, EyeOff, Loader2, Save, ShieldAlert, Wifi } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Eye, EyeOff, Loader2, Save, ShieldAlert, Wifi, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { InboxConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
+import type { SettingsDirtyRegistrar } from "@/components/settings/dirty-state";
 
 const emptyConfig: InboxConfig = {
   host: "",
@@ -47,7 +49,11 @@ function sameInboxConfig(left: InboxConfig | undefined, right: InboxConfig) {
   );
 }
 
-export function InboxSection() {
+export function InboxSection({
+  onDirtyEntry,
+}: {
+  onDirtyEntry?: SettingsDirtyRegistrar;
+}) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["inbox_config"],
@@ -91,9 +97,40 @@ export function InboxSection() {
     saveMutation.mutate(form);
   };
 
-  if (isLoading) return <SettingsLoadingCard rows={6} />;
-
   const isDirty = !sameInboxConfig(data, form) || password.trim().length > 0;
+
+  const discardChanges = useCallback(() => {
+    setForm(data ? normalizeConfig(data) : emptyConfig);
+    setPassword("");
+    setTestStatus(null);
+  }, [data]);
+
+  useEffect(() => {
+    if (!onDirtyEntry) return undefined;
+    return onDirtyEntry("inbox", {
+      tab: "delivery",
+      label: "Inbox settings",
+      isDirty: !isLoading && isDirty,
+      isBusy: saveMutation.isPending,
+      discard: discardChanges,
+    });
+  }, [discardChanges, isDirty, isLoading, onDirtyEntry, saveMutation.isPending]);
+
+  const handleDiscard = async () => {
+    if (!isDirty || saveMutation.isPending) return;
+    const confirmed = await confirm(
+      "Discard unsaved inbox settings changes?",
+      {
+        title: "Discard Unsaved Changes",
+        kind: "warning",
+        okLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+      },
+    );
+    if (confirmed) discardChanges();
+  };
+
+  if (isLoading) return <SettingsLoadingCard rows={6} />;
 
   return (
     <Card className={`${SETTINGS_PANEL_WIDTH} overflow-hidden`}>
@@ -264,6 +301,16 @@ export function InboxSection() {
                 <Wifi className="size-4" />
               )}
               Test Connection
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!isDirty || saveMutation.isPending}
+              onClick={handleDiscard}
+              className="gap-2"
+            >
+              <X className="size-4" />
+              Discard
             </Button>
           </div>
           {(saveMutation.error || testStatus) && (

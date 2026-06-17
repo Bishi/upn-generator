@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Check, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
@@ -11,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { cn } from "@/lib/utils";
+import type { SettingsDirtyRegistrar } from "@/components/settings/dirty-state";
 
 const newApartment = (): Apartment => ({
   id: null,
@@ -50,7 +52,11 @@ function apartmentsEqual(a: Apartment | null, b: Apartment | null) {
   );
 }
 
-export function ApartmentsSection() {
+export function ApartmentsSection({
+  onDirtyEntry,
+}: {
+  onDirtyEntry?: SettingsDirtyRegistrar;
+}) {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
   const { data: apartments = [], isLoading } = useQuery({
@@ -123,7 +129,58 @@ export function ApartmentsSection() {
     },
   });
 
-  const handleSelect = (apartment: Apartment) => {
+  const isDirty = !apartmentsEqual(editing, baseline);
+  const hasUnsavedDraft = isNew || isDirty;
+
+  const discardChanges = useCallback(() => {
+    if (isNew) {
+      setIsNew(false);
+      if (selectedApartment) {
+        const draft = cloneApartment(selectedApartment);
+        setEditing(draft);
+        setBaseline(cloneApartment(selectedApartment));
+      } else {
+        setEditing(null);
+        setBaseline(null);
+      }
+      return;
+    }
+    if (baseline) setEditing(cloneApartment(baseline));
+  }, [baseline, isNew, selectedApartment]);
+
+  useEffect(() => {
+    if (!onDirtyEntry) return undefined;
+    return onDirtyEntry("apartments", {
+      tab: "apartments",
+      label: "Apartments",
+      isDirty: !isLoading && hasUnsavedDraft,
+      isBusy: saveMutation.isPending || deleteMutation.isPending,
+      discard: discardChanges,
+    });
+  }, [
+    deleteMutation.isPending,
+    discardChanges,
+    hasUnsavedDraft,
+    isLoading,
+    onDirtyEntry,
+    saveMutation.isPending,
+  ]);
+
+  const confirmDiscard = async (message: string) => {
+    if (!hasUnsavedDraft) return true;
+    return confirm(message, {
+      title: "Discard Unsaved Changes",
+      kind: "warning",
+      okLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+    });
+  };
+
+  const handleSelect = async (apartment: Apartment) => {
+    if (saveMutation.isPending || deleteMutation.isPending) return;
+    if (apartment.id === selectedId && !isNew) return;
+    const confirmed = await confirmDiscard("Discard unsaved apartment changes?");
+    if (!confirmed) return;
     const draft = cloneApartment(apartment);
     setSelectedId(apartment.id);
     setEditing(draft);
@@ -131,7 +188,10 @@ export function ApartmentsSection() {
     setIsNew(false);
   };
 
-  const handleNew = () => {
+  const handleNew = async () => {
+    if (saveMutation.isPending || deleteMutation.isPending) return;
+    const confirmed = await confirmDiscard("Discard unsaved apartment changes?");
+    if (!confirmed) return;
     const draft = {
       ...newApartment(),
       payer_address: building?.address ?? "",
@@ -149,23 +209,11 @@ export function ApartmentsSection() {
     if (editing && !apartmentsEqual(editing, baseline)) saveMutation.mutate(editing);
   };
 
-  const handleDiscard = () => {
-    if (isNew) {
-      setIsNew(false);
-      if (selectedApartment) {
-        const draft = cloneApartment(selectedApartment);
-        setEditing(draft);
-        setBaseline(cloneApartment(selectedApartment));
-      } else {
-        setEditing(null);
-        setBaseline(null);
-      }
-      return;
-    }
-    if (baseline) setEditing(cloneApartment(baseline));
+  const handleDiscard = async () => {
+    if (!hasUnsavedDraft || saveMutation.isPending || deleteMutation.isPending) return;
+    const confirmed = await confirmDiscard("Discard unsaved apartment changes?");
+    if (confirmed) discardChanges();
   };
-
-  const isDirty = !apartmentsEqual(editing, baseline);
 
   if (isLoading) return <SettingsLoadingCard className="max-w-none" rows={3} />;
 

@@ -38,6 +38,7 @@ Known caveats, environment details, or sample files used.
 | [splits.md](./splits.md) | Split calculation, provider split basis, manual split edits |
 | [upn-preview-send.md](./upn-preview-send.md) | UPN preview, download, email sending, delivery history, email safety |
 | [settings-delivery.md](./settings-delivery.md) | SMTP/IMAP settings, credential storage, test actions, allowlists |
+| [settings-unsaved-changes.md](./settings-unsaved-changes.md) | Settings dirty-form save/discard behavior and tab-switch confirmation |
 | [backup-restore.md](./backup-restore.md) | Manual SQLite backup/restore, password exclusion, theme/data preservation |
 | [factory-reset.md](./factory-reset.md) | Factory reset warnings, reseeded data, credential cleanup behavior |
 | [upn-visual-reference.md](./upn-visual-reference.md) | UPN form size, field geometry, visual comparison with `file-examples/` |
