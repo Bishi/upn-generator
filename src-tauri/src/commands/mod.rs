@@ -4,3 +4,4 @@ pub mod config;
 pub mod inbox;
 pub mod splits;
 pub mod upn;
+pub mod upn_validation;

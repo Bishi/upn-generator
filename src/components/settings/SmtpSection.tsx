@@ -1,7 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
-import { Check, CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Loader2, Save, Eye, EyeOff, Send, ShieldCheck, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
+import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SmtpConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
+import type { SettingsDirtyRegistrar } from "@/components/settings/dirty-state";
 
 const emptyConfig: SmtpConfig = {
   host: "",
@@ -21,8 +24,26 @@ const emptyConfig: SmtpConfig = {
   password_configured: false,
 };
 
-export function SmtpSection() {
+function sameSmtpConfig(left: SmtpConfig | undefined, right: SmtpConfig) {
+  return (
+    !!left &&
+    left.host === right.host &&
+    left.port === right.port &&
+    left.username === right.username &&
+    left.from_email === right.from_email &&
+    left.use_tls === right.use_tls &&
+    left.allowlist_enabled === right.allowlist_enabled &&
+    left.recipient_allowlist === right.recipient_allowlist
+  );
+}
+
+export function SmtpSection({
+  onDirtyEntry,
+}: {
+  onDirtyEntry?: SettingsDirtyRegistrar;
+}) {
   const queryClient = useQueryClient();
+  const snapshot = useWorkflowSnapshotContext();
   const { data, isLoading } = useQuery({
     queryKey: ["smtp_config"],
     queryFn: ipc.getSmtpConfig,
@@ -31,7 +52,6 @@ export function SmtpSection() {
   const [form, setForm] = useState<SmtpConfig>(emptyConfig);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
   const [testStatus, setTestStatus] = useState<string | null>(null);
 
@@ -44,11 +64,10 @@ export function SmtpSection() {
       await ipc.saveSmtpConfig(cfg);
       if (password) await ipc.saveSmtpPassword(password);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["smtp_config"] });
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
       setPassword("");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -64,7 +83,41 @@ export function SmtpSection() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isDirty || mutation.isPending) return;
     mutation.mutate(form);
+  };
+
+  const isDirty = !sameSmtpConfig(data, form) || password.trim().length > 0;
+
+  const discardChanges = useCallback(() => {
+    setForm(data ?? emptyConfig);
+    setPassword("");
+    setTestStatus(null);
+  }, [data]);
+
+  useEffect(() => {
+    if (!onDirtyEntry) return undefined;
+    return onDirtyEntry("smtp", {
+      tab: "delivery",
+      label: "Email settings",
+      isDirty: !isLoading && isDirty,
+      isBusy: mutation.isPending,
+      discard: discardChanges,
+    });
+  }, [discardChanges, isDirty, isLoading, mutation.isPending, onDirtyEntry]);
+
+  const handleDiscard = async () => {
+    if (!isDirty || mutation.isPending) return;
+    const confirmed = await confirm(
+      "Discard unsaved email settings changes?",
+      {
+        title: "Discard Unsaved Changes",
+        kind: "warning",
+        okLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+      },
+    );
+    if (confirmed) discardChanges();
   };
 
   if (isLoading) return <SettingsLoadingCard rows={5} />;
@@ -167,7 +220,7 @@ export function SmtpSection() {
                 <h4 className="text-sm font-semibold">Email safety</h4>
                 <p className="mt-1 text-xs text-muted-foreground">
                   When enabled, UPN emails are sent only to listed test recipients.
-                  Other recipients are skipped and recorded.
+                  Other recipients block the email send before any delivery event is recorded.
                 </p>
               </div>
             </div>
@@ -237,16 +290,30 @@ export function SmtpSection() {
               </p>
             )}
           </div>
-          <Button type="submit" disabled={mutation.isPending} className="gap-2">
-            {mutation.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : saved ? (
-              <Check className="size-4" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            Save
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="submit"
+              disabled={!isDirty || mutation.isPending}
+              className={mutation.isPending ? "gap-2 disabled:opacity-100" : "gap-2"}
+            >
+              {mutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save changes
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!isDirty || mutation.isPending}
+              onClick={handleDiscard}
+              className="gap-2"
+            >
+              <X className="size-4" />
+              Discard
+            </Button>
+          </div>
         </form>
       </CardContent>
     </Card>

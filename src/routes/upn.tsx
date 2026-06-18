@@ -3,6 +3,7 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  AlertCircle,
   AlertTriangle,
   Mail,
   Download,
@@ -13,6 +14,7 @@ import {
   ChevronDown,
   Loader2,
   RotateCcw,
+  ChevronRight,
 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -24,6 +26,9 @@ import type {
   UpnDeliveryApartmentRollup,
   UpnDeliveryEvent,
   UpnPacketHash,
+  UpnPreSendValidation,
+  UpnValidationAction,
+  UpnValidationIssue,
 } from "@/lib/types";
 import { formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
@@ -127,6 +132,196 @@ function normalizedRecipients(raw: string) {
 function sameRecipients(left: string[], right: string[]) {
   if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
+}
+
+function upnArchiveFilename(month: number, year: number) {
+  return `UPN_${year}_${String(month).padStart(2, "0")}.zip`;
+}
+
+function issueBlocks(issue: UpnValidationIssue, action: UpnValidationAction) {
+  return issue.blocks.includes(action);
+}
+
+function apartmentValidationBlocker(
+  validation: UpnPreSendValidation | null,
+  apartmentId: number,
+) {
+  return validation?.issues.find(
+    (issue) =>
+      issue.severity === "error" &&
+      issue.apartment_id === apartmentId &&
+      issueBlocks(issue, "send_emails"),
+  );
+}
+
+function actionDisabledTitle(
+  validation: UpnPreSendValidation | null,
+  canRun: boolean,
+  label: string,
+  checking: boolean,
+) {
+  if (!validation) {
+    return checking
+      ? "Checking UPN validation..."
+      : "UPN validation could not be loaded. Refresh or reselect the period.";
+  }
+  if (!canRun) return `${label} is blocked by UPN validation issues.`;
+  return undefined;
+}
+
+function UpnValidationPanel({
+  validation,
+  expanded,
+  onToggle,
+  checking,
+}: {
+  validation: UpnPreSendValidation | null;
+  expanded: boolean;
+  onToggle: () => void;
+  checking: boolean;
+}) {
+  if (!validation) {
+    return (
+      <div className="rounded-md border border-border bg-surface-2 px-4 py-3 text-sm text-muted-foreground">
+        {checking
+          ? "Checking UPN validation..."
+          : "UPN validation could not be loaded. Refresh or reselect the period before delivery actions."}
+      </div>
+    );
+  }
+
+  const allActionBlockers = validation.issues.filter(
+    (issue) =>
+      issue.severity === "error" &&
+      issueBlocks(issue, "send_emails") &&
+      issueBlocks(issue, "mark_delivered") &&
+      issueBlocks(issue, "download_all"),
+  );
+  const emailBlockers = validation.issues.filter(
+    (issue) =>
+      issue.severity === "error" &&
+      issueBlocks(issue, "send_emails") &&
+      !issueBlocks(issue, "mark_delivered") &&
+      !issueBlocks(issue, "download_all"),
+  );
+  const deliveryBlockers = validation.issues.filter(
+    (issue) =>
+      issue.severity === "error" &&
+      !issueBlocks(issue, "send_emails") &&
+      (issueBlocks(issue, "mark_delivered") || issueBlocks(issue, "download_all")),
+  );
+  const warnings = validation.issues.filter((issue) => issue.severity === "warning");
+  const hasIssues = validation.error_count > 0 || validation.warning_count > 0;
+  const issueGroups = [
+    { title: "Blocks all actions", tone: "danger" as const, issues: allActionBlockers },
+    { title: "Blocks email sending", tone: "danger" as const, issues: emailBlockers },
+    { title: "Blocks delivery/download", tone: "danger" as const, issues: deliveryBlockers },
+    { title: "Warnings", tone: "warning" as const, issues: warnings },
+  ].filter((group) => group.issues.length > 0);
+
+  if (!hasIssues) return null;
+
+  const hasBlockers = validation.error_count > 0;
+  const blockedActionLabels = [
+    allActionBlockers.length > 0 ? "all actions" : null,
+    emailBlockers.length > 0 ? "email" : null,
+    deliveryBlockers.length > 0 ? "delivery" : null,
+  ].filter(Boolean);
+  const consequence = hasBlockers
+    ? `${validation.error_count} issue${validation.error_count === 1 ? "" : "s"} blocking - ${
+        blockedActionLabels.length > 0 ? blockedActionLabels.join(" & ") : "UPN actions"
+      } on hold`
+    : `${validation.warning_count} warning${validation.warning_count === 1 ? "" : "s"} to review`;
+  const breakdown = [
+    allActionBlockers.length > 0 ? "blocks all actions" : null,
+    emailBlockers.length > 0
+      ? `email blocked for ${emailBlockers.length}`
+      : null,
+    deliveryBlockers.length > 0
+      ? `${deliveryBlockers.length} delivery issue${deliveryBlockers.length === 1 ? "" : "s"}`
+      : null,
+    warnings.length > 0 ? `${warnings.length} advisory` : null,
+  ].filter(Boolean).join(" · ");
+  const accentClasses = hasBlockers
+    ? {
+        iconChip: "bg-danger-soft",
+        icon: "text-danger",
+      }
+    : {
+        iconChip: "bg-warning-soft",
+        icon: "text-warning",
+      };
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-md border border-border bg-card shadow-card"
+    >
+      <div
+        className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className={cn(
+              "grid size-7 shrink-0 place-items-center rounded-md",
+              accentClasses.iconChip,
+            )}
+          >
+            <AlertCircle className={cn("size-4", accentClasses.icon)} />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-foreground">{consequence}</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">{breakdown}</div>
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onToggle}
+          className="shrink-0 gap-2 bg-card"
+          aria-expanded={expanded}
+        >
+          Review all
+          <ChevronRight
+            className={cn("size-4 transition-transform", expanded && "rotate-90")}
+          />
+        </Button>
+      </div>
+
+      {expanded && (
+        <div className="grid gap-3 bg-surface-2 p-4">
+          {issueGroups.map((group) => (
+            <div key={group.title} className="rounded-md border border-border bg-card">
+              <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 py-3">
+                <div
+                  className={cn(
+                    "text-sm font-semibold",
+                    group.tone === "danger" ? "text-danger" : "text-warning",
+                  )}
+                >
+                  {group.title}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {group.issues.length} affected
+                </div>
+              </div>
+              <div className="border-t border-border">
+                {group.issues.map((issue, index) => (
+                  <div
+                    key={`${issue.code}-${issue.bill_id ?? ""}-${issue.apartment_id ?? ""}-${index}`}
+                    className="grid gap-1 border-b border-border px-4 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(10rem,0.4fr)_minmax(0,1fr)] sm:gap-4"
+                  >
+                    <div className="font-medium text-foreground">{issue.label}</div>
+                    <div className="text-muted-foreground">{issue.message}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function aggregateHistoryEvents(
@@ -284,6 +479,7 @@ function ApartmentRows({
   contactEmail,
   splits,
   deliveryResult,
+  validationIssue,
   expanded,
   onToggle,
   onPreviewError,
@@ -295,6 +491,7 @@ function ApartmentRows({
   contactEmail: string;
   splits: SplitRow[];
   deliveryResult?: DeliveryRowResult;
+  validationIssue?: UpnValidationIssue;
   expanded: boolean;
   onToggle: () => void;
   onPreviewError: (message: string | null) => void;
@@ -393,9 +590,18 @@ function ApartmentRows({
               {statusLabel(deliveryResult.status)}
             </span>
           ) : hasRecipient ? (
-            <span className="inline-flex rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
-              ready
-            </span>
+            validationIssue ? (
+              <span
+                title={validationIssue.message}
+                className="inline-flex rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning"
+              >
+                blocked
+              </span>
+            ) : (
+              <span className="inline-flex rounded-md bg-success-soft px-2 py-1 text-xs font-semibold text-success">
+                ready
+              </span>
+            )
           ) : (
             <span className="inline-flex rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
               hold
@@ -474,6 +680,11 @@ function UpnPage() {
   const loadRequestRef = useRef(0);
   const lastSnapshotErrorRef = useRef<string | null>(null);
   const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
+  const [validationExpanded, setValidationExpanded] = useState(false);
+
+  useEffect(() => {
+    setValidationExpanded(false);
+  }, [selected?.id]);
 
   const setPageError = useCallback((message: string | null) => {
     if (!message) return;
@@ -564,9 +775,12 @@ function UpnPage() {
     if (!selected?.id) return;
     setDownloading(true);
     try {
-      const result = await downloadPeriodUpnPdfs(selected.id);
+      const result = await downloadPeriodUpnPdfs(
+        selected.id,
+        upnArchiveFilename(selected.month, selected.year),
+      );
       if (!result) return;
-      toast.success("PDFs saved", {
+      toast.success("PDF ZIP saved", {
         description: `${result.count} packet${result.count === 1 ? "" : "s"} exported.`,
       });
     } catch (e) {
@@ -578,8 +792,11 @@ function UpnPage() {
 
   const markDelivered = async () => {
     if (!selected?.id) return;
+    const warningCount = snapshot.selectedPreSendValidation?.warning_count ?? 0;
     const confirmed = await confirm(
-      "Mark this billing period as delivered? This will count all current UPN packets as delivered.",
+      warningCount > 0
+        ? `Mark this billing period as delivered? This will count all current UPN packets as delivered. There ${warningCount === 1 ? "is" : "are"} ${warningCount} validation warning${warningCount === 1 ? "" : "s"} to review.`
+        : "Mark this billing period as delivered? This will count all current UPN packets as delivered.",
       {
         title: "Mark Delivered",
         kind: "warning",
@@ -722,6 +939,16 @@ function UpnPage() {
     deliveryRollup?.complete ??
     (deliveryPacketCount > 0 && snapshot.selectedStatus.sent);
   const hasManualDelivery = (deliveryRollup?.manual_delivered_count ?? 0) > 0;
+  const validation = snapshot.selectedPreSendValidation;
+  const validationReady = !!validation;
+  const canDownloadAll = validation?.can_download_all ?? false;
+  const canMarkDelivered = validation?.can_mark_delivered ?? false;
+  const canSendEmails = validation?.can_send_emails ?? false;
+  const validationBlocked =
+    validation != null &&
+    (!validation.can_download_all ||
+      !validation.can_mark_delivered ||
+      !validation.can_send_emails);
 
   return (
     <BillingPageShell
@@ -732,14 +959,27 @@ function UpnPage() {
           <Button
             variant="outline"
             onClick={downloadAll}
-            disabled={!selected?.id || snapshot.loading || splits.length === 0 || downloading}
+            title={actionDisabledTitle(
+              validation,
+              canDownloadAll,
+              "Download All PDFs",
+              snapshot.loading,
+            )}
+            disabled={
+              !selected?.id ||
+              snapshot.loading ||
+              splits.length === 0 ||
+              downloading ||
+              !validationReady ||
+              !canDownloadAll
+            }
           >
             {downloading ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <Download className="size-4" />
             )}
-            Download All PDFs
+            {downloading ? "Preparing ZIP..." : "Download All PDFs"}
           </Button>
           {hasManualDelivery ? (
             <Button
@@ -760,8 +1000,19 @@ function UpnPage() {
             <Button
               variant="outline"
               onClick={markDelivered}
+              title={actionDisabledTitle(
+                validation,
+                canMarkDelivered,
+                "Mark Delivered",
+                snapshot.loading,
+              )}
               disabled={
-                !selected?.id || snapshot.loading || splits.length === 0 || markingDelivered
+                !selected?.id ||
+                snapshot.loading ||
+                splits.length === 0 ||
+                markingDelivered ||
+                !validationReady ||
+                !canMarkDelivered
               }
             >
               {markingDelivered ? (
@@ -774,7 +1025,20 @@ function UpnPage() {
           )}
           <Button
             onClick={sendEmails}
-            disabled={!selected?.id || snapshot.loading || splits.length === 0 || sending}
+            title={actionDisabledTitle(
+              validation,
+              canSendEmails,
+              "Send All Emails",
+              snapshot.loading,
+            )}
+            disabled={
+              !selected?.id ||
+              snapshot.loading ||
+              splits.length === 0 ||
+              sending ||
+              !validationReady ||
+              !canSendEmails
+            }
           >
             {sending ? (
               <Loader2 className="size-4 animate-spin" />
@@ -786,12 +1050,28 @@ function UpnPage() {
         </>
       }
     >
+      {downloading && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-background/70 backdrop-blur-sm">
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex min-w-72 flex-col items-center gap-3 rounded-md border border-border bg-popover px-6 py-5 text-popover-foreground shadow-pop"
+          >
+            <Loader2 className="size-6 animate-spin text-primary" />
+            <div className="text-sm font-semibold">Preparing PDF ZIP...</div>
+            <div className="text-center text-xs text-muted-foreground">
+              Keep the app open until this finishes.
+            </div>
+          </div>
+        </div>
+      )}
+
       {showUpnTable && (
         <SummaryStrip>
-          <SummaryChip className="bg-success-soft text-success">
+          <SummaryChip className="bg-surface-3 text-muted-foreground">
             <CheckCircle2 className="size-3.5" />
-            {readyRecipientCount} ready
-            <span className="font-normal text-muted-foreground">recipient on file</span>
+            {readyRecipientCount} email
+            <span className="font-normal">on file</span>
           </SummaryChip>
           {missingRecipientCount > 0 && (
             <SummaryChip className="bg-warning-soft text-warning">
@@ -816,7 +1096,23 @@ function UpnPage() {
               {deliveryDeliveredCount}/{deliveryPacketCount} delivered
             </SummaryChip>
           )}
+          {validationBlocked && (
+            <SummaryChip className="bg-danger-soft text-danger">
+              <AlertTriangle className="size-3.5" />
+              {validation.error_count} validation
+              <span className="font-normal">issue{validation.error_count === 1 ? "" : "s"}</span>
+            </SummaryChip>
+          )}
         </SummaryStrip>
+      )}
+
+      {selected?.id && !snapshot.loading && (
+        <UpnValidationPanel
+          validation={validation}
+          expanded={validationExpanded}
+          onToggle={() => setValidationExpanded((current) => !current)}
+          checking={snapshot.loading}
+        />
       )}
 
       {!selected && (
@@ -874,6 +1170,7 @@ function UpnPage() {
                     runResultsByApartmentId.get(aptId) ??
                     historyResultsByApartmentId.get(aptId)
                   }
+                  validationIssue={apartmentValidationBlocker(validation, aptId)}
                   expanded={expandedApartmentId === aptId}
                   onToggle={() =>
                     setExpandedApartmentId((current) =>

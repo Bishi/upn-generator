@@ -84,6 +84,10 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
     : EMPTY_PERIOD_STATUS;
   const billsReady = selectedStatus.bills;
   const splitsReady = selectedStatus.splits;
+  const validationErrorCount =
+    snapshot.selectedPreSendValidation?.error_count ??
+    selectedStatus.validationErrorCount ??
+    0;
   const routeStage = location.pathname.includes("/splits")
     ? "splits"
     : location.pathname.includes("/upn")
@@ -135,14 +139,20 @@ export function WorkflowContextBar({ snapshot }: WorkflowContextBarProps) {
     {
       label: "Send UPNs",
       detail: selectedStatus.packetCount > 0
-        ? `${selectedStatus.deliveredCount}/${selectedStatus.packetCount} delivered`
+        ? validationErrorCount > 0
+          ? `Blocked: ${validationErrorCount} validation issue${validationErrorCount === 1 ? "" : "s"}`
+          : `${selectedStatus.deliveredCount}/${selectedStatus.packetCount} delivered`
         : splitsReady
-          ? `${new Set(snapshot.splits.map((split) => split.apartment_id)).size} packets ready`
+          ? validationErrorCount > 0
+            ? `Blocked: ${validationErrorCount} validation issue${validationErrorCount === 1 ? "" : "s"}`
+            : `${new Set(snapshot.splits.map((split) => split.apartment_id)).size} packets ready`
           : "Waiting for splits",
       state: !splitsReady
         ? "blocked"
         : selectedStatus.sent
           ? "done"
+          : validationErrorCount > 0
+            ? "blocked"
           : routeStage === "upn"
             ? "now"
             : "todo",
@@ -272,11 +282,13 @@ function PeriodPicker({
               ? periodStatuses.get(period.id) ?? EMPTY_PERIOD_STATUS
               : EMPTY_PERIOD_STATUS;
           const isSelected = selected?.year === selectedYear && selected.month === month;
+          const isClosed = status.sent;
 
           return (
             <button
               key={month}
               type="button"
+              title={isClosed ? `${monthName} ${selectedYear} is closed` : undefined}
               onClick={() => onSelectMonth(month)}
               className={cn(
                 "flex min-h-14 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-2 py-2 text-xs transition-colors",
@@ -286,10 +298,23 @@ function PeriodPicker({
               )}
             >
               <span className="font-semibold">{monthName}</span>
-              <span className="flex gap-1">
-                <StatusDot active={status.bills} selected={isSelected} />
-                <StatusDot active={status.splits} selected={isSelected} />
-              </span>
+              {isClosed ? (
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                    isSelected
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-success-soft text-success",
+                  )}
+                >
+                  Closed
+                </span>
+              ) : (
+                <span className="flex gap-1">
+                  <StatusDot active={status.bills} selected={isSelected} />
+                  <StatusDot active={status.splits} selected={isSelected} />
+                </span>
+              )}
             </button>
           );
         })}

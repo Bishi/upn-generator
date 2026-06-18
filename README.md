@@ -95,7 +95,7 @@ Choose the app theme. **Refined** is the default and the polished production dir
 
 ### Settings -> App -> Data
 
-Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme.
+Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme. While backup or restore is running, the app shows a loading overlay and temporarily blocks other clicks.
 
 Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, saved SMTP and inbox passwords are not included in backups. Existing Windows Credential Manager passwords are kept and reused only when the restored username still matches; otherwise enter the password again in **Settings -> Delivery**.
 
@@ -107,7 +107,7 @@ Use **Restore Backup** to replace the current app data with a previously saved b
 
 Go to the **Bills** page.
 
-Use the month picker to choose the billing month. Years and months can be browsed directly; the app creates the underlying billing period only when you import or add bills for a month.
+Use the month picker to choose the billing month. Years and months can be browsed directly; the app creates the underlying billing period only when you import or add bills for a month. Months with all current UPN packets delivered are marked as closed in the picker.
 
 ### Step 2 - Import bills
 
@@ -147,11 +147,12 @@ Individual amounts can be manually adjusted by clicking a cell.
 Go to the **UPN** page and select the billing period.
 
 Each apartment card shows its line items and the total amount due.
+Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. Warnings can be reviewed from the same panel, but do not stop delivery actions.
 
 | Action | Description |
 |--------|-------------|
 | **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
-| **Download All PDFs** | Saves one combined UPN packet PDF per apartment to a folder of your choice for review or external use |
+| **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
 
@@ -182,6 +183,8 @@ Five tabs for configuring the application:
 - **Providers** - Utility providers with IBANs, purpose text templates, and split basis rules (`People`, `m2`, or `Equal`)
 - **Delivery** - SMTP settings for sending emails and IMAP settings for manual read-only bill attachment import
 - **App** - Database-backed visual theme selector plus manual SQLite backup and restore
+
+Editable settings forms enable **Save changes** and **Discard** only when there are unsaved changes. Switching away from a dirty settings tab asks whether to stay or discard those changes before moving.
 
 ---
 
@@ -219,7 +222,7 @@ Make sure a PDF viewer is installed (for example Adobe Acrobat or Microsoft Edge
 
 Check the SMTP settings under **Settings -> Delivery**. For Gmail, you must use an **App Password** - your regular account password will be rejected.
 
-If rows show **blocked**, the Email safety allowlist is enabled and the recipient is not listed. Add the test recipient to the allowlist or turn the allowlist off when you are ready to send to tenants.
+If the validation panel reports an email safety blocker, the recipient is not listed while the allowlist is enabled. Add the test recipient to the allowlist or turn the allowlist off when you are ready to send to tenants. Pre-send validation stops the send before any SMTP connection or delivery event is created.
 
 **Inbox import not connecting**
 

@@ -21,13 +21,14 @@ use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
     generate_upn_pdf, get_upn_delivery_events, get_upn_delivery_rollup, get_upn_packet_hashes,
     mark_upn_period_delivered, open_preview_apartment_upns, open_preview_upn, preview_upn,
-    save_all_upns, save_smtp_password, send_emails, test_smtp_connection,
+    save_all_upns_zip, save_smtp_password, send_emails, test_smtp_connection,
     unmark_upn_period_delivered,
 };
+use commands::upn_validation::validate_upn_pre_send;
 use db::migrations;
 use rusqlite::Connection;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 fn db_path() -> PathBuf {
     if let Some(path) = std::env::var_os("UPN_GENERATOR_DB_PATH") {
@@ -54,7 +55,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(DbState(Mutex::new(conn)))
+        .manage(DbState(Arc::new(Mutex::new(conn))))
         .manage(InboxPreviewState::default())
         .invoke_handler(tauri::generate_handler![
             // Backup
@@ -101,13 +102,14 @@ pub fn run() {
             preview_upn,
             open_preview_upn,
             open_preview_apartment_upns,
-            save_all_upns,
+            save_all_upns_zip,
             send_emails,
             mark_upn_period_delivered,
             unmark_upn_period_delivered,
             get_upn_delivery_events,
             get_upn_delivery_rollup,
             get_upn_packet_hashes,
+            validate_upn_pre_send,
             test_smtp_connection,
             save_smtp_password,
         ])

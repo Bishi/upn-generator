@@ -313,6 +313,16 @@ fn find_due_date(text: &str) -> String {
     String::new()
 }
 
+fn first_date_in_text(text: &str) -> String {
+    Regex::new(r"(\d{2}\.\d{2}\.\d{4})")
+        .ok()
+        .and_then(|re| {
+            re.captures(text)
+                .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        })
+        .unwrap_or_default()
+}
+
 fn find_source_period_month_year(text: &str) -> Option<(i32, i32)> {
     let compact = text.replace(' ', "");
     let range_re = Regex::new(r"(\d{2})\.(\d{2})\.(\d{4})[-–](\d{2})\.(\d{2})\.(\d{4})").ok()?;
@@ -345,6 +355,61 @@ fn find_source_period_month_year(text: &str) -> Option<(i32, i32)> {
         _ => return None,
     };
     Some((month, year))
+}
+
+fn missing_payment_field_note(
+    amount_cents: i64,
+    creditor_iban: &str,
+    reference: &str,
+    due_date: &str,
+) -> String {
+    let mut missing = Vec::new();
+    if amount_cents <= 0 {
+        missing.push("amount");
+    }
+    if creditor_iban.trim().is_empty() {
+        missing.push("creditor IBAN");
+    }
+    if reference.trim().is_empty() {
+        missing.push("reference");
+    }
+    if due_date.trim().is_empty() {
+        missing.push("due date");
+    }
+
+    if missing.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "Missing required payment field{}: {}. Review this import before calculating splits or generating UPNs.",
+        if missing.len() == 1 { "" } else { "s" },
+        missing.join(", ")
+    )
+}
+
+fn append_parse_note(existing: &str, additional: &str) -> String {
+    let existing = existing.trim();
+    let additional = additional.trim();
+    match (existing.is_empty(), additional.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => existing.to_string(),
+        (true, false) => additional.to_string(),
+        (false, false) => format!("{existing} {additional}"),
+    }
+}
+
+fn import_review_parse_note(
+    existing_note: &str,
+    amount_cents: i64,
+    creditor_iban: &str,
+    reference: &str,
+    due_date: &str,
+) -> String {
+    append_parse_note(
+        existing_note,
+        &missing_payment_field_note(amount_cents, creditor_iban, reference, due_date),
+    )
 }
 
 fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
@@ -759,6 +824,14 @@ pub fn import_bill(
         )
     };
 
+    let parse_note =
+        import_review_parse_note("", amount_cents, &creditor_iban, &reference, &due_date);
+    let status = if parse_note.is_empty() {
+        "draft".to_string()
+    } else {
+        "needs_review".to_string()
+    };
+
     // Insert into DB
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -766,7 +839,7 @@ pub fn import_bill(
          (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
           creditor_address, creditor_city, creditor_postal_code, reference, due_date,
           purpose_code, purpose_text, invoice_number, parse_note, status, source_filename)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'','draft',?15)",
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
         params![
             billing_period_id,
             provider_id,
@@ -782,6 +855,8 @@ pub fn import_bill(
             purpose_code,
             purpose_text,
             invoice_number,
+            parse_note,
+            status,
             filename
         ],
     )
@@ -806,8 +881,8 @@ pub fn import_bill(
         purpose_code,
         purpose_text,
         invoice_number,
-        parse_note: String::new(),
-        status: "draft".to_string(),
+        parse_note,
+        status,
         source_filename: filename,
         provider_name,
     })
@@ -885,14 +960,15 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
         let stub_offset_in_context = m.start() - before_start;
         let parsed_from_context =
             extract_upn_purpose_from_context(context, stub_offset_in_context, &purpose_code_re);
-        let mut due_date = find_due_date(context);
-        // Fallback: date embedded in purpose text (e.g. "SCVE ... 16.02.2026")
+        let mut due_date = parsed_from_context
+            .as_ref()
+            .map(|(_, context_text)| first_date_in_text(context_text))
+            .unwrap_or_default();
         if due_date.is_empty() {
-            if let Ok(date_re) = Regex::new(r"(\d{2}\.\d{2}\.\d{4})") {
-                if let Some(caps) = date_re.captures(&purpose_text) {
-                    due_date = caps.get(1).unwrap().as_str().to_string();
-                }
-            }
+            due_date = find_due_date(context);
+        }
+        if due_date.is_empty() {
+            due_date = first_date_in_text(&purpose_text);
         }
 
         if !seen_ibans.insert(iban_norm.clone()) {
@@ -1391,7 +1467,14 @@ pub(crate) fn preview_prepared_bills(
         .iter()
         .map(|eb| {
             let provider = provider_by_iban.get(&eb.iban_norm).copied();
-            let status = if eb.parse_note.is_empty() {
+            let parse_note = import_review_parse_note(
+                &eb.parse_note,
+                eb.amount_cents,
+                &eb.iban_norm,
+                &eb.reference,
+                &eb.due_date,
+            );
+            let status = if parse_note.is_empty() {
                 "draft".to_string()
             } else {
                 "needs_review".to_string()
@@ -1424,7 +1507,7 @@ pub(crate) fn preview_prepared_bills(
                 due_date: eb.due_date.clone(),
                 invoice_number: eb.invoice_number.clone(),
                 purpose_text,
-                parse_note: eb.parse_note.clone(),
+                parse_note,
                 status,
             }
         })
@@ -1653,11 +1736,6 @@ pub(crate) fn save_prepared_multi_bill_import(
 
     for eb in prepared.extracted {
         let provider = provider_by_iban.get(&eb.iban_norm).copied();
-        let status = if eb.parse_note.is_empty() {
-            "draft".to_string()
-        } else {
-            "needs_review".to_string()
-        };
 
         let (
             provider_id,
@@ -1705,6 +1783,19 @@ pub(crate) fn save_prepared_multi_bill_import(
             String::new()
         };
 
+        let parse_note = import_review_parse_note(
+            &eb.parse_note,
+            eb.amount_cents,
+            &eb.iban_norm,
+            &eb.reference,
+            &eb.due_date,
+        );
+        let status = if parse_note.is_empty() {
+            "draft".to_string()
+        } else {
+            "needs_review".to_string()
+        };
+
         conn.execute(
             "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
              creditor_name, creditor_iban, creditor_address, creditor_city,
@@ -1725,7 +1816,7 @@ pub(crate) fn save_prepared_multi_bill_import(
                 purpose_code,
                 purpose_text,
                 eb.invoice_number,
-                eb.parse_note,
+                parse_note,
                 status,
                 prepared.filename,
             ],
@@ -1746,10 +1837,10 @@ pub(crate) fn save_prepared_multi_bill_import(
                 eb.amount_cents,
                 eb.reference,
                 status,
-                if eb.parse_note.is_empty() {
+                if parse_note.is_empty() {
                     "(empty)"
                 } else {
-                    eb.parse_note.as_str()
+                    parse_note.as_str()
                 }
             ));
         }
@@ -1769,7 +1860,7 @@ pub(crate) fn save_prepared_multi_bill_import(
             purpose_code,
             purpose_text,
             invoice_number: eb.invoice_number,
-            parse_note: eb.parse_note,
+            parse_note,
             status,
             source_filename: prepared.filename.clone(),
             provider_name: provider.map(|p| p.name.clone()),
@@ -1856,6 +1947,64 @@ mod tests {
         );
 
         assert_eq!(prepared.detected_source_period(), None);
+    }
+
+    #[test]
+    fn import_review_note_reports_missing_due_date() {
+        let note = import_review_parse_note("", 9387, "SI560400100489142226", "SI12 123", "");
+
+        assert!(note.contains("Missing required payment field: due date"));
+        assert!(note.contains("Review this import"));
+    }
+
+    #[test]
+    fn prepared_bill_preview_marks_missing_due_date_for_review() {
+        let providers = vec![test_provider(
+            7,
+            "SI56 0400 1004 9142 226",
+            "JP VOKA SNAGA d.o.o.",
+        )];
+        let mut bill = test_extracted_bill("SI56 0400 1004 9142 226");
+        bill.due_date = String::new();
+        let prepared = test_prepared(vec![bill]);
+
+        let preview = preview_prepared_bills(&prepared, &providers);
+
+        assert_eq!(preview.len(), 1);
+        assert_eq!(preview[0].status, "needs_review");
+        assert!(preview[0].parse_note.contains("due date"));
+        assert!(preview[0].parse_note.contains("Review this import"));
+    }
+
+    #[test]
+    fn upn_stub_uses_context_purpose_date_before_marker() {
+        let text = "
+Ravnanje z odpadki 05/2026
+***93,87
+SI56 0400 1004 9142 226
+SI12 2000263445522
+JP VOKA SNAGA d.o.o.
+
+SCVE Ravnanje z odpadki 05/2026 0040113249 15.06.2026
+***93,87
+SI56 0400 1004 9142 226
+SI12 2000263445522
+
+Energetika Ljubljana
+Rok plačila: 19.06.2026
+***249,06
+SI56 0292 4025 3764 022
+SI12 6330017789210
+";
+
+        let bills = parse_upn_stubs(text);
+
+        let waste = bills
+            .iter()
+            .find(|bill| bill.reference == "SI12 2000263445522")
+            .expect("waste bill");
+        assert_eq!(waste.purpose_text, "Ravnanje z odpadki 05/2026 0040113249 15.06.2026");
+        assert_eq!(waste.due_date, "15.06.2026");
     }
 
     #[test]
@@ -2151,11 +2300,6 @@ pub fn import_bills(
 
     for eb in extracted {
         let provider = provider_by_iban.get(&eb.iban_norm).copied();
-        let status = if eb.parse_note.is_empty() {
-            "draft".to_string()
-        } else {
-            "needs_review".to_string()
-        };
 
         // Determine creditor info from provider (if matched) or from extracted IBAN
         let (
@@ -2205,6 +2349,19 @@ pub fn import_bills(
             String::new()
         };
 
+        let parse_note = import_review_parse_note(
+            &eb.parse_note,
+            eb.amount_cents,
+            &eb.iban_norm,
+            &eb.reference,
+            &eb.due_date,
+        );
+        let status = if parse_note.is_empty() {
+            "draft".to_string()
+        } else {
+            "needs_review".to_string()
+        };
+
         conn.execute(
             "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
              creditor_name, creditor_iban, creditor_address, creditor_city,
@@ -2225,7 +2382,7 @@ pub fn import_bills(
                 purpose_code,
                 purpose_text,
                 eb.invoice_number,
-                eb.parse_note,
+                parse_note,
                 status,
                 filename,
             ],
@@ -2239,10 +2396,10 @@ pub fn import_bills(
             eb.amount_cents,
             eb.reference,
             status,
-            if eb.parse_note.is_empty() {
+            if parse_note.is_empty() {
                 "(empty)"
             } else {
-                eb.parse_note.as_str()
+                parse_note.as_str()
             }
         ));
         results.push(Bill {
@@ -2261,7 +2418,7 @@ pub fn import_bills(
             purpose_code,
             purpose_text,
             invoice_number: eb.invoice_number,
-            parse_note: eb.parse_note,
+            parse_note,
             status,
             source_filename: filename.clone(),
             provider_name: provider.map(|p| p.name.clone()),

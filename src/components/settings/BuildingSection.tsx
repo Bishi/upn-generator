@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
-import { Check, Loader2, Save } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useState } from "react";
+import { Loader2, Save, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Building } from "@/lib/types";
@@ -10,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
+import type { SettingsDirtyRegistrar } from "@/components/settings/dirty-state";
 
 const emptyBuilding: Building = {
   id: null,
@@ -19,7 +21,21 @@ const emptyBuilding: Building = {
   postal_code: "",
 };
 
-export function BuildingSection() {
+function sameBuilding(left: Building | undefined, right: Building) {
+  return (
+    !!left &&
+    left.name === right.name &&
+    left.address === right.address &&
+    left.city === right.city &&
+    left.postal_code === right.postal_code
+  );
+}
+
+export function BuildingSection({
+  onDirtyEntry,
+}: {
+  onDirtyEntry?: SettingsDirtyRegistrar;
+}) {
   const queryClient = useQueryClient();
   const snapshot = useWorkflowSnapshotContext();
   const { data: building, isLoading } = useQuery({
@@ -29,7 +45,6 @@ export function BuildingSection() {
   });
 
   const [form, setForm] = useState<Building>(emptyBuilding);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (building) setForm(building);
@@ -40,14 +55,44 @@ export function BuildingSection() {
     onSuccess: async (updated) => {
       queryClient.setQueryData(["building"], updated);
       await snapshot.refresh({ core: true, periods: false, selected: true, statuses: true });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     },
   });
 
+  const isDirty = !sameBuilding(building, form);
+
+  const discardChanges = useCallback(() => {
+    setForm(building ?? emptyBuilding);
+  }, [building]);
+
+  useEffect(() => {
+    if (!onDirtyEntry) return undefined;
+    return onDirtyEntry("building", {
+      tab: "building",
+      label: "Building",
+      isDirty: !isLoading && isDirty,
+      isBusy: mutation.isPending,
+      discard: discardChanges,
+    });
+  }, [discardChanges, isDirty, isLoading, mutation.isPending, onDirtyEntry]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isDirty || mutation.isPending) return;
     mutation.mutate(form);
+  };
+
+  const handleDiscard = async () => {
+    if (!isDirty || mutation.isPending) return;
+    const confirmed = await confirm(
+      "Discard unsaved building changes?",
+      {
+        title: "Discard Unsaved Changes",
+        kind: "warning",
+        okLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+      },
+    );
+    if (confirmed) discardChanges();
   };
 
   if (isLoading) return <SettingsLoadingCard />;
@@ -100,16 +145,30 @@ export function BuildingSection() {
               />
             </div>
           </div>
-          <Button type="submit" disabled={mutation.isPending} className="gap-2">
-            {mutation.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : saved ? (
-              <Check className="size-4" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            Save
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="submit"
+              disabled={!isDirty || mutation.isPending}
+              className={mutation.isPending ? "gap-2 disabled:opacity-100" : "gap-2"}
+            >
+              {mutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save changes
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!isDirty || mutation.isPending}
+              onClick={handleDiscard}
+              className="gap-2"
+            >
+              <X className="size-4" />
+              Discard
+            </Button>
+          </div>
         </form>
       </CardContent>
     </Card>

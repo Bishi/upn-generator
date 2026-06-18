@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { Check, CheckCircle2, Eye, EyeOff, Loader2, Save, ShieldAlert, Wifi } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Eye, EyeOff, Loader2, Save, ShieldAlert, Wifi, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { InboxConfig } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { SettingsLoadingCard } from "@/components/settings/SettingsLoadingCard";
 import { SETTINGS_PANEL_WIDTH } from "@/components/settings/layout";
+import type { SettingsDirtyRegistrar } from "@/components/settings/dirty-state";
 
 const emptyConfig: InboxConfig = {
   host: "",
@@ -33,7 +35,25 @@ function clampDaysToScan(value: number) {
   return Math.min(90, Math.max(0, Math.round(Number.isFinite(value) ? value : 45)));
 }
 
-export function InboxSection() {
+function sameInboxConfig(left: InboxConfig | undefined, right: InboxConfig) {
+  if (!left) return false;
+  const normalizedLeft = normalizeConfig(left);
+  return (
+    normalizedLeft.host === right.host &&
+    normalizedLeft.port === right.port &&
+    normalizedLeft.username === right.username &&
+    normalizedLeft.use_tls === right.use_tls &&
+    normalizedLeft.folder === right.folder &&
+    normalizedLeft.days_to_scan === right.days_to_scan &&
+    normalizedLeft.sender_allowlist === right.sender_allowlist
+  );
+}
+
+export function InboxSection({
+  onDirtyEntry,
+}: {
+  onDirtyEntry?: SettingsDirtyRegistrar;
+}) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["inbox_config"],
@@ -43,7 +63,6 @@ export function InboxSection() {
   const [form, setForm] = useState<InboxConfig>(emptyConfig);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,8 +77,6 @@ export function InboxSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["inbox_config"] });
       setPassword("");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -76,7 +93,41 @@ export function InboxSection() {
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
+    if (!isDirty || saveMutation.isPending) return;
     saveMutation.mutate(form);
+  };
+
+  const isDirty = !sameInboxConfig(data, form) || password.trim().length > 0;
+
+  const discardChanges = useCallback(() => {
+    setForm(data ? normalizeConfig(data) : emptyConfig);
+    setPassword("");
+    setTestStatus(null);
+  }, [data]);
+
+  useEffect(() => {
+    if (!onDirtyEntry) return undefined;
+    return onDirtyEntry("inbox", {
+      tab: "delivery",
+      label: "Inbox settings",
+      isDirty: !isLoading && isDirty,
+      isBusy: saveMutation.isPending,
+      discard: discardChanges,
+    });
+  }, [discardChanges, isDirty, isLoading, onDirtyEntry, saveMutation.isPending]);
+
+  const handleDiscard = async () => {
+    if (!isDirty || saveMutation.isPending) return;
+    const confirmed = await confirm(
+      "Discard unsaved inbox settings changes?",
+      {
+        title: "Discard Unsaved Changes",
+        kind: "warning",
+        okLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+      },
+    );
+    if (confirmed) discardChanges();
   };
 
   if (isLoading) return <SettingsLoadingCard rows={6} />;
@@ -225,15 +276,17 @@ export function InboxSection() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" disabled={saveMutation.isPending} className="gap-2">
+            <Button
+              type="submit"
+              disabled={!isDirty || saveMutation.isPending}
+              className={saveMutation.isPending ? "gap-2 disabled:opacity-100" : "gap-2"}
+            >
               {saveMutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" />
-              ) : saved ? (
-                <Check className="size-4" />
               ) : (
                 <Save className="size-4" />
               )}
-              Save
+              Save changes
             </Button>
             <Button
               type="button"
@@ -248,6 +301,16 @@ export function InboxSection() {
                 <Wifi className="size-4" />
               )}
               Test Connection
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!isDirty || saveMutation.isPending}
+              onClick={handleDiscard}
+              className="gap-2"
+            >
+              <X className="size-4" />
+              Discard
             </Button>
           </div>
           {(saveMutation.error || testStatus) && (

@@ -18,6 +18,7 @@ import type {
   Provider,
   SplitRow,
   UpnDeliveryRollup,
+  UpnPreSendValidation,
 } from "@/lib/types";
 
 const STORAGE_KEY = "selected-billing-period";
@@ -39,6 +40,11 @@ export type PeriodStatus = {
   needsReview: number;
   packetCount: number;
   deliveredCount: number;
+  validationErrorCount: number | null;
+  validationWarningCount: number | null;
+  canSendEmails: boolean | null;
+  canMarkDelivered: boolean | null;
+  canDownloadAll: boolean | null;
 };
 
 export type WorkflowRefreshOptions = {
@@ -72,6 +78,7 @@ export type WorkflowSnapshot = {
   bills: Bill[];
   splits: SplitRow[];
   selectedDeliveryRollup: UpnDeliveryRollup | null;
+  selectedPreSendValidation: UpnPreSendValidation | null;
   periodStatuses: Map<number, PeriodStatus>;
   selectedStatus: PeriodStatus;
   refresh: (options?: WorkflowRefreshOptions) => Promise<void>;
@@ -103,12 +110,18 @@ export const EMPTY_PERIOD_STATUS: PeriodStatus = {
   needsReview: 0,
   packetCount: 0,
   deliveredCount: 0,
+  validationErrorCount: null,
+  validationWarningCount: null,
+  canSendEmails: null,
+  canMarkDelivered: null,
+  canDownloadAll: null,
 };
 
 function summarizePeriod(
   bills: Bill[],
   splits: SplitRow[],
   deliveryRollup: UpnDeliveryRollup | null,
+  preSendValidation: UpnPreSendValidation | null = null,
 ): PeriodStatus {
   return {
     bills: bills.length > 0,
@@ -120,6 +133,11 @@ function summarizePeriod(
     needsReview: bills.filter((bill) => bill.parse_note?.trim()).length,
     packetCount: deliveryRollup?.packet_count ?? 0,
     deliveredCount: deliveryRollup?.current_delivered_count ?? 0,
+    validationErrorCount: preSendValidation?.error_count ?? null,
+    validationWarningCount: preSendValidation?.warning_count ?? null,
+    canSendEmails: preSendValidation?.can_send_emails ?? null,
+    canMarkDelivered: preSendValidation?.can_mark_delivered ?? null,
+    canDownloadAll: preSendValidation?.can_download_all ?? null,
   };
 }
 
@@ -285,6 +303,8 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const [splits, setSplits] = useState<SplitRow[]>([]);
   const [selectedDeliveryRollup, setSelectedDeliveryRollup] =
     useState<UpnDeliveryRollup | null>(null);
+  const [selectedPreSendValidation, setSelectedPreSendValidation] =
+    useState<UpnPreSendValidation | null>(null);
   const [selectedDataPeriodId, setSelectedDataPeriodId] = useState<number | null>(null);
   const [periodStatuses, setPeriodStatuses] = useState<Map<number, PeriodStatus>>(
     () => new Map(),
@@ -329,6 +349,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
         setBills([]);
         setSplits([]);
         setSelectedDeliveryRollup(null);
+        setSelectedPreSendValidation(null);
         setSelectedDataPeriodId(null);
         return;
       }
@@ -336,23 +357,40 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       setSelectedLoading(true);
       try {
         const rows = rowsFromStatus ?? (await fetchPeriodRows(period.id));
+        const preSendValidation = await ipc.validateUpnPreSend(period.id);
         if (selectedRequestRef.current !== requestId) return;
         setError(null);
         setBills(rows.bills);
         setSplits(rows.splits);
         setSelectedDeliveryRollup(rows.deliveryRollup);
+        setSelectedPreSendValidation(preSendValidation);
         setSelectedDataPeriodId(period.id);
         setPeriodStatuses((current) => {
           const next = new Map(current);
           next.set(
             period.id!,
-            summarizePeriod(rows.bills, rows.splits, rows.deliveryRollup),
+            summarizePeriod(rows.bills, rows.splits, rows.deliveryRollup, preSendValidation),
           );
           return next;
         });
       } catch (error) {
         if (selectedRequestRef.current !== requestId) return;
         setError(String(error));
+        setSelectedPreSendValidation(null);
+        setPeriodStatuses((current) => {
+          const currentStatus = current.get(period.id!);
+          if (!currentStatus) return current;
+          const next = new Map(current);
+          next.set(period.id!, {
+            ...currentStatus,
+            validationErrorCount: null,
+            validationWarningCount: null,
+            canSendEmails: null,
+            canMarkDelivered: null,
+            canDownloadAll: null,
+          });
+          return next;
+        });
         if (selectedDataPeriodIdRef.current !== period.id) {
           setBills([]);
           setSplits([]);
@@ -605,6 +643,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
   const exposedBills = selectedDataFresh ? bills : [];
   const exposedSplits = selectedDataFresh ? splits : [];
   const exposedDeliveryRollup = selectedDataFresh ? selectedDeliveryRollup : null;
+  const exposedPreSendValidation = selectedDataFresh ? selectedPreSendValidation : null;
   const loading = initialLoading || !selectedDataFresh;
 
   const billingPeriodSelection = useMemo<BillingPeriodSelectionValue>(
@@ -645,6 +684,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       bills: exposedBills,
       splits: exposedSplits,
       selectedDeliveryRollup: exposedDeliveryRollup,
+      selectedPreSendValidation: exposedPreSendValidation,
       periodStatuses,
       selectedStatus,
       refresh,
@@ -662,6 +702,7 @@ export function WorkflowSnapshotProvider({ children }: { children: ReactNode }) 
       exposedBills,
       exposedSplits,
       exposedDeliveryRollup,
+      exposedPreSendValidation,
       periodStatuses,
       selectedStatus,
       refresh,

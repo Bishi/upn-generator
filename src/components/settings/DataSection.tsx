@@ -31,42 +31,23 @@ function mutationErrorMessage(error: unknown) {
   return String(error);
 }
 
+function waitForPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
 export function DataSection() {
   const queryClient = useQueryClient();
   const [resetConfirm, setResetConfirm] = useState("");
+  const [dataOperation, setDataOperation] = useState<"backup" | "restore" | null>(null);
 
   const backupMutation = useMutation({
     mutationFn: ipc.createDbBackup,
-    onSuccess: async ({ path }) => {
-      await message(`Backup saved to:\n${path}`, {
-        title: "Backup Created",
-        kind: "info",
-      });
-    },
   });
 
   const restoreMutation = useMutation({
     mutationFn: ipc.restoreDbBackup,
-    onSuccess: async () => {
-      setStoredBillingPeriod(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["building"] }),
-        queryClient.invalidateQueries({ queryKey: ["apartments"] }),
-        queryClient.invalidateQueries({ queryKey: ["providers"] }),
-        queryClient.invalidateQueries({ queryKey: ["smtp_config"] }),
-        queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
-        queryClient.invalidateQueries({ queryKey: ["bills"] }),
-        queryClient.invalidateQueries({ queryKey: ["splits"] }),
-      ]);
-      await message(
-        "Backup restored. SMTP and IMAP passwords are not included in backup files. Saved Windows credentials are kept when their usernames still match.",
-        {
-          title: "Restore Complete",
-          kind: "info",
-        }
-      );
-      window.location.reload();
-    },
   });
 
   const resetMutation = useMutation({
@@ -101,7 +82,18 @@ export function DataSection() {
     });
 
     if (!outputPath) return;
-    backupMutation.mutate(outputPath);
+    setDataOperation("backup");
+    try {
+      const { path } = await backupMutation.mutateAsync(outputPath);
+      setDataOperation(null);
+      await waitForPaint();
+      await message(`Backup saved to:\n${path}`, {
+        title: "Backup Created",
+        kind: "info",
+      });
+    } catch {
+      setDataOperation(null);
+    }
   };
 
   const handleRestoreBackup = async () => {
@@ -124,14 +116,59 @@ export function DataSection() {
     });
 
     if (!selected || Array.isArray(selected)) return;
-    restoreMutation.mutate(selected);
+    setDataOperation("restore");
+    try {
+      await restoreMutation.mutateAsync(selected);
+      setStoredBillingPeriod(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["building"] }),
+        queryClient.invalidateQueries({ queryKey: ["apartments"] }),
+        queryClient.invalidateQueries({ queryKey: ["providers"] }),
+        queryClient.invalidateQueries({ queryKey: ["smtp_config"] }),
+        queryClient.invalidateQueries({ queryKey: ["inbox_config"] }),
+        queryClient.invalidateQueries({ queryKey: ["bills"] }),
+        queryClient.invalidateQueries({ queryKey: ["splits"] }),
+      ]);
+      setDataOperation(null);
+      await waitForPaint();
+      await message(
+        "Backup restored. SMTP and IMAP passwords are not included in backup files. Saved Windows credentials are kept when their usernames still match.",
+        {
+          title: "Restore Complete",
+          kind: "info",
+        }
+      );
+      window.location.reload();
+    } catch {
+      setDataOperation(null);
+    }
   };
 
   const backupError = mutationErrorMessage(backupMutation.error ?? restoreMutation.error);
   const resetError = mutationErrorMessage(resetMutation.error);
+  const dataBusy = dataOperation !== null;
+  const dataBusyLabel = dataOperation === "backup"
+    ? "Creating backup..."
+    : "Restoring backup...";
 
   return (
-    <div className={`${SETTINGS_PANEL_WIDTH} grid gap-4`}>
+    <>
+      {dataBusy && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-background/70 backdrop-blur-sm">
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex min-w-72 flex-col items-center gap-3 rounded-md border border-border bg-popover px-6 py-5 text-popover-foreground shadow-pop"
+          >
+            <Loader2 className="size-6 animate-spin text-primary" />
+            <div className="text-sm font-semibold">{dataBusyLabel}</div>
+            <div className="text-center text-xs text-muted-foreground">
+              Keep the app open until this finishes.
+            </div>
+          </div>
+        </div>
+      )}
+      <div className={`${SETTINGS_PANEL_WIDTH} grid gap-4`} aria-busy={dataBusy}>
       <Card className="overflow-hidden">
         <div className="border-b border-border px-5 py-4">
           <h3 className="font-head text-lg font-semibold">Data Backup</h3>
@@ -220,6 +257,7 @@ export function DataSection() {
               id="reset-confirm"
               value={resetConfirm}
               onChange={(e) => setResetConfirm(e.target.value)}
+              disabled={dataBusy || resetMutation.isPending}
               placeholder="RESET ALL DATA"
             />
           </div>
@@ -251,6 +289,7 @@ export function DataSection() {
         )}
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }
