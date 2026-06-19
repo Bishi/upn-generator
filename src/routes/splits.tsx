@@ -5,7 +5,7 @@ import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SplitRow } from "@/lib/types";
-import { formatEur } from "@/lib/types";
+import { formatEur, parseEurInputCents } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
   BillingEmptyState,
@@ -137,7 +137,7 @@ function SplitBillRow({
       Object.fromEntries(
         editableCells.map((cell) => [
           cell.split.split_id,
-          String(cell.split.split_amount_cents / 100),
+          formatEur(cell.split.split_amount_cents),
         ]),
       ),
     );
@@ -159,10 +159,11 @@ function SplitBillRow({
 
   const updates = editableCells
     .map((cell) => {
-      const value = draft[cell.split.split_id] ?? String(cell.split.split_amount_cents / 100);
+      const value =
+        draft[cell.split.split_id] ?? formatEur(cell.split.split_amount_cents);
       return {
         splitId: cell.split.split_id,
-        cents: Math.round(parseFloat(value) * 100) || 0,
+        cents: parseEurInputCents(value),
         originalCents: originalCents[cell.split.split_id] ?? cell.split.split_amount_cents,
       };
     })
@@ -236,7 +237,7 @@ function SplitBillRow({
                     className="h-8 text-sm tabular-nums"
                     value={
                       draft[cell.split.split_id] ??
-                      String(cell.split.split_amount_cents / 100)
+                      formatEur(cell.split.split_amount_cents)
                     }
                     onChange={(e) =>
                       setDraft((current) => ({

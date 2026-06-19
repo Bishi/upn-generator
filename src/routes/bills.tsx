@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
@@ -7,7 +7,7 @@ import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Bill, BillingPeriod, InboxConfig, InboxImportResult, InboxPreviewCandidate, InboxPreviewSession } from "@/lib/types";
-import { formatEur } from "@/lib/types";
+import { formatEur, parseEurInputCents } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
   BillingEmptyState,
@@ -79,6 +79,9 @@ function BillRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Bill>(bill);
+  const [amountDraft, setAmountDraft] = useState(
+    bill.amount_cents === 0 ? "" : formatEur(bill.amount_cents),
+  );
   const reviewWarning = hasReviewWarning(bill);
   const reviewedWarning = isReviewedWarning(bill);
   const unreviewedWarning = isUnreviewedWarning(bill);
@@ -98,7 +101,10 @@ function BillRow({
     draft.purpose_text !== bill.purpose_text;
 
   useEffect(() => {
-    if (!editing) setDraft(bill);
+    if (!editing) {
+      setDraft(bill);
+      setAmountDraft(bill.amount_cents === 0 ? "" : formatEur(bill.amount_cents));
+    }
   }, [bill, editing]);
 
   const save = () => {
@@ -109,6 +115,17 @@ function BillRow({
 
   const cancel = () => {
     setEditing(false);
+  };
+
+  const confirmDelete = async () => {
+    if (!bill.id) return;
+    const confirmed = await confirm(`Delete ${providerTitle}? This cannot be undone.`, {
+      title: "Delete Bill",
+      kind: "warning",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (confirmed) onDelete(bill.id);
   };
 
   return (
@@ -189,7 +206,7 @@ function BillRow({
               <Pencil className="size-3.5" />
             </button>
             <button
-              onClick={() => bill.id && onDelete(bill.id)}
+              onClick={confirmDelete}
               className="text-muted-foreground hover:text-danger"
               aria-label="Delete bill"
             >
@@ -251,13 +268,12 @@ function BillRow({
                 </span>
                 <Input
                   className="h-8 text-sm tabular-nums"
-                  value={
-                    draft.amount_cents === 0 ? "" : String(draft.amount_cents / 100)
-                  }
-                  placeholder="123.45"
+                  value={amountDraft}
+                  placeholder="123,45"
                   onChange={(e) => {
-                    const val = parseFloat(e.target.value) || 0;
-                    setDraft({ ...draft, amount_cents: Math.round(val * 100) });
+                    const value = e.target.value;
+                    setAmountDraft(value);
+                    setDraft({ ...draft, amount_cents: parseEurInputCents(value) });
                   }}
                 />
               </label>
@@ -1407,7 +1423,7 @@ function BillsPage() {
         </SummaryStrip>
       )}
 
-      {selected && (
+      {selected && (showBillsLoading || showBillsSettling || bills.length === 0) && (
         <BillingTableFrame minHeight>
           {showBillsLoading ? (
             <BillingEmptyState
@@ -1416,53 +1432,57 @@ function BillsPage() {
               title="No bills yet for this billing month"
               detail="Use the buttons above to import PDF or image invoices, or add a bill manually."
             />
-          ) : showBillsSettling || bills.length === 0 ? (
+          ) : (
             <BillingEmptyState
               title="No bills yet for this billing month"
               detail="Use the buttons above to import PDF or image invoices, or add a bill manually."
             />
-          ) : (
-            <BillingTable>
-              <thead>
-                <BillingTableHeaderRow>
-                  <BillingTableHeaderCell className="w-[68px] p-0" />
-                  <BillingTableHeaderCell className="pl-0">Provider</BillingTableHeaderCell>
-                  <BillingTableHeaderCell>Reference</BillingTableHeaderCell>
-                  <BillingTableHeaderCell>Due Date</BillingTableHeaderCell>
-                  <BillingTableHeaderCell>Detection</BillingTableHeaderCell>
-                  <BillingTableHeaderCell className="text-right">Amount</BillingTableHeaderCell>
-                  <BillingTableHeaderCell />
-                </BillingTableHeaderRow>
-              </thead>
-              <tbody>
-                {bills.map((b) => (
-                  <BillRow
-                    key={b.id}
-                    bill={b}
-                    onSave={saveBill}
-                    onDelete={deleteBill}
-                    onMarkReviewed={markBillReviewed}
-                    onMarkUnreviewed={markBillUnreviewed}
-                  />
-                ))}
-              </tbody>
-              <tfoot>
-                <BillingTableFooterRow>
-                  <td />
-                  <td
-                    className="py-2 pr-3 text-xs text-muted-foreground"
-                  >
-                    Total ({bills.length} bills)
-                  </td>
-                  <td colSpan={3}></td>
-                  <td className={`${billingTableCellClass} text-right font-semibold tabular-nums`}>
-                    {formatEur(totalCents)} €
-                  </td>
-                  <td></td>
-                </BillingTableFooterRow>
-              </tfoot>
-            </BillingTable>
           )}
+        </BillingTableFrame>
+      )}
+
+      {showBillsTable && (
+        <BillingTableFrame>
+          <BillingTable>
+            <thead>
+              <BillingTableHeaderRow>
+                <BillingTableHeaderCell className="w-[68px] p-0" />
+                <BillingTableHeaderCell className="pl-0">Provider</BillingTableHeaderCell>
+                <BillingTableHeaderCell>Reference</BillingTableHeaderCell>
+                <BillingTableHeaderCell>Due Date</BillingTableHeaderCell>
+                <BillingTableHeaderCell>Detection</BillingTableHeaderCell>
+                <BillingTableHeaderCell className="text-right">Amount</BillingTableHeaderCell>
+                <BillingTableHeaderCell />
+              </BillingTableHeaderRow>
+            </thead>
+            <tbody>
+              {bills.map((b) => (
+                <BillRow
+                  key={b.id}
+                  bill={b}
+                  onSave={saveBill}
+                  onDelete={deleteBill}
+                  onMarkReviewed={markBillReviewed}
+                  onMarkUnreviewed={markBillUnreviewed}
+                />
+              ))}
+            </tbody>
+            <tfoot>
+              <BillingTableFooterRow>
+                <td />
+                <td
+                  className="py-2 pr-3 text-xs text-muted-foreground"
+                >
+                  Total ({bills.length} bills)
+                </td>
+                <td colSpan={3}></td>
+                <td className={`${billingTableCellClass} text-right font-semibold tabular-nums`}>
+                  {formatEur(totalCents)} €
+                </td>
+                <td></td>
+              </BillingTableFooterRow>
+            </tfoot>
+          </BillingTable>
         </BillingTableFrame>
       )}
 

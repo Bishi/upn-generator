@@ -345,6 +345,11 @@ export function formatEur(cents: number): string {
   return `${sign}${euros},${String(c).padStart(2, "0")}`;
 }
 
+export function parseEurInputCents(value: string): number {
+  const normalized = value.trim().replace(",", ".");
+  return Math.round((parseFloat(normalized) || 0) * 100);
+}
+
 export const MONTHS = [
   "Januar", "Februar", "Marec", "April", "Maj", "Junij",
   "Julij", "Avgust", "September", "Oktober", "November", "December",
