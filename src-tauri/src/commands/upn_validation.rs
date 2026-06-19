@@ -57,6 +57,9 @@ struct BillForValidation {
     purpose_code: String,
     purpose_text: String,
     split_basis: String,
+    parse_note: String,
+    status: String,
+    reviewed_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -265,7 +268,8 @@ fn load_bills(conn: &Connection, billing_period_id: i64) -> Result<Vec<BillForVa
         .prepare(
             "SELECT b.id, b.provider_id, p.name, b.source_filename, b.amount_cents,
                     b.creditor_iban, b.reference, b.due_date, b.purpose_code,
-                    b.purpose_text, COALESCE(p.split_basis, 'm2_percentage')
+                    b.purpose_text, COALESCE(p.split_basis, 'm2_percentage'),
+                    b.parse_note, b.status, b.reviewed_at
              FROM bills b
              LEFT JOIN providers p ON b.provider_id = p.id
              WHERE b.billing_period_id = ?1
@@ -286,6 +290,9 @@ fn load_bills(conn: &Connection, billing_period_id: i64) -> Result<Vec<BillForVa
                 purpose_code: row.get(8)?,
                 purpose_text: row.get(9)?,
                 split_basis: row.get(10)?,
+                parse_note: row.get(11)?,
+                status: row.get(12)?,
+                reviewed_at: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -403,6 +410,31 @@ fn validate_payment_fields(bills: &[BillForValidation], issues: &mut Vec<UpnVali
                 "missing_purpose_text",
                 bill,
                 "Purpose text is missing.".to_string(),
+                all_actions(),
+            ));
+        }
+    }
+}
+
+fn bill_has_review_warning(bill: &BillForValidation) -> bool {
+    !bill.parse_note.trim().is_empty() || bill.status == "needs_review"
+}
+
+fn bill_is_unreviewed_warning(bill: &BillForValidation) -> bool {
+    bill_has_review_warning(bill) && bill.reviewed_at.as_deref().unwrap_or("").trim().is_empty()
+}
+
+fn validate_unreviewed_import_warnings(
+    bills: &[BillForValidation],
+    issues: &mut Vec<UpnValidationIssue>,
+) {
+    for bill in bills {
+        if bill_is_unreviewed_warning(bill) {
+            issues.push(bill_issue(
+                SEVERITY_ERROR,
+                "unreviewed_import_bill",
+                bill,
+                "Bill has import/parser warnings that have not been reviewed.".to_string(),
                 all_actions(),
             ));
         }
@@ -688,6 +720,7 @@ pub fn validate_upn_pre_send_inner(
         ));
     }
 
+    validate_unreviewed_import_warnings(&bills, &mut issues);
     validate_payment_fields(&bills, &mut issues);
     validate_duplicate_providers(&bills, &mut issues);
     validate_split_inputs(&bills, &active_apartments, &mut issues);
@@ -836,7 +869,9 @@ mod tests {
                 invoice_number TEXT NOT NULL DEFAULT '',
                 parse_note TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'draft',
-                source_filename TEXT NOT NULL DEFAULT ''
+                source_filename TEXT NOT NULL DEFAULT '',
+                reviewed_at TEXT,
+                review_note TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE bill_splits (
                 id INTEGER PRIMARY KEY,
@@ -947,6 +982,45 @@ mod tests {
 
         assert_eq!(validation.error_count, 0);
         assert_eq!(validation.warning_count, 0);
+        assert!(validation.can_send_emails);
+        assert!(validation.can_mark_delivered);
+        assert!(validation.can_download_all);
+    }
+
+    #[test]
+    fn unreviewed_import_warning_blocks_all_bulk_actions() {
+        let conn = setup_valid_period();
+        conn.execute(
+            "UPDATE bills SET parse_note='Review imported amount.', status='needs_review'
+             WHERE id=1",
+            [],
+        )
+        .unwrap();
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        let codes = validation_codes(&validation);
+
+        assert!(codes.contains(&"unreviewed_import_bill".to_string()));
+        assert!(!validation.can_send_emails);
+        assert!(!validation.can_mark_delivered);
+        assert!(!validation.can_download_all);
+    }
+
+    #[test]
+    fn reviewed_import_warning_does_not_block_bulk_actions() {
+        let conn = setup_valid_period();
+        conn.execute(
+            "UPDATE bills
+             SET parse_note='Review imported amount.', status='needs_review',
+                 reviewed_at=datetime('now'), review_note='Checked'
+             WHERE id=1",
+            [],
+        )
+        .unwrap();
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+
+        assert!(!validation_codes(&validation).contains(&"unreviewed_import_bill".to_string()));
         assert!(validation.can_send_emails);
         assert!(validation.can_mark_delivered);
         assert!(validation.can_download_all);

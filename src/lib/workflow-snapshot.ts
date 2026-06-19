@@ -38,6 +38,7 @@ export type PeriodStatus = {
   splitCount: number;
   totalCents: number;
   needsReview: number;
+  reviewedWarningCount: number;
   packetCount: number;
   deliveredCount: number;
   validationErrorCount: number | null;
@@ -108,6 +109,7 @@ export const EMPTY_PERIOD_STATUS: PeriodStatus = {
   splitCount: 0,
   totalCents: 0,
   needsReview: 0,
+  reviewedWarningCount: 0,
   packetCount: 0,
   deliveredCount: 0,
   validationErrorCount: null,
@@ -123,6 +125,9 @@ function summarizePeriod(
   deliveryRollup: UpnDeliveryRollup | null,
   preSendValidation: UpnPreSendValidation | null = null,
 ): PeriodStatus {
+  const warningBills = bills.filter(
+    (bill) => bill.parse_note?.trim() || bill.status === "needs_review",
+  );
   return {
     bills: bills.length > 0,
     splits: splits.length > 0,
@@ -130,7 +135,8 @@ function summarizePeriod(
     billCount: bills.length,
     splitCount: splits.length,
     totalCents: bills.reduce((sum, bill) => sum + bill.amount_cents, 0),
-    needsReview: bills.filter((bill) => bill.parse_note?.trim()).length,
+    needsReview: warningBills.filter((bill) => !bill.reviewed_at?.trim()).length,
+    reviewedWarningCount: warningBills.filter((bill) => bill.reviewed_at?.trim()).length,
     packetCount: deliveryRollup?.packet_count ?? 0,
     deliveredCount: deliveryRollup?.current_delivered_count ?? 0,
     validationErrorCount: preSendValidation?.error_count ?? null,

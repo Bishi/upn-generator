@@ -78,6 +78,7 @@ function buildMatrix(splits: SplitRow[]) {
           total: s.bill_amount_cents,
           splitBasis: s.split_basis,
           parseNote: s.bill_parse_note,
+          reviewedAt: s.bill_reviewed_at,
         },
       ]),
     ).entries(),
@@ -310,7 +311,9 @@ function SplitsPage() {
                 >
                   <td className={billingTableCellClass}>
                     <div className="flex items-start gap-2 max-w-56">
-                      {info.parseNote && <ReviewIndicator note={info.parseNote} />}
+                      {info.parseNote && !info.reviewedAt?.trim() && (
+                        <ReviewIndicator note={info.parseNote} />
+                      )}
                       <div className="min-w-0">
                         <div className="font-medium truncate max-w-44">
                           {info.provider ?? info.filename}

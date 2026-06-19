@@ -88,6 +88,10 @@ export const ipc = {
   clearInboxPreviewSession: (sessionId: string) =>
     invoke<void>("clear_inbox_preview_session", { sessionId }),
   saveBill: (bill: Bill) => invoke<Bill>("save_bill", { bill }),
+  markBillReviewed: (billId: number, reviewNote: string) =>
+    invoke<Bill>("mark_bill_reviewed", { billId, reviewNote }),
+  markBillUnreviewed: (billId: number) =>
+    invoke<Bill>("mark_bill_unreviewed", { billId }),
   deleteBill: (id: number) => invoke<void>("delete_bill", { id }),
 
   // Splits

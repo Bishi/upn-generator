@@ -30,10 +30,27 @@ export const Route = createFileRoute("/bills")({
   component: BillsPage,
 });
 
-function ReviewIndicator({ note }: { note: string }) {
+function hasReviewWarning(bill: Bill) {
+  return Boolean(bill.parse_note?.trim() || bill.status === "needs_review");
+}
+
+function isReviewedWarning(bill: Bill) {
+  return hasReviewWarning(bill) && Boolean(bill.reviewed_at?.trim());
+}
+
+function isUnreviewedWarning(bill: Bill) {
+  return hasReviewWarning(bill) && !bill.reviewed_at?.trim();
+}
+
+function ReviewIndicator({ note, reviewed = false }: { note: string; reviewed?: boolean }) {
   return (
     <span
-      className="inline-flex size-2.5 shrink-0 cursor-help rounded-full bg-warning ring-1 ring-warning/60"
+      className={cn(
+        "inline-flex size-2.5 shrink-0 cursor-help rounded-full ring-1",
+        reviewed
+          ? "bg-success ring-success/50"
+          : "bg-warning ring-warning/60",
+      )}
       title={note}
       aria-label={note}
     />
@@ -52,13 +69,21 @@ function BillRow({
   bill,
   onSave,
   onDelete,
+  onMarkReviewed,
+  onMarkUnreviewed,
 }: {
   bill: Bill;
   onSave: (b: Bill) => void;
   onDelete: (id: number) => void;
+  onMarkReviewed: (id: number) => void;
+  onMarkUnreviewed: (id: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Bill>(bill);
+  const reviewWarning = hasReviewWarning(bill);
+  const reviewedWarning = isReviewedWarning(bill);
+  const unreviewedWarning = isUnreviewedWarning(bill);
+  const reviewMessage = bill.parse_note?.trim() || "Review this import manually.";
 
   const save = () => {
     onSave(draft);
@@ -156,13 +181,13 @@ function BillRow({
         className={cn(
           billingTableBodyRowClass,
           "hover:bg-accent/20",
-          bill.parse_note && "bg-warning-soft/70",
+          unreviewedWarning && "bg-warning-soft/70",
         )}
       >
         <td className="w-[68px] p-0 align-middle">
           <div className="grid min-h-16 place-items-center">
-            {bill.parse_note ? (
-              <ReviewIndicator note={bill.parse_note} />
+            {reviewWarning ? (
+              <ReviewIndicator note={reviewMessage} reviewed={reviewedWarning} />
             ) : (
               <CheckCircle2 className="block size-4 text-success" />
             )}
@@ -185,10 +210,21 @@ function BillRow({
           <TextFieldValue value={bill.due_date} />
         </td>
         <td className={billingTableCellClass}>
-          {bill.parse_note ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
-              <AlertTriangle className="size-3" />
-              OCR - verify
+          {reviewWarning ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold",
+                reviewedWarning
+                  ? "bg-success-soft text-success"
+                  : "bg-warning-soft text-warning",
+              )}
+            >
+              {reviewedWarning ? (
+                <CheckCircle2 className="size-3" />
+              ) : (
+                <AlertTriangle className="size-3" />
+              )}
+              {reviewedWarning ? "Reviewed" : "OCR - verify"}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-2 py-1 text-xs font-semibold text-muted-foreground">
@@ -216,24 +252,50 @@ function BillRow({
           </div>
         </td>
       </tr>
-      {bill.parse_note && (
-        <tr className="border-b border-border bg-warning-soft/70">
+      {reviewWarning && (
+        <tr
+          className={cn(
+            "border-b border-border",
+            unreviewedWarning ? "bg-warning-soft/70" : "bg-surface-2",
+          )}
+        >
           <td />
           <td colSpan={6} className="px-3 py-3">
             <div className="flex flex-wrap items-center gap-3">
               <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-                <span className="font-semibold text-warning">Verify this import.</span>{" "}
-                {bill.parse_note}
+                <span
+                  className={cn(
+                    "font-semibold",
+                    reviewedWarning ? "text-success" : "text-warning",
+                  )}
+                >
+                  {reviewedWarning ? "Import reviewed." : "Verify this import."}
+                </span>{" "}
+                {reviewMessage}
               </p>
-              <Button
-                variant="warning"
-                size="sm"
-                className="ml-auto"
-                onClick={() => setEditing(true)}
-              >
-                <Check className="size-3.5" />
-                Review
-              </Button>
+              {bill.id && (
+                reviewedWarning ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => onMarkUnreviewed(bill.id!)}
+                  >
+                    <Minus className="size-3.5" />
+                    Unreview
+                  </Button>
+                ) : (
+                  <Button
+                    variant="warning"
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => onMarkReviewed(bill.id!)}
+                  >
+                    <Check className="size-3.5" />
+                    Mark reviewed
+                  </Button>
+                )
+              )}
             </div>
           </td>
         </tr>
@@ -1092,6 +1154,8 @@ function BillsPage() {
         parse_note: "",
         status: "draft",
         source_filename: "(manual)",
+        reviewed_at: null,
+        review_note: "",
         provider_name: null,
       };
       await ipc.saveBill(blank);
@@ -1108,6 +1172,20 @@ function BillsPage() {
     }
   };
 
+  const markBillReviewed = async (id: number) => {
+    await ipc.markBillReviewed(id, "");
+    if (selected?.id) {
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
+  };
+
+  const markBillUnreviewed = async (id: number) => {
+    await ipc.markBillUnreviewed(id);
+    if (selected?.id) {
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
+  };
+
   const deleteBill = async (id: number) => {
     await ipc.deleteBill(id);
     if (selected?.id) {
@@ -1116,8 +1194,9 @@ function BillsPage() {
   };
 
   const totalCents = bills.reduce((s, b) => s + b.amount_cents, 0);
-  const reviewBills = bills.filter((bill) => bill.parse_note?.trim());
-  const cleanCount = Math.max(0, bills.length - reviewBills.length);
+  const unreviewedBills = bills.filter(isUnreviewedWarning);
+  const reviewedWarningBills = bills.filter(isReviewedWarning);
+  const cleanCount = Math.max(0, bills.length - unreviewedBills.length - reviewedWarningBills.length);
   const inboxImported = inboxResults.filter((result) => result.status === "imported");
   const inboxSkipped = inboxResults.filter((result) => result.status.startsWith("skipped_"));
   const inboxFailed = inboxResults.filter((result) => result.status === "failed");
@@ -1254,11 +1333,22 @@ function BillsPage() {
               {cleanCount} file{cleanCount === 1 ? "" : "s"} clean
             </SummaryChip>
           )}
-          {reviewBills.map((bill) => (
+          {reviewedWarningBills.map((bill) => (
+            <SummaryChip
+              key={`reviewed-${bill.id ?? bill.source_filename}`}
+              className="bg-success-soft text-success font-normal"
+              title={bill.parse_note || "Review this import manually."}
+            >
+              <CheckCircle2 className="size-3.5" />
+              <span className="font-semibold text-foreground">{bill.source_filename}</span>
+              <span className="text-muted-foreground">reviewed</span>
+            </SummaryChip>
+          ))}
+          {unreviewedBills.map((bill) => (
             <SummaryChip
               key={bill.id ?? bill.source_filename}
               className="bg-warning-soft text-warning font-normal"
-              title={bill.parse_note}
+              title={bill.parse_note || "Review this import manually."}
             >
               <AlertTriangle className="size-3.5" />
               <span className="font-semibold text-foreground">{bill.source_filename}</span>
@@ -1302,6 +1392,8 @@ function BillsPage() {
                     bill={b}
                     onSave={saveBill}
                     onDelete={deleteBill}
+                    onMarkReviewed={markBillReviewed}
+                    onMarkUnreviewed={markBillUnreviewed}
                   />
                 ))}
               </tbody>

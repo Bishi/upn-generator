@@ -28,6 +28,7 @@ pub struct SplitRow {
     pub split_basis: String,
     pub bill_status: String,
     pub bill_parse_note: String,
+    pub bill_reviewed_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -178,6 +179,7 @@ pub fn calculate_splits(
                 split_basis: normalized_basis.to_string(),
                 bill_status: "draft".to_string(),
                 bill_parse_note: String::new(),
+                bill_reviewed_at: None,
             });
         }
     }
@@ -193,7 +195,7 @@ pub fn get_splits(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Spli
             "SELECT bs.id, bs.bill_id, bs.apartment_id, a.label, a.unit_code,
              b.source_filename, p.name, b.amount_cents, bs.amount_cents,
              a.occupant_count, a.m2_percentage, COALESCE(p.split_basis, 'm2_percentage'),
-             b.status, b.parse_note
+             b.status, b.parse_note, b.reviewed_at
              FROM bill_splits bs
              JOIN bills b ON bs.bill_id = b.id
              JOIN apartments a ON bs.apartment_id = a.id
@@ -219,6 +221,7 @@ pub fn get_splits(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Spli
                 split_basis: normalize_split_basis(&r.get::<_, String>(11)?).to_string(),
                 bill_status: r.get(12)?,
                 bill_parse_note: r.get(13)?,
+                bill_reviewed_at: r.get(14)?,
             })
         })
         .map_err(|e| e.to_string())?;

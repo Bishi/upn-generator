@@ -318,7 +318,9 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             purpose_text TEXT NOT NULL DEFAULT '',
             parse_note TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'draft',
-            source_filename TEXT NOT NULL DEFAULT ''
+            source_filename TEXT NOT NULL DEFAULT '',
+            reviewed_at TEXT,
+            review_note TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS bill_splits (
@@ -450,6 +452,11 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     );
     let _ = conn.execute(
         "ALTER TABLE bills ADD COLUMN parse_note TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE bills ADD COLUMN reviewed_at TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN review_note TEXT NOT NULL DEFAULT ''",
         [],
     );
 

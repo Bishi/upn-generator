@@ -16,6 +16,9 @@
 - [ ] Cancel a local bill import for a newly selected empty month and confirm no billing period row is created.
 - [ ] Import a combined PDF and confirm one row is created per detected configured provider.
 - [ ] Import or preview a combined PDF where one detected bill is missing a due date, and confirm that bill is marked for review on Bills instead of appearing as a clean auto-match.
+- [ ] Click Mark reviewed on an imported warning bill and confirm it changes to a reviewed state while the import note remains visible.
+- [ ] Click Unreview on a reviewed warning bill and confirm it returns to the unresolved review state.
+- [ ] Edit a reviewed warning bill amount, reference, purpose, or due date and confirm the bill becomes unresolved again after save.
 - [ ] Confirm missing visible payment fields on Bills and inbox preview rows render as red `missing` text instead of an empty cell.
 - [ ] Confirm importing, adding a manual bill, or fetching an inbox preview for a newly selected month creates and selects that billing period.
 - [ ] Select an empty month, reload the app, and confirm the same month remains selected.
