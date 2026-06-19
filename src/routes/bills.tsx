@@ -18,9 +18,9 @@ import {
   BillingTableHeaderRow,
   SummaryChip,
   SummaryStrip,
-  billingTableBodyRowClass,
   billingTableCellClass,
   billingTableNumericCellClass,
+  billingTableZebraRowClass,
 } from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -179,7 +179,7 @@ function BillRow({
     <Fragment>
       <tr
         className={cn(
-          billingTableBodyRowClass,
+          billingTableZebraRowClass,
           "hover:bg-accent/20",
           unreviewedWarning && "bg-warning-soft/70",
         )}
@@ -193,7 +193,7 @@ function BillRow({
             )}
           </div>
         </td>
-        <td className="py-3 pr-3 align-middle text-sm max-w-60">
+        <td className={`${billingTableCellClass} max-w-60 pl-0 text-sm`}>
           <div>
             <div className="truncate font-semibold">
               {bill.provider_name ?? (bill.creditor_name || bill.source_filename)}
@@ -255,7 +255,7 @@ function BillRow({
       {reviewWarning && (
         <tr
           className={cn(
-            "border-b border-border",
+            "border-b border-border bg-card",
             unreviewedWarning ? "bg-warning-soft/70" : "bg-surface-2",
           )}
         >

@@ -3,12 +3,12 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export const billingTableCellClass = "whitespace-nowrap px-3 py-2";
-export const billingTableTallCellClass = "whitespace-nowrap px-3 py-3";
+export const billingTableCellClass = "whitespace-nowrap px-3 py-3 align-middle";
+export const billingTableTallCellClass = billingTableCellClass;
 export const billingTableNumericCellClass = `${billingTableCellClass} text-right font-mono`;
-export const billingTableBodyRowClass = "border-b border-border transition-colors hover:bg-accent/10";
+export const billingTableBodyRowClass = "h-16 border-b border-border transition-colors hover:bg-accent/10";
 export const billingTableZebraRowClass =
-  "border-b border-border odd:bg-card even:bg-surface-2/50 transition-colors hover:bg-accent/10";
+  `${billingTableBodyRowClass} odd:bg-card even:bg-surface-2/50`;
 
 type BillingTableFrameProps = ComponentPropsWithoutRef<"div"> & {
   scrollX?: boolean;
