@@ -108,6 +108,8 @@ export interface Bill {
   parse_note: string;
   status: string;
   source_filename: string;
+  reviewed_at: string | null;
+  review_note: string;
   provider_name: string | null;
 }
 
@@ -135,6 +137,7 @@ export interface SplitRow {
   split_basis: "occupants" | "m2_percentage" | "equal_apartments";
   bill_status: string;
   bill_parse_note: string;
+  bill_reviewed_at: string | null;
 }
 
 // UPN
@@ -340,6 +343,11 @@ export function formatEur(cents: number): string {
   const c = Math.abs(cents) % 100;
   const sign = cents < 0 ? "-" : "";
   return `${sign}${euros},${String(c).padStart(2, "0")}`;
+}
+
+export function parseEurInputCents(value: string): number {
+  const normalized = value.trim().replace(",", ".");
+  return Math.round((parseFloat(normalized) || 0) * 100);
 }
 
 export const MONTHS = [

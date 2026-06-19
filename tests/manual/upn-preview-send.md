@@ -17,6 +17,8 @@
 - [ ] Enter an invalid recipient email and confirm Send Emails is disabled with a clear validation issue.
 - [ ] With email safety allowlist enabled, use a non-allowlisted recipient and confirm Send Emails is blocked before SMTP password lookup or delivery history creation.
 - [ ] Remove or invalidate a bill IBAN, reference, due date, purpose code, or purpose text and confirm Send Emails, Download All PDFs, and Mark Delivered are disabled.
+- [ ] Import a bill with a parser/OCR review warning and confirm Send Emails, Download All PDFs, and Mark Delivered are disabled until the bill is marked reviewed on Bills.
+- [ ] Mark the warning bill reviewed and confirm the same UPN bulk actions become available again when no other blockers remain.
 - [ ] Create a duplicate provider bill or split total mismatch and confirm Send Emails, Download All PDFs, and Mark Delivered are disabled until the issue is fixed.
 - [ ] Open a single apartment preview and confirm a PDF is generated without an app error.
 - [ ] Confirm single-apartment previews remain available when validation only blocks delivery actions.

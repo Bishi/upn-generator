@@ -49,6 +49,8 @@ pub struct Bill {
     pub parse_note: String,
     pub status: String,
     pub source_filename: String,
+    pub reviewed_at: Option<String>,
+    pub review_note: String,
     // Joined display fields (not stored)
     pub provider_name: Option<String>,
 }
@@ -565,6 +567,68 @@ pub fn create_year_periods(db: State<DbState>, year: i32) -> Result<Vec<BillingP
 
 // ─── Bill Commands ──────────────────────────────────────────────────────────
 
+fn bill_has_review_warning(parse_note: &str, status: &str) -> bool {
+    !parse_note.trim().is_empty() || status == "needs_review"
+}
+
+fn persisted_bill_fields_changed(previous: &Bill, next: &Bill) -> bool {
+    previous.amount_cents != next.amount_cents
+        || previous.creditor_name != next.creditor_name
+        || previous.creditor_iban != next.creditor_iban
+        || previous.creditor_address != next.creditor_address
+        || previous.creditor_city != next.creditor_city
+        || previous.creditor_postal_code != next.creditor_postal_code
+        || previous.reference != next.reference
+        || previous.due_date != next.due_date
+        || previous.purpose_code != next.purpose_code
+        || previous.purpose_text != next.purpose_text
+        || previous.invoice_number != next.invoice_number
+        || previous.parse_note != next.parse_note
+        || previous.status != next.status
+}
+
+fn bill_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bill> {
+    Ok(Bill {
+        id: Some(row.get(0)?),
+        billing_period_id: row.get(1)?,
+        provider_id: row.get(2)?,
+        raw_text: row.get(3)?,
+        amount_cents: row.get(4)?,
+        creditor_name: row.get(5)?,
+        creditor_iban: row.get(6)?,
+        creditor_address: row.get(7)?,
+        creditor_city: row.get(8)?,
+        creditor_postal_code: row.get(9)?,
+        reference: row.get(10)?,
+        due_date: row.get(11)?,
+        purpose_code: row.get(12)?,
+        purpose_text: row.get(13)?,
+        invoice_number: row.get(14)?,
+        parse_note: row.get(15)?,
+        status: row.get(16)?,
+        source_filename: row.get(17)?,
+        reviewed_at: row.get(18)?,
+        review_note: row.get(19)?,
+        provider_name: row.get(20)?,
+    })
+}
+
+fn load_bill_by_id(conn: &Connection, id: i64) -> Result<Bill, String> {
+    conn.query_row(
+        "SELECT b.id, b.billing_period_id, b.provider_id, b.raw_text, b.amount_cents,
+         b.creditor_name, b.creditor_iban, b.creditor_address, b.creditor_city,
+         b.creditor_postal_code, b.reference, b.due_date, b.purpose_code, b.purpose_text,
+         b.invoice_number, b.parse_note, b.status, b.source_filename,
+         b.reviewed_at, b.review_note, p.name as provider_name
+         FROM bills b
+         LEFT JOIN providers p ON b.provider_id = p.id
+         WHERE b.id = ?1",
+        [id],
+        bill_from_row,
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -574,7 +638,7 @@ pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>
              b.creditor_name, b.creditor_iban, b.creditor_address, b.creditor_city,
              b.creditor_postal_code, b.reference, b.due_date, b.purpose_code, b.purpose_text,
              b.invoice_number, b.parse_note, b.status, b.source_filename,
-             p.name as provider_name
+             b.reviewed_at, b.review_note, p.name as provider_name
              FROM bills b
              LEFT JOIN providers p ON b.provider_id = p.id
              WHERE b.billing_period_id = ?1
@@ -582,29 +646,7 @@ pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([billing_period_id], |row| {
-            Ok(Bill {
-                id: Some(row.get(0)?),
-                billing_period_id: row.get(1)?,
-                provider_id: row.get(2)?,
-                raw_text: row.get(3)?,
-                amount_cents: row.get(4)?,
-                creditor_name: row.get(5)?,
-                creditor_iban: row.get(6)?,
-                creditor_address: row.get(7)?,
-                creditor_city: row.get(8)?,
-                creditor_postal_code: row.get(9)?,
-                reference: row.get(10)?,
-                due_date: row.get(11)?,
-                purpose_code: row.get(12)?,
-                purpose_text: row.get(13)?,
-                invoice_number: row.get(14)?,
-                parse_note: row.get(15)?,
-                status: row.get(16)?,
-                source_filename: row.get(17)?,
-                provider_name: row.get(18)?,
-            })
-        })
+        .query_map([billing_period_id], bill_from_row)
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
@@ -612,9 +654,16 @@ pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>
 #[tauri::command]
 pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    save_bill_inner(&conn, bill)
+}
+
+fn save_bill_inner(conn: &Connection, bill: Bill) -> Result<Bill, String> {
     match bill.id {
         Some(id) => {
-            conn.execute(
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let previous = load_bill_by_id(&tx, id)?;
+            let meaningful_change = persisted_bill_fields_changed(&previous, &bill);
+            tx.execute(
                 "UPDATE bills SET amount_cents=?1, creditor_name=?2, creditor_iban=?3,
                  creditor_address=?4, creditor_city=?5, creditor_postal_code=?6,
                  reference=?7, due_date=?8, purpose_code=?9, purpose_text=?10,
@@ -637,7 +686,16 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
                 ],
             )
             .map_err(|e| e.to_string())?;
-            Ok(bill)
+            if meaningful_change && bill_has_review_warning(&bill.parse_note, &bill.status) {
+                tx.execute(
+                    "UPDATE bills SET reviewed_at=NULL, review_note='' WHERE id=?1",
+                    [id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            let saved = load_bill_by_id(&tx, id)?;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(saved)
         }
         None => {
             conn.execute(
@@ -668,12 +726,50 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
             )
             .map_err(|e| e.to_string())?;
             let id = conn.last_insert_rowid();
-            Ok(Bill {
-                id: Some(id),
-                ..bill
-            })
+            load_bill_by_id(conn, id)
         }
     }
+}
+
+#[tauri::command]
+pub fn mark_bill_reviewed(
+    db: State<DbState>,
+    bill_id: i64,
+    review_note: String,
+) -> Result<Bill, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    mark_bill_reviewed_inner(&conn, bill_id, &review_note)
+}
+
+fn mark_bill_reviewed_inner(
+    conn: &Connection,
+    bill_id: i64,
+    review_note: &str,
+) -> Result<Bill, String> {
+    let bill = load_bill_by_id(conn, bill_id)?;
+    if bill_has_review_warning(&bill.parse_note, &bill.status) {
+        conn.execute(
+            "UPDATE bills SET reviewed_at=datetime('now'), review_note=?1 WHERE id=?2",
+            params![review_note.trim(), bill_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    load_bill_by_id(conn, bill_id)
+}
+
+#[tauri::command]
+pub fn mark_bill_unreviewed(db: State<DbState>, bill_id: i64) -> Result<Bill, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    mark_bill_unreviewed_inner(&conn, bill_id)
+}
+
+fn mark_bill_unreviewed_inner(conn: &Connection, bill_id: i64) -> Result<Bill, String> {
+    conn.execute(
+        "UPDATE bills SET reviewed_at=NULL, review_note='' WHERE id=?1",
+        [bill_id],
+    )
+    .map_err(|e| e.to_string())?;
+    load_bill_by_id(conn, bill_id)
 }
 
 fn delete_inbox_imports_for_bill(conn: &Connection, bill_id: i64) -> Result<(), String> {
@@ -884,6 +980,8 @@ pub fn import_bill(
         parse_note,
         status,
         source_filename: filename,
+        reviewed_at: None,
+        review_note: String::new(),
         provider_name,
     })
 }
@@ -1727,6 +1825,8 @@ pub(crate) fn save_prepared_multi_bill_import(
                 .to_string(),
             status: "needs_review".to_string(),
             source_filename: prepared.filename,
+            reviewed_at: None,
+            review_note: String::new(),
             provider_name: None,
         }]);
     }
@@ -1863,6 +1963,8 @@ pub(crate) fn save_prepared_multi_bill_import(
             parse_note,
             status,
             source_filename: prepared.filename.clone(),
+            reviewed_at: None,
+            review_note: String::new(),
             provider_name: provider.map(|p| p.name.clone()),
         });
     }
@@ -1921,6 +2023,103 @@ mod tests {
             log: String::new(),
             redact_details: true,
         }
+    }
+
+    fn setup_bill_command_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE providers (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            CREATE TABLE bills (
+                id INTEGER PRIMARY KEY,
+                billing_period_id INTEGER NOT NULL,
+                provider_id INTEGER,
+                raw_text TEXT NOT NULL DEFAULT '',
+                amount_cents INTEGER NOT NULL DEFAULT 0,
+                creditor_name TEXT NOT NULL DEFAULT '',
+                creditor_iban TEXT NOT NULL DEFAULT '',
+                creditor_address TEXT NOT NULL DEFAULT '',
+                creditor_city TEXT NOT NULL DEFAULT '',
+                creditor_postal_code TEXT NOT NULL DEFAULT '',
+                reference TEXT NOT NULL DEFAULT '',
+                due_date TEXT NOT NULL DEFAULT '',
+                purpose_code TEXT NOT NULL DEFAULT 'OTHR',
+                purpose_text TEXT NOT NULL DEFAULT '',
+                invoice_number TEXT NOT NULL DEFAULT '',
+                parse_note TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft',
+                source_filename TEXT NOT NULL DEFAULT '',
+                reviewed_at TEXT,
+                review_note TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO providers (id, name) VALUES (1, 'Provider 1');
+            ",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_review_test_bill(conn: &Connection, id: i64, parse_note: &str, reviewed: bool) {
+        conn.execute(
+            "INSERT INTO bills (
+                id, billing_period_id, provider_id, amount_cents, creditor_name, creditor_iban,
+                creditor_address, creditor_city, creditor_postal_code, reference, due_date,
+                purpose_code, purpose_text, invoice_number, parse_note, status, source_filename,
+                reviewed_at, review_note
+             ) VALUES (
+                ?1, 1, 1, 1000, 'Provider 1', 'SI56 0400 1004 8988 093',
+                '', '', '', 'SI00 123', '30.06.2026', 'OTHR', 'Utilities', '',
+                ?2, CASE WHEN ?2 = '' THEN 'draft' ELSE 'needs_review' END, 'bill.pdf',
+                CASE WHEN ?3 THEN '2026-06-01 00:00:00' ELSE NULL END,
+                CASE WHEN ?3 THEN 'Checked' ELSE '' END
+             )",
+            params![id, parse_note, if reviewed { 1 } else { 0 }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn mark_bill_reviewed_sets_review_fields_and_preserves_parse_note() {
+        let conn = setup_bill_command_conn();
+        insert_review_test_bill(&conn, 1, "Review imported amount.", false);
+
+        let bill = mark_bill_reviewed_inner(&conn, 1, " Checked by accountant ").unwrap();
+
+        assert_eq!(bill.parse_note, "Review imported amount.");
+        assert_eq!(bill.review_note, "Checked by accountant");
+        assert!(bill.reviewed_at.is_some());
+    }
+
+    #[test]
+    fn mark_bill_reviewed_noops_for_clean_bill() {
+        let conn = setup_bill_command_conn();
+        insert_review_test_bill(&conn, 1, "", false);
+
+        let bill = mark_bill_reviewed_inner(&conn, 1, "Checked").unwrap();
+
+        assert!(bill.reviewed_at.is_none());
+        assert_eq!(bill.review_note, "");
+    }
+
+    #[test]
+    fn save_bill_preserves_review_on_noop_and_clears_after_meaningful_edit() {
+        let conn = setup_bill_command_conn();
+        insert_review_test_bill(&conn, 1, "Review imported amount.", true);
+
+        let bill = load_bill_by_id(&conn, 1).unwrap();
+        let no_op = save_bill_inner(&conn, bill.clone()).unwrap();
+        assert!(no_op.reviewed_at.is_some());
+        assert_eq!(no_op.review_note, "Checked");
+
+        let mut edited = no_op;
+        edited.amount_cents += 1;
+        let saved = save_bill_inner(&conn, edited).unwrap();
+
+        assert!(saved.reviewed_at.is_none());
+        assert_eq!(saved.review_note, "");
     }
 
     #[test]
@@ -2289,6 +2488,8 @@ pub fn import_bills(
                 .to_string(),
             status: "needs_review".to_string(),
             source_filename: filename,
+            reviewed_at: None,
+            review_note: String::new(),
             provider_name: None,
         }]);
     }
@@ -2421,6 +2622,8 @@ pub fn import_bills(
             parse_note,
             status,
             source_filename: filename.clone(),
+            reviewed_at: None,
+            review_note: String::new(),
             provider_name: provider.map(|p| p.name.clone()),
         });
     }

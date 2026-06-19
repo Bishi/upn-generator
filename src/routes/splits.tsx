@@ -1,11 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { Loader2, RefreshCw, Check, X } from "lucide-react";
+import { Fragment, useState } from "react";
+import { Loader2, RefreshCw, Check, Pencil, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { SplitRow } from "@/lib/types";
-import { formatEur } from "@/lib/types";
+import { formatEur, parseEurInputCents } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
   BillingEmptyState,
@@ -17,11 +17,11 @@ import {
   SummaryChip,
   SummaryStrip,
   billingTableCellClass,
-  billingTableNumericCellClass,
   billingTableZebraRowClass,
 } from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/splits")({
   component: SplitsPage,
@@ -78,6 +78,7 @@ function buildMatrix(splits: SplitRow[]) {
           total: s.bill_amount_cents,
           splitBasis: s.split_basis,
           parseNote: s.bill_parse_note,
+          reviewedAt: s.bill_reviewed_at,
         },
       ]),
     ).entries(),
@@ -92,55 +93,191 @@ function buildMatrix(splits: SplitRow[]) {
   return { apartments, bills, matrix };
 }
 
-function EditableCell({
-  split,
-  onSave,
+function SplitAmountCell({ split }: { split: SplitRow }) {
+  return (
+    <div>
+      <div className="text-sm font-medium tabular-nums">
+        {formatEur(split.split_amount_cents)} €
+      </div>
+      <div className="text-[11px] text-muted-foreground">
+        {splitBasisDetail(split)}
+      </div>
+    </div>
+  );
+}
+
+function SplitBillRow({
+  info,
+  apartments,
+  rowSplits,
+  onSaveOverrides,
 }: {
-  split: SplitRow;
-  onSave: (splitId: number, cents: number) => void;
+  info: ReturnType<typeof buildMatrix>["bills"][number][1];
+  apartments: ReturnType<typeof buildMatrix>["apartments"];
+  rowSplits: Map<number, SplitRow> | undefined;
+  onSaveOverrides: (updates: Array<{ splitId: number; cents: number }>) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(String(split.split_amount_cents / 100));
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState<Record<number, string>>({});
+  const [originalCents, setOriginalCents] = useState<Record<number, number>>({});
 
-  if (editing) {
-    return (
-      <div className="flex items-center gap-1">
-        <Input
-          className="h-6 w-20 text-xs font-mono"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          autoFocus
-        />
-        <button
-          className="text-success hover:text-success/80"
-          onClick={() => {
-            const cents = Math.round(parseFloat(value) * 100) || 0;
-            if (split.split_id) onSave(split.split_id, cents);
-            setEditing(false);
-          }}
-        >
-          <Check className="size-3" />
-        </button>
-        <button
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            setValue(String(split.split_amount_cents / 100));
-            setEditing(false);
-          }}
-        >
-          <X className="size-3" />
-        </button>
-      </div>
+  const cells = apartments.map(([aptId, apt]) => ({
+    aptId,
+    apt,
+    split: rowSplits?.get(aptId),
+  }));
+  const editableCells = cells.filter(
+    (cell): cell is typeof cell & { split: SplitRow & { split_id: number } } =>
+      Boolean(cell.split?.split_id),
+  );
+
+  const resetDraft = () => {
+    setDraft(
+      Object.fromEntries(
+        editableCells.map((cell) => [
+          cell.split.split_id,
+          formatEur(cell.split.split_amount_cents),
+        ]),
+      ),
     );
-  }
+    setOriginalCents(
+      Object.fromEntries(
+        editableCells.map((cell) => [
+          cell.split.split_id,
+          cell.split.split_amount_cents,
+        ]),
+      ),
+    );
+  };
+
+  const startEditing = () => {
+    if (editing) return;
+    resetDraft();
+    setEditing(true);
+  };
+
+  const updates = editableCells
+    .map((cell) => {
+      const value =
+        draft[cell.split.split_id] ?? formatEur(cell.split.split_amount_cents);
+      return {
+        splitId: cell.split.split_id,
+        cents: parseEurInputCents(value),
+        originalCents: originalCents[cell.split.split_id] ?? cell.split.split_amount_cents,
+      };
+    })
+    .filter((update) => update.cents !== update.originalCents);
+  const dirty = updates.length > 0;
+
+  const save = async () => {
+    if (!dirty) return;
+    setSaving(true);
+    try {
+      await onSaveOverrides(updates.map(({ splitId, cents }) => ({ splitId, cents })));
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <span
-      className="font-mono text-sm cursor-pointer hover:underline"
-      onClick={() => setEditing(true)}
-    >
-      {formatEur(split.split_amount_cents)} €
-    </span>
+    <Fragment>
+      <tr className={billingTableZebraRowClass}>
+        <td className={billingTableCellClass}>
+          <div className="flex max-w-56 items-start gap-2">
+            <div className="flex min-w-0 items-start gap-2">
+              {info.parseNote && !info.reviewedAt?.trim() && (
+                <ReviewIndicator note={info.parseNote} />
+              )}
+              <div className="min-w-0">
+                <div className="max-w-44 truncate font-medium">
+                  {info.provider ?? info.filename}
+                </div>
+                <div className="max-w-44 truncate text-xs text-muted-foreground">
+                  {splitBasisLabel(info.splitBasis)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </td>
+        {cells.map(({ aptId, split }) => (
+          <td key={aptId} className={`${billingTableCellClass} text-right`}>
+            {split ? <SplitAmountCell split={split} /> : <span className="text-muted-foreground">-</span>}
+          </td>
+        ))}
+        <td className={`${billingTableCellClass} text-right font-medium tabular-nums`}>
+          {formatEur(info.total)} €
+        </td>
+        <td className={billingTableCellClass}>
+          <div className="flex justify-end">
+            <button
+              onClick={startEditing}
+              className={cn(
+                "text-muted-foreground hover:text-foreground",
+                editing && "text-foreground",
+              )}
+              aria-label="Edit split amounts"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          </div>
+        </td>
+      </tr>
+      {editing && (
+        <tr className="border-b border-border bg-surface-2/80">
+          <td colSpan={apartments.length + 3} className="px-3 py-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {editableCells.map((cell) => (
+                <label key={cell.split.split_id} className="space-y-1.5">
+                  <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                    {cell.apt.label}
+                  </span>
+                  <Input
+                    className="h-8 text-sm tabular-nums"
+                    value={
+                      draft[cell.split.split_id] ??
+                      formatEur(cell.split.split_amount_cents)
+                    }
+                    onChange={(e) =>
+                      setDraft((current) => ({
+                        ...current,
+                        [cell.split.split_id]: e.target.value,
+                      }))
+                    }
+                  />
+                  <span className="block text-[11px] text-muted-foreground">
+                    {splitBasisDetail(cell.split)}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  resetDraft();
+                  setEditing(false);
+                }}
+                disabled={saving}
+              >
+                <X className="size-3.5" />
+                Discard
+              </Button>
+              <Button size="sm" onClick={save} disabled={!dirty || saving}>
+                {saving ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Check className="size-3.5" />
+                )}
+                Save changes
+              </Button>
+            </div>
+          </td>
+        </tr>
+      )}
+    </Fragment>
   );
 }
 
@@ -165,8 +302,15 @@ function SplitsPage() {
     }
   };
 
-  const saveOverride = async (splitId: number, cents: number) => {
-    await ipc.saveSplit({ id: splitId, bill_id: 0, apartment_id: 0, amount_cents: cents });
+  const saveOverrides = async (updates: Array<{ splitId: number; cents: number }>) => {
+    for (const update of updates) {
+      await ipc.saveSplit({
+        id: update.splitId,
+        bill_id: 0,
+        apartment_id: 0,
+        amount_cents: update.cents,
+      });
+    }
     if (selected?.id) {
       await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
     }
@@ -300,63 +444,34 @@ function SplitsPage() {
                 <BillingTableHeaderCell className="text-right">
                   Total
                 </BillingTableHeaderCell>
+                <BillingTableHeaderCell className="w-10" />
               </BillingTableHeaderRow>
             </thead>
             <tbody>
               {bills.map(([billId, info]) => (
-                <tr
+                <SplitBillRow
                   key={billId}
-                  className={billingTableZebraRowClass}
-                >
-                  <td className={billingTableCellClass}>
-                    <div className="flex items-start gap-2 max-w-56">
-                      {info.parseNote && <ReviewIndicator note={info.parseNote} />}
-                      <div className="min-w-0">
-                        <div className="font-medium truncate max-w-44">
-                          {info.provider ?? info.filename}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate max-w-44">
-                          {splitBasisLabel(info.splitBasis)}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  {apartments.map(([aptId]) => {
-                    const cell = matrix.get(billId)?.get(aptId);
-                    return (
-                      <td key={aptId} className={`${billingTableCellClass} text-right`}>
-                        {cell ? (
-                          <div>
-                            <EditableCell split={cell} onSave={saveOverride} />
-                            <div className="text-[11px] text-muted-foreground">
-                              {splitBasisDetail(cell)}
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className={`${billingTableNumericCellClass} font-medium`}>
-                    {formatEur(info.total)} €
-                  </td>
-                </tr>
+                  info={info}
+                  apartments={apartments}
+                  rowSplits={matrix.get(billId)}
+                  onSaveOverrides={saveOverrides}
+                />
               ))}
             </tbody>
             <tfoot>
               <BillingTableFooterRow>
                 <td className={billingTableCellClass}>Total per Apartment</td>
                 {apartments.map(([aptId]) => (
-                  <td key={aptId} className={billingTableNumericCellClass}>
+                  <td key={aptId} className={`${billingTableCellClass} text-right font-semibold tabular-nums`}>
                     {formatEur(apartmentTotals.get(aptId) ?? 0)} €
                   </td>
                 ))}
-                <td className={billingTableNumericCellClass}>
+                <td className={`${billingTableCellClass} text-right font-semibold tabular-nums`}>
                   {formatEur(
                     splits.reduce((sum, row) => sum + row.split_amount_cents, 0),
                   )} €
                 </td>
+                <td className={billingTableCellClass} />
               </BillingTableFooterRow>
             </tfoot>
           </BillingTable>

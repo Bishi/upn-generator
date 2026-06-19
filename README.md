@@ -126,6 +126,8 @@ Inbox import supports the same PDF and image attachment types. It scans recent m
 
 After import, check the bills table: amount, reference, due date, and purpose should all be filled in correctly.
 
+If the parser or OCR detects a bill but flags missing or uncertain data, the Bills page shows it as needing review. Use **Mark reviewed** after checking/correcting the row; the original import note remains visible, but reviewed warning bills no longer block bulk UPN actions.
+
 Manual entry: if a bill was not detected, click **Add manually** and enter the details yourself.
 
 Editing: click the pencil icon on any row to correct a bill.
@@ -147,7 +149,7 @@ Individual amounts can be manually adjusted by clicking a cell.
 Go to the **UPN** page and select the billing period.
 
 Each apartment card shows its line items and the total amount due.
-Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. Warnings can be reviewed from the same panel, but do not stop delivery actions.
+Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for unreviewed import warnings, missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. Reviewed import warnings remain visible on Bills but no longer stop delivery actions.
 
 | Action | Description |
 |--------|-------------|

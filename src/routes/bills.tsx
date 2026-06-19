@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
@@ -7,7 +7,7 @@ import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Bill, BillingPeriod, InboxConfig, InboxImportResult, InboxPreviewCandidate, InboxPreviewSession } from "@/lib/types";
-import { formatEur } from "@/lib/types";
+import { formatEur, parseEurInputCents } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
   BillingEmptyState,
@@ -20,7 +20,6 @@ import {
   SummaryStrip,
   billingTableBodyRowClass,
   billingTableCellClass,
-  billingTableNumericCellClass,
 } from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,10 +29,27 @@ export const Route = createFileRoute("/bills")({
   component: BillsPage,
 });
 
-function ReviewIndicator({ note }: { note: string }) {
+function hasReviewWarning(bill: Bill) {
+  return Boolean(bill.parse_note?.trim() || bill.status === "needs_review");
+}
+
+function isReviewedWarning(bill: Bill) {
+  return hasReviewWarning(bill) && Boolean(bill.reviewed_at?.trim());
+}
+
+function isUnreviewedWarning(bill: Bill) {
+  return hasReviewWarning(bill) && !bill.reviewed_at?.trim();
+}
+
+function ReviewIndicator({ note, reviewed = false }: { note: string; reviewed?: boolean }) {
   return (
     <span
-      className="inline-flex size-2.5 shrink-0 cursor-help rounded-full bg-warning ring-1 ring-warning/60"
+      className={cn(
+        "inline-flex size-2.5 shrink-0 cursor-help rounded-full ring-1",
+        reviewed
+          ? "bg-success ring-success/50"
+          : "bg-warning ring-warning/60",
+      )}
       title={note}
       aria-label={note}
     />
@@ -52,103 +68,65 @@ function BillRow({
   bill,
   onSave,
   onDelete,
+  onMarkReviewed,
+  onMarkUnreviewed,
 }: {
   bill: Bill;
   onSave: (b: Bill) => void;
   onDelete: (id: number) => void;
+  onMarkReviewed: (id: number) => void;
+  onMarkUnreviewed: (id: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Bill>(bill);
+  const [amountDraft, setAmountDraft] = useState(
+    bill.amount_cents === 0 ? "" : formatEur(bill.amount_cents),
+  );
+  const reviewWarning = hasReviewWarning(bill);
+  const reviewedWarning = isReviewedWarning(bill);
+  const unreviewedWarning = isUnreviewedWarning(bill);
+  const reviewMessage = bill.parse_note?.trim() || "Review this import manually.";
+  const providerName = bill.provider_name?.trim() ?? "";
+  const providerTitle = providerName || bill.creditor_name || bill.source_filename;
+  const providerSubtitle = providerName ? bill.creditor_name : bill.source_filename;
+  const showProviderSubtitle =
+    providerSubtitle.trim() !== "" && providerSubtitle.trim() !== providerTitle.trim();
+  const hasIban = bill.creditor_iban.trim() !== "";
+  const dirty =
+    draft.creditor_name !== bill.creditor_name ||
+    draft.creditor_iban !== bill.creditor_iban ||
+    draft.reference !== bill.reference ||
+    draft.due_date !== bill.due_date ||
+    draft.amount_cents !== bill.amount_cents ||
+    draft.purpose_text !== bill.purpose_text;
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(bill);
+      setAmountDraft(bill.amount_cents === 0 ? "" : formatEur(bill.amount_cents));
+    }
+  }, [bill, editing]);
 
   const save = () => {
+    if (!dirty) return;
     onSave(draft);
     setEditing(false);
   };
 
   const cancel = () => {
-    setDraft(bill);
     setEditing(false);
   };
 
-  if (editing) {
-    return (
-      <Fragment>
-        <tr className="bg-accent/30">
-          <td />
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-sm"
-              value={draft.creditor_name}
-              onChange={(e) =>
-                setDraft({ ...draft, creditor_name: e.target.value })
-              }
-            />
-          </td>
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-xs font-mono"
-              value={draft.reference}
-              onChange={(e) => setDraft({ ...draft, reference: e.target.value })}
-            />
-          </td>
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-sm"
-              value={draft.due_date}
-              onChange={(e) => setDraft({ ...draft, due_date: e.target.value })}
-            />
-          </td>
-          <td className="px-3 py-2 text-xs text-muted-foreground">
-            {bill.source_filename}
-          </td>
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-sm"
-              value={
-                draft.amount_cents === 0 ? "" : String(draft.amount_cents / 100)
-              }
-              placeholder="123.45"
-              onChange={(e) => {
-                const val = parseFloat(e.target.value) || 0;
-                setDraft({ ...draft, amount_cents: Math.round(val * 100) });
-              }}
-            />
-          </td>
-          <td className="px-3 py-2">
-            <div className="flex gap-1">
-              <button
-                onClick={save}
-                className="text-success hover:text-success/80"
-              >
-                <Check className="size-4" />
-              </button>
-              <button
-                onClick={cancel}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          </td>
-        </tr>
-        <tr className="border-b border-border bg-accent/30">
-          <td />
-          <td colSpan={6} className="px-3 pb-3">
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              UPN purpose text
-            </label>
-            <Input
-              className="h-8 text-sm"
-              value={draft.purpose_text}
-              onChange={(e) =>
-                setDraft({ ...draft, purpose_text: e.target.value })
-              }
-            />
-          </td>
-        </tr>
-      </Fragment>
-    );
-  }
+  const confirmDelete = async () => {
+    if (!bill.id) return;
+    const confirmed = await confirm(`Delete ${providerTitle}? This cannot be undone.`, {
+      title: "Delete Bill",
+      kind: "warning",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (confirmed) onDelete(bill.id);
+  };
 
   return (
     <Fragment>
@@ -156,39 +134,55 @@ function BillRow({
         className={cn(
           billingTableBodyRowClass,
           "hover:bg-accent/20",
-          bill.parse_note && "bg-warning-soft/70",
+          unreviewedWarning && "bg-warning-soft/70",
         )}
       >
         <td className="w-[68px] p-0 align-middle">
-          <div className="grid min-h-16 place-items-center">
-            {bill.parse_note ? (
-              <ReviewIndicator note={bill.parse_note} />
+          <div className="grid min-h-14 place-items-center">
+            {reviewWarning ? (
+              <ReviewIndicator note={reviewMessage} reviewed={reviewedWarning} />
             ) : (
               <CheckCircle2 className="block size-4 text-success" />
             )}
           </div>
         </td>
-        <td className="py-3 pr-3 align-middle text-sm max-w-60">
+        <td className={`${billingTableCellClass} max-w-60 pl-0 text-sm`}>
           <div>
             <div className="truncate font-semibold">
-              {bill.provider_name ?? (bill.creditor_name || bill.source_filename)}
+              {providerTitle}
             </div>
+            {showProviderSubtitle && (
+              <div className="truncate text-xs text-muted-foreground">
+                {providerSubtitle}
+              </div>
+            )}
             <div className="truncate text-xs text-muted-foreground">
-              {bill.provider_name ? bill.creditor_name : bill.source_filename}
+              {hasIban ? bill.creditor_iban : <MissingField />}
             </div>
           </div>
         </td>
         <td className={`${billingTableCellClass} text-xs font-mono`}>
           <TextFieldValue value={bill.reference} />
         </td>
-        <td className={`${billingTableCellClass} text-sm`}>
+        <td className={`${billingTableCellClass} text-xs font-mono`}>
           <TextFieldValue value={bill.due_date} />
         </td>
         <td className={billingTableCellClass}>
-          {bill.parse_note ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
-              <AlertTriangle className="size-3" />
-              OCR - verify
+          {reviewWarning ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold",
+                reviewedWarning
+                  ? "bg-success-soft text-success"
+                  : "bg-warning-soft text-warning",
+              )}
+            >
+              {reviewedWarning ? (
+                <CheckCircle2 className="size-3" />
+              ) : (
+                <AlertTriangle className="size-3" />
+              )}
+              {reviewedWarning ? "Reviewed" : "OCR - verify"}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-2 py-1 text-xs font-semibold text-muted-foreground">
@@ -196,44 +190,177 @@ function BillRow({
             </span>
           )}
         </td>
-        <td className={`${billingTableNumericCellClass} text-sm font-semibold`}>
+        <td className={`${billingTableCellClass} text-right text-sm font-semibold tabular-nums`}>
           {formatEur(bill.amount_cents)} €
         </td>
         <td className={billingTableCellClass}>
           <div className="flex justify-end gap-1">
             <button
               onClick={() => setEditing(true)}
-              className="text-muted-foreground hover:text-foreground"
+              className={cn(
+                "text-muted-foreground hover:text-foreground",
+                editing && "text-foreground",
+              )}
+              aria-label="Edit bill"
             >
               <Pencil className="size-3.5" />
             </button>
             <button
-              onClick={() => bill.id && onDelete(bill.id)}
+              onClick={confirmDelete}
               className="text-muted-foreground hover:text-danger"
+              aria-label="Delete bill"
             >
               <Trash2 className="size-3.5" />
             </button>
           </div>
         </td>
       </tr>
-      {bill.parse_note && (
-        <tr className="border-b border-border bg-warning-soft/70">
+      {editing ? (
+        <tr className="border-b border-border bg-surface-2/80">
+          <td />
+          <td colSpan={6} className="px-3 py-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Provider name
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.creditor_name}
+                  onChange={(e) =>
+                    setDraft({ ...draft, creditor_name: e.target.value })
+                  }
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  IBAN
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.creditor_iban}
+                  onChange={(e) => setDraft({ ...draft, creditor_iban: e.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Reference
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.reference}
+                  onChange={(e) => setDraft({ ...draft, reference: e.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Due date
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.due_date}
+                  onChange={(e) => setDraft({ ...draft, due_date: e.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Amount
+                </span>
+                <Input
+                  className="h-8 text-sm tabular-nums"
+                  value={amountDraft}
+                  placeholder="123,45"
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setAmountDraft(value);
+                    setDraft({ ...draft, amount_cents: parseEurInputCents(value) });
+                  }}
+                />
+              </label>
+              <label className="space-y-1.5 md:col-span-2 xl:col-span-3">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  UPN purpose text
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.purpose_text}
+                  onChange={(e) =>
+                    setDraft({ ...draft, purpose_text: e.target.value })
+                  }
+                />
+              </label>
+            </div>
+
+            {reviewWarning && (
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                <span
+                  className={cn(
+                    "font-semibold",
+                    reviewedWarning ? "text-success" : "text-warning",
+                  )}
+                >
+                  {reviewedWarning ? "Import reviewed." : "Verify this import."}
+                </span>{" "}
+                {reviewMessage}
+              </p>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={cancel}>
+                <X className="size-3.5" />
+                Discard
+              </Button>
+              <Button size="sm" onClick={save} disabled={!dirty}>
+                <Check className="size-3.5" />
+                Save changes
+              </Button>
+            </div>
+          </td>
+        </tr>
+      ) : reviewWarning && (
+        <tr
+          className={cn(
+            "border-b border-border bg-card",
+            unreviewedWarning ? "bg-warning-soft/70" : "bg-surface-2",
+          )}
+        >
           <td />
           <td colSpan={6} className="px-3 py-3">
             <div className="flex flex-wrap items-center gap-3">
               <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-                <span className="font-semibold text-warning">Verify this import.</span>{" "}
-                {bill.parse_note}
+                <span
+                  className={cn(
+                    "font-semibold",
+                    reviewedWarning ? "text-success" : "text-warning",
+                  )}
+                >
+                  {reviewedWarning ? "Import reviewed." : "Verify this import."}
+                </span>{" "}
+                {reviewMessage}
               </p>
-              <Button
-                variant="warning"
-                size="sm"
-                className="ml-auto"
-                onClick={() => setEditing(true)}
-              >
-                <Check className="size-3.5" />
-                Review
-              </Button>
+              {bill.id && (
+                reviewedWarning ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => onMarkUnreviewed(bill.id!)}
+                  >
+                    <Minus className="size-3.5" />
+                    Unreview
+                  </Button>
+                ) : (
+                  <Button
+                    variant="warning"
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => onMarkReviewed(bill.id!)}
+                  >
+                    <Check className="size-3.5" />
+                    Mark reviewed
+                  </Button>
+                )
+              )}
             </div>
           </td>
         </tr>
@@ -1092,6 +1219,8 @@ function BillsPage() {
         parse_note: "",
         status: "draft",
         source_filename: "(manual)",
+        reviewed_at: null,
+        review_note: "",
         provider_name: null,
       };
       await ipc.saveBill(blank);
@@ -1108,6 +1237,20 @@ function BillsPage() {
     }
   };
 
+  const markBillReviewed = async (id: number) => {
+    await ipc.markBillReviewed(id, "");
+    if (selected?.id) {
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
+  };
+
+  const markBillUnreviewed = async (id: number) => {
+    await ipc.markBillUnreviewed(id);
+    if (selected?.id) {
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
+  };
+
   const deleteBill = async (id: number) => {
     await ipc.deleteBill(id);
     if (selected?.id) {
@@ -1116,8 +1259,9 @@ function BillsPage() {
   };
 
   const totalCents = bills.reduce((s, b) => s + b.amount_cents, 0);
-  const reviewBills = bills.filter((bill) => bill.parse_note?.trim());
-  const cleanCount = Math.max(0, bills.length - reviewBills.length);
+  const unreviewedBills = bills.filter(isUnreviewedWarning);
+  const reviewedWarningBills = bills.filter(isReviewedWarning);
+  const cleanCount = Math.max(0, bills.length - unreviewedBills.length - reviewedWarningBills.length);
   const inboxImported = inboxResults.filter((result) => result.status === "imported");
   const inboxSkipped = inboxResults.filter((result) => result.status.startsWith("skipped_"));
   const inboxFailed = inboxResults.filter((result) => result.status === "failed");
@@ -1254,11 +1398,22 @@ function BillsPage() {
               {cleanCount} file{cleanCount === 1 ? "" : "s"} clean
             </SummaryChip>
           )}
-          {reviewBills.map((bill) => (
+          {reviewedWarningBills.map((bill) => (
+            <SummaryChip
+              key={`reviewed-${bill.id ?? bill.source_filename}`}
+              className="bg-success-soft text-success font-normal"
+              title={bill.parse_note || "Review this import manually."}
+            >
+              <CheckCircle2 className="size-3.5" />
+              <span className="font-semibold text-foreground">{bill.source_filename}</span>
+              <span className="text-muted-foreground">reviewed</span>
+            </SummaryChip>
+          ))}
+          {unreviewedBills.map((bill) => (
             <SummaryChip
               key={bill.id ?? bill.source_filename}
               className="bg-warning-soft text-warning font-normal"
-              title={bill.parse_note}
+              title={bill.parse_note || "Review this import manually."}
             >
               <AlertTriangle className="size-3.5" />
               <span className="font-semibold text-foreground">{bill.source_filename}</span>
@@ -1268,7 +1423,7 @@ function BillsPage() {
         </SummaryStrip>
       )}
 
-      {selected && (
+      {selected && (showBillsLoading || showBillsSettling || bills.length === 0) && (
         <BillingTableFrame minHeight>
           {showBillsLoading ? (
             <BillingEmptyState
@@ -1277,51 +1432,57 @@ function BillsPage() {
               title="No bills yet for this billing month"
               detail="Use the buttons above to import PDF or image invoices, or add a bill manually."
             />
-          ) : showBillsSettling || bills.length === 0 ? (
+          ) : (
             <BillingEmptyState
               title="No bills yet for this billing month"
               detail="Use the buttons above to import PDF or image invoices, or add a bill manually."
             />
-          ) : (
-            <BillingTable>
-              <thead>
-                <BillingTableHeaderRow>
-                  <BillingTableHeaderCell className="w-[68px] p-0" />
-                  <BillingTableHeaderCell className="pl-0">Provider</BillingTableHeaderCell>
-                  <BillingTableHeaderCell>Reference</BillingTableHeaderCell>
-                  <BillingTableHeaderCell>Due Date</BillingTableHeaderCell>
-                  <BillingTableHeaderCell>Detection</BillingTableHeaderCell>
-                  <BillingTableHeaderCell className="text-right">Amount</BillingTableHeaderCell>
-                  <BillingTableHeaderCell />
-                </BillingTableHeaderRow>
-              </thead>
-              <tbody>
-                {bills.map((b) => (
-                  <BillRow
-                    key={b.id}
-                    bill={b}
-                    onSave={saveBill}
-                    onDelete={deleteBill}
-                  />
-                ))}
-              </tbody>
-              <tfoot>
-                <BillingTableFooterRow>
-                  <td />
-                  <td
-                    className="py-2 pr-3 text-xs text-muted-foreground"
-                  >
-                    Total ({bills.length} bills)
-                  </td>
-                  <td colSpan={3}></td>
-                  <td className={billingTableNumericCellClass}>
-                    {formatEur(totalCents)} €
-                  </td>
-                  <td></td>
-                </BillingTableFooterRow>
-              </tfoot>
-            </BillingTable>
           )}
+        </BillingTableFrame>
+      )}
+
+      {showBillsTable && (
+        <BillingTableFrame>
+          <BillingTable>
+            <thead>
+              <BillingTableHeaderRow>
+                <BillingTableHeaderCell className="w-[68px] p-0" />
+                <BillingTableHeaderCell className="pl-0">Provider</BillingTableHeaderCell>
+                <BillingTableHeaderCell>Reference</BillingTableHeaderCell>
+                <BillingTableHeaderCell>Due Date</BillingTableHeaderCell>
+                <BillingTableHeaderCell>Detection</BillingTableHeaderCell>
+                <BillingTableHeaderCell className="text-right">Amount</BillingTableHeaderCell>
+                <BillingTableHeaderCell />
+              </BillingTableHeaderRow>
+            </thead>
+            <tbody>
+              {bills.map((b) => (
+                <BillRow
+                  key={b.id}
+                  bill={b}
+                  onSave={saveBill}
+                  onDelete={deleteBill}
+                  onMarkReviewed={markBillReviewed}
+                  onMarkUnreviewed={markBillUnreviewed}
+                />
+              ))}
+            </tbody>
+            <tfoot>
+              <BillingTableFooterRow>
+                <td />
+                <td
+                  className="py-2 pr-3 text-xs text-muted-foreground"
+                >
+                  Total ({bills.length} bills)
+                </td>
+                <td colSpan={3}></td>
+                <td className={`${billingTableCellClass} text-right font-semibold tabular-nums`}>
+                  {formatEur(totalCents)} €
+                </td>
+                <td></td>
+              </BillingTableFooterRow>
+            </tfoot>
+          </BillingTable>
         </BillingTableFrame>
       )}
 

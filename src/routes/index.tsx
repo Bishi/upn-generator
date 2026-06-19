@@ -104,7 +104,11 @@ function DashboardPage() {
     : new Set(splits.map((split) => split.apartment_id)).size;
   const reviewBills = useStatusSummary
     ? []
-    : bills.filter((bill) => bill.parse_note?.trim());
+    : bills.filter(
+        (bill) =>
+          (bill.parse_note?.trim() || bill.status === "needs_review") &&
+          !bill.reviewed_at?.trim(),
+      );
   const firstReviewBill = reviewBills[0] ?? null;
   const needsReview = useStatusSummary ? selectedStatus.needsReview : reviewBills.length;
   const validationErrorCount =
