@@ -13,6 +13,8 @@
 
 - [ ] Test the inbox connection and confirm success/failure messages are clear.
 - [ ] Run Import from Inbox and confirm the preview opens before any bill rows are created.
+- [ ] Select a closed billing month and confirm inbox import controls on Bills are disabled.
+- [ ] If an inbox preview session exists before closing the month, close the month and confirm importing selected preview candidates is blocked until the month is reopened.
 - [ ] Confirm scan-window overrides apply only to the current preview run unless saved in settings.
 - [ ] Set the scan window override to 0 and confirm the drawer labels the scan as today-only.
 - [ ] Set the scan window override to 1 and confirm the drawer labels the scan as today plus the previous calendar day.

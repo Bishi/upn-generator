@@ -26,6 +26,7 @@ pub struct BillingPeriod {
     pub month: i32,
     pub year: i32,
     pub status: String,
+    pub closed_at: Option<String>,
     pub created_at: String,
 }
 
@@ -451,26 +452,62 @@ fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
 
 // ─── Billing Period Commands ────────────────────────────────────────────────
 
+pub(crate) const PERIOD_STATUS_DRAFT: &str = "draft";
+pub(crate) const PERIOD_STATUS_CLOSED: &str = "closed";
+
+pub(crate) fn billing_period_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BillingPeriod> {
+    Ok(BillingPeriod {
+        id: Some(row.get(0)?),
+        building_id: row.get(1)?,
+        month: row.get(2)?,
+        year: row.get(3)?,
+        status: row.get(4)?,
+        closed_at: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+pub(crate) fn load_billing_period_by_id(
+    conn: &Connection,
+    billing_period_id: i64,
+) -> Result<BillingPeriod, String> {
+    conn.query_row(
+        "SELECT id, building_id, month, year, status, closed_at, created_at
+         FROM billing_periods WHERE id=?1",
+        [billing_period_id],
+        billing_period_from_row,
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub(crate) fn ensure_period_open(conn: &Connection, billing_period_id: i64) -> Result<(), String> {
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM billing_periods WHERE id=?1",
+            [billing_period_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if status == PERIOD_STATUS_CLOSED {
+        return Err(
+            "This billing month is closed. Reopen the month before changing bills, splits, or delivery."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_billing_periods(db: State<DbState>) -> Result<Vec<BillingPeriod>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, building_id, month, year, status, created_at
+            "SELECT id, building_id, month, year, status, closed_at, created_at
              FROM billing_periods ORDER BY year DESC, month DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |row| {
-            Ok(BillingPeriod {
-                id: Some(row.get(0)?),
-                building_id: row.get(1)?,
-                month: row.get(2)?,
-                year: row.get(3)?,
-                status: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })
+        .query_map([], billing_period_from_row)
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
@@ -489,19 +526,10 @@ pub fn create_billing_period(
     )
     .map_err(|e| e.to_string())?;
     conn.query_row(
-        "SELECT id, building_id, month, year, status, created_at
+        "SELECT id, building_id, month, year, status, closed_at, created_at
          FROM billing_periods WHERE building_id=1 AND month=?1 AND year=?2",
         params![month, year],
-        |row| {
-            Ok(BillingPeriod {
-                id: Some(row.get(0)?),
-                building_id: row.get(1)?,
-                month: row.get(2)?,
-                year: row.get(3)?,
-                status: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        },
+        billing_period_from_row,
     )
     .map_err(|e| e.to_string())
 }
@@ -546,21 +574,12 @@ pub fn create_year_periods(db: State<DbState>, year: i32) -> Result<Vec<BillingP
     }
     let mut stmt = conn
         .prepare(
-            "SELECT id, building_id, month, year, status, created_at
+            "SELECT id, building_id, month, year, status, closed_at, created_at
              FROM billing_periods WHERE year=?1 ORDER BY month ASC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([year], |row| {
-            Ok(BillingPeriod {
-                id: Some(row.get(0)?),
-                building_id: row.get(1)?,
-                month: row.get(2)?,
-                year: row.get(3)?,
-                status: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })
+        .query_map([year], billing_period_from_row)
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
@@ -660,8 +679,9 @@ pub fn save_bill(db: State<DbState>, bill: Bill) -> Result<Bill, String> {
 fn save_bill_inner(conn: &Connection, bill: Bill) -> Result<Bill, String> {
     match bill.id {
         Some(id) => {
+            let previous = load_bill_by_id(conn, id)?;
+            ensure_period_open(conn, previous.billing_period_id)?;
             let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-            let previous = load_bill_by_id(&tx, id)?;
             let meaningful_change = persisted_bill_fields_changed(&previous, &bill);
             tx.execute(
                 "UPDATE bills SET amount_cents=?1, creditor_name=?2, creditor_iban=?3,
@@ -698,6 +718,7 @@ fn save_bill_inner(conn: &Connection, bill: Bill) -> Result<Bill, String> {
             Ok(saved)
         }
         None => {
+            ensure_period_open(conn, bill.billing_period_id)?;
             conn.execute(
                 "INSERT INTO bills
                  (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
@@ -747,6 +768,7 @@ fn mark_bill_reviewed_inner(
     review_note: &str,
 ) -> Result<Bill, String> {
     let bill = load_bill_by_id(conn, bill_id)?;
+    ensure_period_open(conn, bill.billing_period_id)?;
     if bill_has_review_warning(&bill.parse_note, &bill.status) {
         conn.execute(
             "UPDATE bills SET reviewed_at=datetime('now'), review_note=?1 WHERE id=?2",
@@ -764,6 +786,8 @@ pub fn mark_bill_unreviewed(db: State<DbState>, bill_id: i64) -> Result<Bill, St
 }
 
 fn mark_bill_unreviewed_inner(conn: &Connection, bill_id: i64) -> Result<Bill, String> {
+    let bill = load_bill_by_id(conn, bill_id)?;
+    ensure_period_open(conn, bill.billing_period_id)?;
     conn.execute(
         "UPDATE bills SET reviewed_at=NULL, review_note='' WHERE id=?1",
         [bill_id],
@@ -805,6 +829,14 @@ fn delete_inbox_imports_for_bill(conn: &Connection, bill_id: i64) -> Result<(), 
 #[tauri::command]
 pub fn delete_bill(db: State<DbState>, id: i64) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let billing_period_id: i64 = conn
+        .query_row(
+            "SELECT billing_period_id FROM bills WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    ensure_period_open(&conn, billing_period_id)?;
     conn.execute("DELETE FROM bill_splits WHERE bill_id=?1", [id])
         .map_err(|e| e.to_string())?;
     delete_inbox_imports_for_bill(&conn, id)?;
@@ -834,6 +866,7 @@ pub fn import_bill(
     // Get billing period for month/year interpolation
     let (month, year) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_period_open(&conn, billing_period_id)?;
         conn.query_row(
             "SELECT month, year FROM billing_periods WHERE id=?1",
             [billing_period_id],
@@ -930,6 +963,7 @@ pub fn import_bill(
 
     // Insert into DB
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_period_open(&conn, billing_period_id)?;
     conn.execute(
         "INSERT INTO bills
          (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
@@ -1770,6 +1804,8 @@ pub(crate) fn save_prepared_multi_bill_import(
     providers: &[Provider],
     persist_fallback_raw_text: bool,
 ) -> Result<Vec<Bill>, String> {
+    ensure_period_open(conn, billing_period_id)?;
+
     let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
         .iter()
         .filter(|p| !p.creditor_iban.is_empty())
@@ -2033,6 +2069,15 @@ mod tests {
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
             );
+            CREATE TABLE billing_periods (
+                id INTEGER PRIMARY KEY,
+                building_id INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                closed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT '2026-06-01 00:00:00'
+            );
             CREATE TABLE bills (
                 id INTEGER PRIMARY KEY,
                 billing_period_id INTEGER NOT NULL,
@@ -2056,6 +2101,8 @@ mod tests {
                 review_note TEXT NOT NULL DEFAULT ''
             );
             INSERT INTO providers (id, name) VALUES (1, 'Provider 1');
+            INSERT INTO billing_periods (id, building_id, month, year, status)
+            VALUES (1, 1, 6, 2026, 'draft');
             ",
         )
         .unwrap();
@@ -2077,6 +2124,16 @@ mod tests {
                 CASE WHEN ?3 THEN 'Checked' ELSE '' END
              )",
             params![id, parse_note, if reviewed { 1 } else { 0 }],
+        )
+        .unwrap();
+    }
+
+    fn close_test_period(conn: &Connection) {
+        conn.execute(
+            "UPDATE billing_periods
+             SET status='closed', closed_at='2026-06-30 12:00:00'
+             WHERE id=1",
+            [],
         )
         .unwrap();
     }
@@ -2120,6 +2177,19 @@ mod tests {
 
         assert!(saved.reviewed_at.is_none());
         assert_eq!(saved.review_note, "");
+    }
+
+    #[test]
+    fn save_bill_rejects_closed_period() {
+        let conn = setup_bill_command_conn();
+        insert_review_test_bill(&conn, 1, "", false);
+        close_test_period(&conn);
+
+        let mut bill = load_bill_by_id(&conn, 1).unwrap();
+        bill.amount_cents += 1;
+        let error = save_bill_inner(&conn, bill).unwrap_err();
+
+        assert!(error.contains("billing month is closed"));
     }
 
     #[test]
@@ -2202,7 +2272,10 @@ SI12 6330017789210
             .iter()
             .find(|bill| bill.reference == "SI12 2000263445522")
             .expect("waste bill");
-        assert_eq!(waste.purpose_text, "Ravnanje z odpadki 05/2026 0040113249 15.06.2026");
+        assert_eq!(
+            waste.purpose_text,
+            "Ravnanje z odpadki 05/2026 0040113249 15.06.2026"
+        );
         assert_eq!(waste.due_date, "15.06.2026");
     }
 
@@ -2343,6 +2416,7 @@ pub fn import_bills(
 
     let (month, year) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_period_open(&conn, billing_period_id)?;
         conn.query_row(
             "SELECT month, year FROM billing_periods WHERE id=?1",
             [billing_period_id],
@@ -2449,6 +2523,7 @@ pub fn import_bills(
     // Fallback: nothing found — create one blank bill
     if extracted.is_empty() {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_period_open(&conn, billing_period_id)?;
         conn.execute(
             "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
              creditor_name, creditor_iban, creditor_address, creditor_city,
@@ -2496,6 +2571,7 @@ pub fn import_bills(
 
     // --- Match to providers and insert ---
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_period_open(&conn, billing_period_id)?;
     let mut results: Vec<Bill> = Vec::new();
     log.push_str("--- SAVED BILLS ---\n");
 

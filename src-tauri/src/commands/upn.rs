@@ -19,9 +19,14 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::credentials::{self, MailCredentialKind};
 
+use super::bills::{
+    ensure_period_open, load_billing_period_by_id, BillingPeriod, PERIOD_STATUS_CLOSED,
+    PERIOD_STATUS_DRAFT,
+};
 use super::config::{DbState, SmtpConfig};
 use super::upn_validation::{
-    ensure_validation_allows, ACTION_DOWNLOAD_ALL, ACTION_MARK_DELIVERED, ACTION_SEND_EMAILS,
+    ensure_validation_allows, validate_upn_pre_send_inner, ACTION_DOWNLOAD_ALL,
+    ACTION_MARK_DELIVERED, ACTION_SEND_EMAILS,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1843,6 +1848,7 @@ fn send_emails_impl(
     let mut previous_phase = overall_start;
     {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_period_open(&conn, billing_period_id)?;
         ensure_validation_allows(&conn, billing_period_id, ACTION_SEND_EMAILS)?;
     }
     log_send_email_phase(
@@ -2249,6 +2255,7 @@ pub fn mark_upn_period_delivered(
     billing_period_id: i64,
 ) -> Result<UpnDeliveryRollup, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_period_open(&conn, billing_period_id)?;
     ensure_validation_allows(&conn, billing_period_id, ACTION_MARK_DELIVERED)?;
     let packets = load_current_packet_infos(&conn, billing_period_id)?;
     let packet_errors = packets
@@ -2321,6 +2328,7 @@ pub fn unmark_upn_period_delivered(
     billing_period_id: i64,
 ) -> Result<UpnDeliveryRollup, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_period_open(&conn, billing_period_id)?;
     let packets = load_current_packet_infos(&conn, billing_period_id)?;
     conn.execute(
         "DELETE FROM upn_delivery_events
@@ -2358,6 +2366,90 @@ pub fn unmark_upn_period_delivered(
     )?;
 
     Ok(build_delivery_rollup(billing_period_id, packets, &events))
+}
+
+#[tauri::command]
+pub fn close_billing_period(
+    db: State<DbState>,
+    billing_period_id: i64,
+) -> Result<BillingPeriod, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let period = load_billing_period_by_id(&conn, billing_period_id)?;
+    if period.status == PERIOD_STATUS_CLOSED {
+        return Ok(period);
+    }
+
+    let packets = load_current_packet_infos(&conn, billing_period_id)?;
+    let events = query_vec(
+        &conn,
+        "SELECT id, attempt_id, billing_period_id, apartment_id, delivery_type,
+                status, recipient, original_recipient, attachment_sha256,
+                error, created_at
+         FROM upn_delivery_events
+         WHERE billing_period_id = ?1
+         ORDER BY created_at ASC, id ASC",
+        &[&billing_period_id],
+        |r| {
+            Ok(UpnDeliveryEvent {
+                id: r.get(0)?,
+                attempt_id: r.get(1)?,
+                billing_period_id: r.get(2)?,
+                apartment_id: r.get(3)?,
+                delivery_type: r.get(4)?,
+                status: r.get(5)?,
+                recipient: r.get(6)?,
+                original_recipient: r.get(7)?,
+                attachment_sha256: r.get(8)?,
+                error: r.get(9)?,
+                created_at: r.get(10)?,
+            })
+        },
+    )?;
+    let rollup = build_delivery_rollup(billing_period_id, packets, &events);
+    if rollup.packet_count == 0 || !rollup.complete {
+        return Err(
+            "Cannot close this billing month until every current UPN packet is delivered."
+                .to_string(),
+        );
+    }
+
+    let validation = validate_upn_pre_send_inner(&conn, billing_period_id)?;
+    if !validation.can_mark_delivered {
+        return Err(
+            "Cannot close this billing month while Mark Delivered validation has blocking issues."
+                .to_string(),
+        );
+    }
+
+    conn.execute(
+        "UPDATE billing_periods
+         SET status=?1, closed_at=datetime('now')
+         WHERE id=?2",
+        params![PERIOD_STATUS_CLOSED, billing_period_id],
+    )
+    .map_err(|e| e.to_string())?;
+    load_billing_period_by_id(&conn, billing_period_id)
+}
+
+#[tauri::command]
+pub fn reopen_billing_period(
+    db: State<DbState>,
+    billing_period_id: i64,
+) -> Result<BillingPeriod, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let period = load_billing_period_by_id(&conn, billing_period_id)?;
+    if period.status != PERIOD_STATUS_CLOSED {
+        return Ok(period);
+    }
+
+    conn.execute(
+        "UPDATE billing_periods
+         SET status=?1, closed_at=NULL
+         WHERE id=?2",
+        params![PERIOD_STATUS_DRAFT, billing_period_id],
+    )
+    .map_err(|e| e.to_string())?;
+    load_billing_period_by_id(&conn, billing_period_id)
 }
 
 #[tauri::command]

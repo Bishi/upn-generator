@@ -110,11 +110,13 @@ function SplitBillRow({
   info,
   apartments,
   rowSplits,
+  readOnly,
   onSaveOverrides,
 }: {
   info: ReturnType<typeof buildMatrix>["bills"][number][1];
   apartments: ReturnType<typeof buildMatrix>["apartments"];
   rowSplits: Map<number, SplitRow> | undefined;
+  readOnly: boolean;
   onSaveOverrides: (updates: Array<{ splitId: number; cents: number }>) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -152,7 +154,7 @@ function SplitBillRow({
   };
 
   const startEditing = () => {
-    if (editing) return;
+    if (editing || readOnly) return;
     resetDraft();
     setEditing(true);
   };
@@ -171,7 +173,7 @@ function SplitBillRow({
   const dirty = updates.length > 0;
 
   const save = async () => {
-    if (!dirty) return;
+    if (!dirty || readOnly) return;
     setSaving(true);
     try {
       await onSaveOverrides(updates.map(({ splitId, cents }) => ({ splitId, cents })));
@@ -216,8 +218,11 @@ function SplitBillRow({
               className={cn(
                 "text-muted-foreground hover:text-foreground",
                 editing && "text-foreground",
+                readOnly && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
               )}
               aria-label="Edit split amounts"
+              disabled={readOnly}
+              title={readOnly ? "Reopen this month before editing split amounts." : undefined}
             >
               <Pencil className="size-3.5" />
             </button>
@@ -287,9 +292,14 @@ function SplitsPage() {
   const splits = snapshot.splits;
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isClosed = selected?.status === "closed";
 
   const recalculate = async () => {
     if (!selected?.id) return;
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before recalculating splits.");
+      return;
+    }
     setError(null);
     setCalculating(true);
     try {
@@ -303,6 +313,10 @@ function SplitsPage() {
   };
 
   const saveOverrides = async (updates: Array<{ splitId: number; cents: number }>) => {
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before editing split amounts.");
+      return;
+    }
     for (const update of updates) {
       await ipc.saveSplit({
         id: update.splitId,
@@ -361,7 +375,11 @@ function SplitsPage() {
       title="Splits"
       subtitle={null}
       actions={
-        <Button onClick={recalculate} disabled={!selected?.id || calculating}>
+        <Button
+          onClick={recalculate}
+          disabled={!selected?.id || calculating || isClosed}
+          title={isClosed ? "Reopen this month before recalculating splits." : undefined}
+        >
           {calculating ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (
@@ -374,6 +392,12 @@ function SplitsPage() {
       {workflowError && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {workflowError}
+        </div>
+      )}
+
+      {selected && isClosed && (
+        <div className="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success">
+          This billing month is closed. Reopen it from UPN Preview before recalculating or editing splits.
         </div>
       )}
 
@@ -454,6 +478,7 @@ function SplitsPage() {
                   info={info}
                   apartments={apartments}
                   rowSplits={matrix.get(billId)}
+                  readOnly={isClosed}
                   onSaveOverrides={saveOverrides}
                 />
               ))}

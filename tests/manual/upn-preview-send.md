@@ -27,6 +27,10 @@
 - [ ] While Download All PDFs is preparing the export, confirm the page shows a loading overlay and blocks other clicks until the export completes or fails.
 - [ ] Open the exported ZIP and confirm it contains one combined PDF packet for each apartment.
 - [ ] Confirm Download All PDFs does not mark the month delivered or create delivery history.
+- [ ] Try closing a month before every current packet is delivered and confirm the action is blocked.
+- [ ] With every current apartment packet delivered and Mark Delivered validation passing, close the month and confirm the month picker shows it as closed.
+- [ ] In a closed month, confirm single/apartment previews and Download All PDFs still work, while Send Emails, Mark Delivered, and Unmark Delivered are disabled.
+- [ ] Reopen a closed month and confirm delivery actions become available again when validation allows them.
 - [ ] Click Mark Delivered, cancel the confirmation prompt, and confirm the month remains undelivered.
 - [ ] Click Mark Delivered, accept the confirmation prompt, and confirm all current apartment packets are marked delivered.
 - [ ] Confirm the successful Mark Delivered message appears as a toast and does not push page content down.

@@ -95,7 +95,7 @@ Choose the app theme. **Refined** is the default and the polished production dir
 
 ### Settings -> App -> Data
 
-Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, bills, splits, and the selected appearance theme. While backup or restore is running, the app shows a loading overlay and temporarily blocks other clicks.
+Use **Create Backup** to save a manual backup of the app data to any folder you choose. The backup is stored as a `.sqlite3` SQLite file and includes building settings, apartments, providers, billing periods, month close state, bills, splits, and the selected appearance theme. While backup or restore is running, the app shows a loading overlay and temporarily blocks other clicks.
 
 Use **Restore Backup** to replace the current app data with a previously saved backup. For safety, saved SMTP and inbox passwords are not included in backups. Existing Windows Credential Manager passwords are kept and reused only when the restored username still matches; otherwise enter the password again in **Settings -> Delivery**.
 
@@ -107,7 +107,7 @@ Use **Restore Backup** to replace the current app data with a previously saved b
 
 Go to the **Bills** page.
 
-Use the month picker to choose the billing month. Years and months can be browsed directly; the app creates the underlying billing period only when you import or add bills for a month. Months with all current UPN packets delivered are marked as closed in the picker.
+Use the month picker to choose the billing month. Years and months can be browsed directly; the app creates the underlying billing period only when you import or add bills for a month. Months explicitly closed from UPN Preview are marked as closed in the picker.
 
 ### Step 2 - Import bills
 
@@ -156,9 +156,12 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 | **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
 | **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
+| **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
 | **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
 
 UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Downloaded PDFs do not mark a month delivered by themselves.
+
+After every current apartment UPN packet is delivered and Mark Delivered validation has no blocking issues, use **Close Month** to mark the billing month done. Closed months remain readable: you can still inspect bills and splits, open UPN previews, and download the PDF ZIP. Editing bills, importing from local files or inbox, recalculating or overriding splits, sending emails, and changing manual delivery marks require **Reopen Month** first.
 
 ---
 
@@ -198,7 +201,7 @@ All data is stored locally in a SQLite database at:
 %APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, the selected appearance theme, inbox import history, and UPN email/manual delivery history, but intentionally exclude saved SMTP and inbox passwords. Mail passwords are stored in Windows Credential Manager and are matched to the configured username before use.
+Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, month close state, the selected appearance theme, inbox import history, and UPN email/manual delivery history, but intentionally exclude saved SMTP and inbox passwords. Mail passwords are stored in Windows Credential Manager and are matched to the configured username before use.
 
 Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings. Inbox imports connect directly to the IMAP server you configure, store only import metadata, and do not persist raw extracted text from inbox attachments.
 

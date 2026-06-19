@@ -66,12 +66,14 @@ function TextFieldValue({ value }: { value: string }) {
 
 function BillRow({
   bill,
+  readOnly,
   onSave,
   onDelete,
   onMarkReviewed,
   onMarkUnreviewed,
 }: {
   bill: Bill;
+  readOnly: boolean;
   onSave: (b: Bill) => void;
   onDelete: (id: number) => void;
   onMarkReviewed: (id: number) => void;
@@ -108,7 +110,7 @@ function BillRow({
   }, [bill, editing]);
 
   const save = () => {
-    if (!dirty) return;
+    if (!dirty || readOnly) return;
     onSave(draft);
     setEditing(false);
   };
@@ -119,6 +121,7 @@ function BillRow({
 
   const confirmDelete = async () => {
     if (!bill.id) return;
+    if (readOnly) return;
     const confirmed = await confirm(`Delete ${providerTitle}? This cannot be undone.`, {
       title: "Delete Bill",
       kind: "warning",
@@ -196,19 +199,29 @@ function BillRow({
         <td className={billingTableCellClass}>
           <div className="flex justify-end gap-1">
             <button
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                if (!readOnly) setEditing(true);
+              }}
               className={cn(
                 "text-muted-foreground hover:text-foreground",
                 editing && "text-foreground",
+                readOnly && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
               )}
               aria-label="Edit bill"
+              disabled={readOnly}
+              title={readOnly ? "Reopen this month before editing bills." : undefined}
             >
               <Pencil className="size-3.5" />
             </button>
             <button
               onClick={confirmDelete}
-              className="text-muted-foreground hover:text-danger"
+              className={cn(
+                "text-muted-foreground hover:text-danger",
+                readOnly && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
+              )}
               aria-label="Delete bill"
+              disabled={readOnly}
+              title={readOnly ? "Reopen this month before deleting bills." : undefined}
             >
               <Trash2 className="size-3.5" />
             </button>
@@ -345,6 +358,8 @@ function BillRow({
                     size="sm"
                     className="ml-auto"
                     onClick={() => onMarkUnreviewed(bill.id!)}
+                    disabled={readOnly}
+                    title={readOnly ? "Reopen this month before changing review state." : undefined}
                   >
                     <Minus className="size-3.5" />
                     Unreview
@@ -355,6 +370,8 @@ function BillRow({
                     size="sm"
                     className="ml-auto"
                     onClick={() => onMarkReviewed(bill.id!)}
+                    disabled={readOnly}
+                    title={readOnly ? "Reopen this month before changing review state." : undefined}
                   >
                     <Check className="size-3.5" />
                     Mark reviewed
@@ -655,6 +672,7 @@ function InboxStatusChip({ candidate }: { candidate: InboxPreviewCandidate }) {
 function InboxImportDrawer({
   open,
   canEnsurePeriod,
+  readOnly,
   periodLabel,
   ensureBillingPeriod,
   onClose,
@@ -662,6 +680,7 @@ function InboxImportDrawer({
 }: {
   open: boolean;
   canEnsurePeriod: boolean;
+  readOnly: boolean;
   periodLabel: string;
   ensureBillingPeriod: () => Promise<(BillingPeriod & { id: number }) | null>;
   onClose: () => void;
@@ -729,7 +748,7 @@ function InboxImportDrawer({
   }, [open, busy, closeDrawer]);
 
   const fetchPreview = async () => {
-    if (!canEnsurePeriod) return;
+    if (!canEnsurePeriod || readOnly) return;
     setError(null);
     setResults([]);
     setLoadingPreview(true);
@@ -756,7 +775,7 @@ function InboxImportDrawer({
   };
 
   const importSelected = async () => {
-    if (!preview || selectedIds.size === 0) return;
+    if (!preview || selectedIds.size === 0 || readOnly) return;
     setError(null);
     setImporting(true);
     try {
@@ -880,7 +899,12 @@ function InboxImportDrawer({
                   {senderEntries.length > 0 ? <> from <span className="font-semibold text-foreground">{senderEntries.length} senders</span></> : null}. Only bills for the <span className="font-semibold text-foreground">{periodLabel}</span> billing month will be offered.
                 </p>
               </div>
-              <Button onClick={fetchPreview} disabled={!canEnsurePeriod || loadingConfig || loadingPreview || importing} className="h-10 px-6">
+              <Button
+                onClick={fetchPreview}
+                disabled={!canEnsurePeriod || readOnly || loadingConfig || loadingPreview || importing}
+                title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
+                className="h-10 px-6"
+              >
                 {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />}
                 Fetch preview
               </Button>
@@ -897,7 +921,14 @@ function InboxImportDrawer({
                   {formatScanWindowChip(preview.days_to_scan)}
                 </InboxChip>
                 <SenderAllowlistChip senders={senderEntries} busy={busy} onEditSettings={() => void closeDrawer()} />
-                <Button variant="ghost" size="sm" className="ml-auto h-7" onClick={fetchPreview} disabled={loadingPreview || importing}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-7"
+                  onClick={fetchPreview}
+                  disabled={readOnly || loadingPreview || importing}
+                  title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
+                >
                   {loadingPreview ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                   Re-scan
                 </Button>
@@ -1111,7 +1142,12 @@ function InboxImportDrawer({
                 <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
                   Close
                 </Button>
-                <Button variant="ghost" onClick={fetchPreview} disabled={!canEnsurePeriod || loadingPreview || importing}>
+                <Button
+                  variant="ghost"
+                  onClick={fetchPreview}
+                  disabled={!canEnsurePeriod || readOnly || loadingPreview || importing}
+                  title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
+                >
                   {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                   Import again
                 </Button>
@@ -1126,7 +1162,11 @@ function InboxImportDrawer({
                 <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
                   Close
                 </Button>
-                <Button onClick={importSelected} disabled={!preview || selectedIds.size === 0 || importing || loadingPreview}>
+                <Button
+                  onClick={importSelected}
+                  disabled={!preview || readOnly || selectedIds.size === 0 || importing || loadingPreview}
+                  title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
+                >
                   {importing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
                   Import selected ({selectedBillCount})
                 </Button>
@@ -1154,9 +1194,14 @@ function BillsPage() {
   const [inboxDrawerOpen, setInboxDrawerOpen] = useState(false);
   const [inboxResults, setInboxResults] = useState<InboxImportResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const isClosed = selected?.status === "closed";
 
   const importFiles = async () => {
     if (!selected) return;
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before importing bills.");
+      return;
+    }
     setError(null);
     setImporting(true);
     try {
@@ -1197,6 +1242,10 @@ function BillsPage() {
 
   const addBlankBill = async () => {
     setError(null);
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before adding bills.");
+      return;
+    }
     try {
       const billingPeriod = await ensureSelectedPeriod();
       if (!billingPeriod) return;
@@ -1231,6 +1280,10 @@ function BillsPage() {
   };
 
   const saveBill = async (bill: Bill) => {
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before editing bills.");
+      return;
+    }
     await ipc.saveBill(bill);
     if (selected?.id) {
       await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
@@ -1238,6 +1291,10 @@ function BillsPage() {
   };
 
   const markBillReviewed = async (id: number) => {
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before changing review state.");
+      return;
+    }
     await ipc.markBillReviewed(id, "");
     if (selected?.id) {
       await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
@@ -1245,6 +1302,10 @@ function BillsPage() {
   };
 
   const markBillUnreviewed = async (id: number) => {
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before changing review state.");
+      return;
+    }
     await ipc.markBillUnreviewed(id);
     if (selected?.id) {
       await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
@@ -1252,6 +1313,10 @@ function BillsPage() {
   };
 
   const deleteBill = async (id: number) => {
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before deleting bills.");
+      return;
+    }
     await ipc.deleteBill(id);
     if (selected?.id) {
       await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
@@ -1287,15 +1352,29 @@ function BillsPage() {
       actions={
         selected ? (
           <>
-            <Button variant="outline" onClick={addBlankBill}>
+            <Button
+              variant="outline"
+              onClick={addBlankBill}
+              disabled={isClosed}
+              title={isClosed ? "Reopen this month before adding bills." : undefined}
+            >
               <Plus className="size-4" />
               Add Bill
             </Button>
-            <Button variant="outline" onClick={() => setInboxDrawerOpen(true)}>
+            <Button
+              variant="outline"
+              onClick={() => setInboxDrawerOpen(true)}
+              disabled={isClosed}
+              title={isClosed ? "Reopen this month before importing inbox bills." : undefined}
+            >
               <Mail className="size-4" />
               Import from Inbox
             </Button>
-            <Button onClick={importFiles} disabled={importing}>
+            <Button
+              onClick={importFiles}
+              disabled={importing || isClosed}
+              title={isClosed ? "Reopen this month before importing bills." : undefined}
+            >
               {importing ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
@@ -1314,6 +1393,7 @@ function BillsPage() {
       <InboxImportDrawer
         open={inboxDrawerOpen}
         canEnsurePeriod={selected != null}
+        readOnly={isClosed}
         periodLabel={formatBillingPeriodLabel(selected?.month, selected?.year)}
         ensureBillingPeriod={ensureSelectedPeriod}
         onClose={() => setInboxDrawerOpen(false)}
@@ -1329,6 +1409,12 @@ function BillsPage() {
       {workflowError && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {workflowError}
+        </div>
+      )}
+
+      {selected && isClosed && (
+        <div className="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success">
+          This billing month is closed. Reopen it from UPN Preview before importing or editing bills.
         </div>
       )}
 
@@ -1460,6 +1546,7 @@ function BillsPage() {
                 <BillRow
                   key={b.id}
                   bill={b}
+                  readOnly={isClosed}
                   onSave={saveBill}
                   onDelete={deleteBill}
                   onMarkReviewed={markBillReviewed}

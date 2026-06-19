@@ -10,7 +10,9 @@
 ## Cases
 
 - [ ] Open the month picker, confirm clicking outside or pressing Escape closes it.
-- [ ] Mark a billing month delivered from UPN Preview and confirm the month picker shows that month as closed.
+- [ ] Close a billing month from UPN Preview and confirm the month picker shows that month as closed.
+- [ ] Select a closed billing month and confirm Add Bill, Import Bills, Import from Inbox, row edit/delete, and review-state buttons are disabled.
+- [ ] Reopen the closed billing month from UPN Preview and confirm Bills page import/edit/delete actions become available again.
 - [ ] Use the previous/next year arrows, select a month that has no bills yet, and confirm the Bills page shows the normal empty month state.
 - [ ] Change the picker year, close the picker without selecting a month, and confirm reopening starts on the current year.
 - [ ] Cancel a local bill import for a newly selected empty month and confirm no billing period row is created.

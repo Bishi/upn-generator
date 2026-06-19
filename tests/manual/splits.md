@@ -17,6 +17,8 @@
 - [ ] Confirm split amounts add up to the original bill total after rounding.
 - [ ] Manually adjust a split cell and confirm the change persists after reload.
 - [ ] Change a source bill amount and confirm the Splits page warns or requires recalculation.
+- [ ] Select a closed billing month and confirm Recalculate plus manual split editing are disabled while existing splits remain readable.
+- [ ] Reopen the closed billing month from UPN Preview and confirm Recalculate plus manual split editing become available again.
 - [ ] Recalculate after a bill/provider/apartment change and confirm stale split data is replaced.
 - [ ] Confirm an unreviewed imported bill warning shows a warning indicator on Splits, then mark the bill reviewed on Bills and confirm Splits no longer shows it as unresolved after refresh.
 - [ ] Confirm inactive apartments are handled according to the current product rule.

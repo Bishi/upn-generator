@@ -145,6 +145,8 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
         let has_upn_delivery_events = attached_table_exists(&conn, "upn_delivery_events")?;
         let has_bills_reviewed_at = attached_column_exists(&conn, "bills", "reviewed_at")?;
         let has_bills_review_note = attached_column_exists(&conn, "bills", "review_note")?;
+        let has_billing_periods_closed_at =
+            attached_column_exists(&conn, "billing_periods", "closed_at")?;
         let has_smtp_allowlist_enabled =
             attached_column_exists(&conn, "smtp_config", "allowlist_enabled")?;
         let has_smtp_recipient_allowlist =
@@ -225,6 +227,19 @@ pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), S
             ",
         )
         .map_err(|e| e.to_string())?;
+
+        if has_billing_periods_closed_at {
+            tx.execute(
+                "UPDATE billing_periods
+                 SET closed_at = (
+                    SELECT closed_at
+                    FROM restore_db.billing_periods
+                    WHERE restore_db.billing_periods.id = billing_periods.id
+                 )",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
 
         if has_bills_reviewed_at {
             tx.execute(

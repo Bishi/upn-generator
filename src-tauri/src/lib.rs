@@ -20,10 +20,10 @@ use commands::inbox::{
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
-    generate_upn_pdf, get_upn_delivery_events, get_upn_delivery_rollup, get_upn_packet_hashes,
-    mark_upn_period_delivered, open_preview_apartment_upns, open_preview_upn, preview_upn,
-    save_all_upns_zip, save_smtp_password, send_emails, test_smtp_connection,
-    unmark_upn_period_delivered,
+    close_billing_period, generate_upn_pdf, get_upn_delivery_events, get_upn_delivery_rollup,
+    get_upn_packet_hashes, mark_upn_period_delivered, open_preview_apartment_upns,
+    open_preview_upn, preview_upn, reopen_billing_period, save_all_upns_zip, save_smtp_password,
+    send_emails, test_smtp_connection, unmark_upn_period_delivered,
 };
 use commands::upn_validation::validate_upn_pre_send;
 use db::migrations;
@@ -113,6 +113,8 @@ pub fn run() {
             get_upn_delivery_rollup,
             get_upn_packet_hashes,
             validate_upn_pre_send,
+            close_billing_period,
+            reopen_billing_period,
             test_smtp_connection,
             save_smtp_password,
         ])

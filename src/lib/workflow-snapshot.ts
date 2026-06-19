@@ -167,6 +167,7 @@ export function createVirtualBillingPeriod(month: number, year: number): Billing
     month,
     year,
     status: "draft",
+    closed_at: null,
     created_at: "",
   };
 }
