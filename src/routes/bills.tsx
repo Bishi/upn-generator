@@ -18,9 +18,8 @@ import {
   BillingTableHeaderRow,
   SummaryChip,
   SummaryStrip,
+  billingTableBodyRowClass,
   billingTableCellClass,
-  billingTableNumericCellClass,
-  billingTableZebraRowClass,
 } from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,108 +83,45 @@ function BillRow({
   const reviewedWarning = isReviewedWarning(bill);
   const unreviewedWarning = isUnreviewedWarning(bill);
   const reviewMessage = bill.parse_note?.trim() || "Review this import manually.";
+  const providerName = bill.provider_name?.trim() ?? "";
+  const providerTitle = providerName || bill.creditor_name || bill.source_filename;
+  const providerSubtitle = providerName ? bill.creditor_name : bill.source_filename;
+  const showProviderSubtitle =
+    providerSubtitle.trim() !== "" && providerSubtitle.trim() !== providerTitle.trim();
+  const hasIban = bill.creditor_iban.trim() !== "";
+  const dirty =
+    draft.creditor_name !== bill.creditor_name ||
+    draft.creditor_iban !== bill.creditor_iban ||
+    draft.reference !== bill.reference ||
+    draft.due_date !== bill.due_date ||
+    draft.amount_cents !== bill.amount_cents ||
+    draft.purpose_text !== bill.purpose_text;
+
+  useEffect(() => {
+    if (!editing) setDraft(bill);
+  }, [bill, editing]);
 
   const save = () => {
+    if (!dirty) return;
     onSave(draft);
     setEditing(false);
   };
 
   const cancel = () => {
-    setDraft(bill);
     setEditing(false);
   };
-
-  if (editing) {
-    return (
-      <Fragment>
-        <tr className="bg-accent/30">
-          <td />
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-sm"
-              value={draft.creditor_name}
-              onChange={(e) =>
-                setDraft({ ...draft, creditor_name: e.target.value })
-              }
-            />
-          </td>
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-xs font-mono"
-              value={draft.reference}
-              onChange={(e) => setDraft({ ...draft, reference: e.target.value })}
-            />
-          </td>
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-sm"
-              value={draft.due_date}
-              onChange={(e) => setDraft({ ...draft, due_date: e.target.value })}
-            />
-          </td>
-          <td className="px-3 py-2 text-xs text-muted-foreground">
-            {bill.source_filename}
-          </td>
-          <td className="px-3 py-2">
-            <Input
-              className="h-7 text-sm"
-              value={
-                draft.amount_cents === 0 ? "" : String(draft.amount_cents / 100)
-              }
-              placeholder="123.45"
-              onChange={(e) => {
-                const val = parseFloat(e.target.value) || 0;
-                setDraft({ ...draft, amount_cents: Math.round(val * 100) });
-              }}
-            />
-          </td>
-          <td className="px-3 py-2">
-            <div className="flex gap-1">
-              <button
-                onClick={save}
-                className="text-success hover:text-success/80"
-              >
-                <Check className="size-4" />
-              </button>
-              <button
-                onClick={cancel}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          </td>
-        </tr>
-        <tr className="border-b border-border bg-accent/30">
-          <td />
-          <td colSpan={6} className="px-3 pb-3">
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              UPN purpose text
-            </label>
-            <Input
-              className="h-8 text-sm"
-              value={draft.purpose_text}
-              onChange={(e) =>
-                setDraft({ ...draft, purpose_text: e.target.value })
-              }
-            />
-          </td>
-        </tr>
-      </Fragment>
-    );
-  }
 
   return (
     <Fragment>
       <tr
         className={cn(
-          billingTableZebraRowClass,
+          billingTableBodyRowClass,
           "hover:bg-accent/20",
           unreviewedWarning && "bg-warning-soft/70",
         )}
       >
         <td className="w-[68px] p-0 align-middle">
-          <div className="grid min-h-16 place-items-center">
+          <div className="grid min-h-14 place-items-center">
             {reviewWarning ? (
               <ReviewIndicator note={reviewMessage} reviewed={reviewedWarning} />
             ) : (
@@ -196,17 +132,22 @@ function BillRow({
         <td className={`${billingTableCellClass} max-w-60 pl-0 text-sm`}>
           <div>
             <div className="truncate font-semibold">
-              {bill.provider_name ?? (bill.creditor_name || bill.source_filename)}
+              {providerTitle}
             </div>
+            {showProviderSubtitle && (
+              <div className="truncate text-xs text-muted-foreground">
+                {providerSubtitle}
+              </div>
+            )}
             <div className="truncate text-xs text-muted-foreground">
-              {bill.provider_name ? bill.creditor_name : bill.source_filename}
+              {hasIban ? bill.creditor_iban : <MissingField />}
             </div>
           </div>
         </td>
         <td className={`${billingTableCellClass} text-xs font-mono`}>
           <TextFieldValue value={bill.reference} />
         </td>
-        <td className={`${billingTableCellClass} text-sm`}>
+        <td className={`${billingTableCellClass} text-xs font-mono`}>
           <TextFieldValue value={bill.due_date} />
         </td>
         <td className={billingTableCellClass}>
@@ -232,27 +173,135 @@ function BillRow({
             </span>
           )}
         </td>
-        <td className={`${billingTableNumericCellClass} text-sm font-semibold`}>
+        <td className={`${billingTableCellClass} text-right text-sm font-semibold tabular-nums`}>
           {formatEur(bill.amount_cents)} €
         </td>
         <td className={billingTableCellClass}>
           <div className="flex justify-end gap-1">
             <button
               onClick={() => setEditing(true)}
-              className="text-muted-foreground hover:text-foreground"
+              className={cn(
+                "text-muted-foreground hover:text-foreground",
+                editing && "text-foreground",
+              )}
+              aria-label="Edit bill"
             >
               <Pencil className="size-3.5" />
             </button>
             <button
               onClick={() => bill.id && onDelete(bill.id)}
               className="text-muted-foreground hover:text-danger"
+              aria-label="Delete bill"
             >
               <Trash2 className="size-3.5" />
             </button>
           </div>
         </td>
       </tr>
-      {reviewWarning && (
+      {editing ? (
+        <tr className="border-b border-border bg-surface-2/80">
+          <td />
+          <td colSpan={6} className="px-3 py-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Provider name
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.creditor_name}
+                  onChange={(e) =>
+                    setDraft({ ...draft, creditor_name: e.target.value })
+                  }
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  IBAN
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.creditor_iban}
+                  onChange={(e) => setDraft({ ...draft, creditor_iban: e.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Reference
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.reference}
+                  onChange={(e) => setDraft({ ...draft, reference: e.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Due date
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.due_date}
+                  onChange={(e) => setDraft({ ...draft, due_date: e.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Amount
+                </span>
+                <Input
+                  className="h-8 text-sm tabular-nums"
+                  value={
+                    draft.amount_cents === 0 ? "" : String(draft.amount_cents / 100)
+                  }
+                  placeholder="123.45"
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value) || 0;
+                    setDraft({ ...draft, amount_cents: Math.round(val * 100) });
+                  }}
+                />
+              </label>
+              <label className="space-y-1.5 md:col-span-2 xl:col-span-3">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  UPN purpose text
+                </span>
+                <Input
+                  className="h-8 text-sm"
+                  value={draft.purpose_text}
+                  onChange={(e) =>
+                    setDraft({ ...draft, purpose_text: e.target.value })
+                  }
+                />
+              </label>
+            </div>
+
+            {reviewWarning && (
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                <span
+                  className={cn(
+                    "font-semibold",
+                    reviewedWarning ? "text-success" : "text-warning",
+                  )}
+                >
+                  {reviewedWarning ? "Import reviewed." : "Verify this import."}
+                </span>{" "}
+                {reviewMessage}
+              </p>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={cancel}>
+                <X className="size-3.5" />
+                Discard
+              </Button>
+              <Button size="sm" onClick={save} disabled={!dirty}>
+                <Check className="size-3.5" />
+                Save changes
+              </Button>
+            </div>
+          </td>
+        </tr>
+      ) : reviewWarning && (
         <tr
           className={cn(
             "border-b border-border bg-card",
@@ -1406,7 +1455,7 @@ function BillsPage() {
                     Total ({bills.length} bills)
                   </td>
                   <td colSpan={3}></td>
-                  <td className={billingTableNumericCellClass}>
+                  <td className={`${billingTableCellClass} text-right font-semibold tabular-nums`}>
                     {formatEur(totalCents)} €
                   </td>
                   <td></td>
