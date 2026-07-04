@@ -107,10 +107,6 @@ Use `.agents/developer-workflow.md` when a task needs plan review, code review, 
 
 When asked to review a commit, uncommitted changes, a branch, or a PR, treat it as a code-reading task unless the user explicitly asks for verification. Do not run lint, typecheck, tests, or builds for a review by default.
 
-Review findings must be concrete defects grounded in source or diff context. If the concern is only "verify this", "check whether that", or "consider maybe", trace it to a yes/no defect before reporting it, or leave it out.
-
-When a review is delegated to another agent, filter its output before reporting. Keep concrete findings grounded in files or behavior, and drop speculative comments that are not actionable.
-
 ### Plan First
 
 For multi-step features, risky changes, release work, or work likely to span sessions, write the active plan before implementation. Use chat for small plans and `.agents/todo.md` for larger active plans. Mark items complete as work progresses, and remove only the completed active-plan section when the work is fully closed.
