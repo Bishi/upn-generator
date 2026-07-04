@@ -124,10 +124,6 @@ For credentials, imports, exports, backups, settings, privacy-sensitive data, ne
 
 If the answers are unclear and the choice would change data handling, security posture, or user workflow, stop and ask before implementing.
 
-### Deferred Work
-
-If a plan intentionally defers something to a later phase, call it out clearly before implementation. State what is not being built, why it is deferred, and what decision or request would bring it into scope.
-
 ### Lessons Loop
 
 After a user correction or review finding, consider whether `.agents/lessons.md` needs an update before writing more code. Add a lesson only when it is generalizable, non-obvious, and not already covered by existing docs.
