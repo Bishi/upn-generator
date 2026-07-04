@@ -109,9 +109,7 @@ When asked to review a commit, uncommitted changes, a branch, or a PR, treat it 
 
 ### Plan First
 
-For multi-step features, risky changes, release work, or work likely to span sessions, write the active plan before implementation. Use chat for small plans and `.agents/todo.md` for larger active plans. Mark items complete as work progresses, and remove only the completed active-plan section when the work is fully closed.
-
-If implementation shows the plan is wrong, stop and re-plan before continuing.
+Use `.agents/todo.md` for larger active plans in this repo.
 
 ### Understand Before Building
 
