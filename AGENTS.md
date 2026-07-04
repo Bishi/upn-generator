@@ -126,7 +126,7 @@ If the answers are unclear and the choice would change data handling, security p
 
 ### Lessons Loop
 
-After a user correction or review finding, consider whether `.agents/lessons.md` needs an update before writing more code. Add a lesson only when it is generalizable, non-obvious, and not already covered by existing docs.
+Use `.agents/lessons.md` for repo-specific lessons.
 
 ### Verification
 
