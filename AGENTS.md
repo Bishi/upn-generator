@@ -87,15 +87,13 @@ Current status: **v0.5.6. Phases 2 and 3 are largely complete, with Phase 4 in p
 
 ## Documentation
 
-After implementing a feature or completing a plan, update docs as needed:
+Project documentation targets:
 
 - `AGENTS.md` - phase status, architecture decisions, key files
 - `README.md` - user-facing features and workflows
 - `STATUS.md` - current released version/tag and release snapshot when preparing a release
 - `tests/manual/*.md` - manual QA checklist for affected user-facing flows
 - `.agents/developer-workflow.md` - contributor workflow if the way agents collaborate changes
-
-Before finishing a change, check whether any Markdown file now gives a wrong picture of the system. Update the docs in the same change when behavior, workflow, release state, or manual QA expectations move.
 
 ## Workflow Rules
 
