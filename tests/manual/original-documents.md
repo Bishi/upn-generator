@@ -14,6 +14,7 @@
 - [ ] Close and reopen the PDF viewer, switch between documents, and confirm no stale document/page remains visible; verify Blob URLs are revoked on close, replacement, unmount, and failed load.
 - [ ] Open a staged image, confirm fit behavior and bounded 25%-400% zoom, then close and reopen it.
 - [ ] Open staged and stored `.tif`/`.tiff` originals and confirm the first TIFF image renders with the normal image zoom controls while retained/downloaded bytes remain unchanged.
+- [ ] Open a valid CMYK TIFF and confirm it renders through the background worker instead of reporting `window is not defined`.
 - [ ] Open a malformed TIFF with a cyclic directory pointer and confirm the viewer reports a timeout without freezing the app; close or switch the viewer during TIFF decoding and confirm the worker is terminated without a stale result.
 - [ ] From an inbox source viewer, press Escape once and confirm only the viewer closes; confirm the drawer, selections, and exception notes remain intact.
 - [ ] Import one candidate from a mixed combined PDF, remove the user's source file, restart the app, and confirm View original still opens the exact full PDF while only imported bills have links.

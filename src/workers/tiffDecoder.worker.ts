@@ -28,6 +28,41 @@ function validDimensions(width: number, height: number) {
     && width * height <= MAX_TIFF_PIXELS;
 }
 
+function tiffToRgba(ifd: UTIF.IFD) {
+  const photometricInterpretation = firstTiffTagNumber(ifd.t262 ?? [2]);
+  if (photometricInterpretation !== 5) return UTIF.toRGBA8(ifd);
+
+  const bitsPerSample = firstTiffTagNumber(ifd.t258 ?? [8]);
+  const samplesPerPixel = firstTiffTagNumber(ifd.t277 ?? [4]);
+  if (
+    bitsPerSample !== 8
+    || !Number.isSafeInteger(samplesPerPixel)
+    || samplesPerPixel < 4
+    || samplesPerPixel > 8
+  ) {
+    throw new Error("This CMYK TIFF sample layout is not supported.");
+  }
+
+  const pixelCount = ifd.width * ifd.height;
+  if (ifd.data.length < pixelCount * samplesPerPixel) {
+    throw new Error("The CMYK TIFF pixel data is incomplete.");
+  }
+  const rgba = new Uint8Array(pixelCount * 4);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const source = pixel * samplesPerPixel;
+    const target = pixel * 4;
+    const cyan = 255 - ifd.data[source];
+    const magenta = 255 - ifd.data[source + 1];
+    const yellow = 255 - ifd.data[source + 2];
+    const black = (255 - ifd.data[source + 3]) / 255;
+    rgba[target] = Math.round(cyan * black);
+    rgba[target + 1] = Math.round(magenta * black);
+    rgba[target + 2] = Math.round(yellow * black);
+    rgba[target + 3] = samplesPerPixel > 4 ? ifd.data[source + 4] : 255;
+  }
+  return rgba;
+}
+
 workerScope.onmessage = ({ data: bytes }) => {
   try {
     const ifd = UTIF.decode(bytes)[0];
@@ -44,7 +79,7 @@ workerScope.onmessage = ({ data: bytes }) => {
       throw new Error("The decoded TIFF dimensions are invalid or too large to display safely.");
     }
 
-    const rgba = UTIF.toRGBA8(ifd);
+    const rgba = tiffToRgba(ifd);
     const rgbaBuffer = rgba.slice().buffer as ArrayBuffer;
     workerScope.postMessage(
       { ok: true, width: ifd.width, height: ifd.height, rgba: rgbaBuffer },
