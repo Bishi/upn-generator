@@ -111,6 +111,7 @@ interface SourceDocumentViewerProps {
   open: boolean;
   load: (() => Promise<SourceDocumentLoadResult>) | null;
   startPage?: number | null;
+  layout?: "fullscreen" | "inbox-companion";
   onClose: () => void;
 }
 
@@ -118,6 +119,7 @@ export function SourceDocumentViewer({
   open,
   load,
   startPage,
+  layout = "fullscreen",
   onClose,
 }: SourceDocumentViewerProps) {
   const [info, setInfo] = useState<SourceDocumentInfo | null>(null);
@@ -188,7 +190,11 @@ export function SourceDocumentViewer({
     : objectUrl;
 
   return (
-    <div className="fixed inset-0 z-[140] flex flex-col bg-background/95 backdrop-blur-sm">
+    <div
+      className={layout === "inbox-companion"
+        ? "fixed inset-0 z-[60] flex flex-col bg-background/95 backdrop-blur-sm xl:right-[760px] xl:border-r xl:border-border xl:shadow-pop"
+        : "fixed inset-0 z-[140] flex flex-col bg-background/95 backdrop-blur-sm"}
+    >
       <div className="flex min-h-16 items-center gap-3 border-b border-border bg-card px-4 py-3">
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-head text-lg font-semibold">{info?.original_name ?? "Original document"}</h2>

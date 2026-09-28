@@ -845,6 +845,7 @@ function InboxImportDrawer({
   const [viewer, setViewer] = useState<{
     load: () => Promise<SourceDocumentLoadResult>;
     startPage: number | null;
+    billKey: string | null;
   } | null>(null);
   const busy = loadingPreview || importing;
 
@@ -978,12 +979,17 @@ function InboxImportDrawer({
     setSelectedIds(checked ? new Set(defaultInboxPreviewSelection(preview.candidates)) : new Set());
   };
 
-  const viewInboxSource = (candidate: InboxPreviewCandidate, pageStart?: number | null) => {
+  const viewInboxSource = (
+    candidate: InboxPreviewCandidate,
+    pageStart?: number | null,
+    billKey: string | null = null,
+  ) => {
     if (!preview || !candidate.source_available) return;
     const sessionId = preview.session_id;
     const candidateId = candidate.id;
     setViewer({
       startPage: pageStart ?? null,
+      billKey,
       load: async () => {
         const [info, bytes] = await Promise.all([
           ipc.getInboxPreviewSourceInfo(sessionId, candidateId),
@@ -1247,7 +1253,11 @@ function InboxImportDrawer({
                         return (
                           <Fragment key={candidate.id}>
                             {candidate.bills.map((bill, index) => (
-                              <tr key={`${candidate.id}-bill-${index}`} className={`border-b border-border align-top ${groupClass}`}>
+                              <tr
+                                key={`${candidate.id}-bill-${index}`}
+                                className={`border-b border-border align-top transition-colors ${viewer?.billKey === bill.content_hash ? "bg-accent-soft" : groupClass}`}
+                                aria-current={viewer?.billKey === bill.content_hash ? "true" : undefined}
+                              >
                                 {selectionCell(String(index + 1))}
                                 {attachmentCell(!bill.source_page_start)}
                                 <td className="px-3 py-4 align-top">
@@ -1261,7 +1271,7 @@ function InboxImportDrawer({
                                   <InboxBillIdentity
                                     bill={bill}
                                     sourceAvailable={candidate.source_available}
-                                    onViewPage={() => viewInboxSource(candidate, bill.source_page_start)}
+                                    onViewPage={() => viewInboxSource(candidate, bill.source_page_start, bill.content_hash)}
                                   />
                                   {selectedIds.has(candidate.id) && bill.identity.status !== "matched" && (
                                     <Input
@@ -1401,6 +1411,7 @@ function InboxImportDrawer({
       open={viewer !== null}
       load={viewer?.load ?? null}
       startPage={viewer?.startPage}
+      layout="inbox-companion"
       onClose={() => setViewer(null)}
     />
     </>
