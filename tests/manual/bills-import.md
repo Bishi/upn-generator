@@ -37,6 +37,9 @@
 - [ ] Open `%APPDATA%\si.upn-generator\import_debug.log` and confirm it contains useful parser diagnostics for local imports.
 - [ ] Select one or more local files and confirm a review dialog appears before any bill row is saved, with provider, amount, identity result, and source-page range for each candidate.
 - [ ] In the August combined sample, confirm electricity, gas, waste, water, and ZLM candidates all show matched building identity; gas and waste must succeed through rendered-page OCR rather than payment-purpose digits alone.
+- [ ] Change water identity from `5495/109463` to `5495/1094630` while leaving the configured value elsewhere on the page, and confirm the invoice is mismatched rather than verified.
+- [ ] Place an unparsed invoice with matching identity evidence after a parsed invoice that lacks its own evidence, and confirm the parsed invoice remains unverified.
+- [ ] Preview a scanned invoice whose native PDF text contains only a header/footer while OCR contains the payment fields, and confirm the OCR candidate is recovered without duplicating a matching native candidate.
 - [ ] Deselect a candidate, confirm import, and verify only selected candidates are saved.
 - [ ] Select two distinct invoices for the same provider/month across one or more files and confirm neither is saved; exact duplicate content should be deduplicated.
 - [ ] Change a source file after preview and confirm final import is rejected without partial writes.

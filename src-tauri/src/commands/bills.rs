@@ -1218,10 +1218,49 @@ fn provider_rule_snapshot(provider: &Provider) -> String {
     .to_string()
 }
 
+fn compact_identity_projection(text: &str) -> (String, Vec<usize>, Vec<char>) {
+    let folded: Vec<char> = text.chars().map(fold_identity_char).collect();
+    let mut compact = String::new();
+    let mut positions = Vec::new();
+    for (index, ch) in folded.iter().copied().enumerate() {
+        if ch.is_ascii_alphanumeric() {
+            compact.push(ch.to_ascii_uppercase());
+            positions.push(index);
+        }
+    }
+    (compact, positions, folded)
+}
+
+fn identity_value_pattern(expected: &str) -> Option<Regex> {
+    let normalized = normalize_identity_value(expected);
+    if normalized.is_empty() {
+        return None;
+    }
+    let value_shape = if normalized.contains('/') {
+        r"[A-Z0-9]+(?:[ \t]*/[ \t]*[A-Z0-9]+)+"
+    } else if normalized.contains('-') {
+        r"[A-Z0-9]+(?:[ \t]*-[ \t]*[A-Z0-9]+)+"
+    } else if normalized.chars().all(|ch| ch.is_ascii_digit()) {
+        r"[0-9]+(?:[ \t]+[0-9]+)*"
+    } else {
+        r"[A-Z0-9]+"
+    };
+    let pattern = format!(r"(?:^|[^A-Z0-9])(?P<value>{value_shape})(?:$|[^A-Z0-9])");
+    Regex::new(&pattern).ok()
+}
+
+fn normalize_identity_value(value: &str) -> String {
+    value
+        .chars()
+        .map(fold_identity_char)
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-'))
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect()
+}
+
 fn labeled_value_result(text: &str, label: &str, expected: &str) -> (bool, bool, String) {
-    let compact_text = compact_identity_text(text);
+    let (compact_text, compact_positions, folded_text) = compact_identity_projection(text);
     let compact_label = compact_identity_text(label);
-    let compact_expected = compact_identity_text(expected);
     let bookend_label = || {
         let tokens: Vec<String> = label
             .split_whitespace()
@@ -1244,10 +1283,28 @@ fn labeled_value_result(text: &str, label: &str, expected: &str) -> (bool, bool,
     else {
         return (false, false, String::new());
     };
-    let value_end = (value_start + 180).min(compact_text.len());
-    let window = &compact_text[value_start..value_end];
-    let matched = !compact_expected.is_empty() && window.contains(&compact_expected);
-    (true, matched, window.chars().take(80).collect())
+    let original_start = value_start
+        .checked_sub(1)
+        .and_then(|index| compact_positions.get(index))
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let original_end = (original_start + 600).min(folded_text.len());
+    let value_region: String = folded_text[original_start..original_end]
+        .iter()
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let Some(shape_pattern) = identity_value_pattern(expected) else {
+        return (true, false, String::new());
+    };
+    let Some(candidate) = shape_pattern
+        .captures(&value_region)
+        .and_then(|captures| captures.name("value"))
+        .map(|value| value.as_str().trim().to_string())
+    else {
+        return (true, false, String::new());
+    };
+    let matched = normalize_identity_value(&candidate) == normalize_identity_value(expected);
+    (true, matched, normalize_identity_value(&candidate))
 }
 
 fn address_result(text: &str, expected: &str) -> bool {
@@ -2050,6 +2107,58 @@ fn parse_page_candidates(text: &str) -> Vec<ExtractedBill> {
     candidates
 }
 
+fn same_payment_candidate(left: &ExtractedBill, right: &ExtractedBill) -> bool {
+    if left.iban_norm != right.iban_norm || left.amount_cents != right.amount_cents {
+        return false;
+    }
+    let left_reference = compact_identity_text(&left.reference);
+    let right_reference = compact_identity_text(&right.reference);
+    if !left_reference.is_empty() && left_reference == right_reference {
+        return true;
+    }
+    let left_invoice = compact_identity_text(&left.invoice_number);
+    let right_invoice = compact_identity_text(&right.invoice_number);
+    !left_invoice.is_empty() && left_invoice == right_invoice
+}
+
+fn payment_candidate_usable(candidate: &ExtractedBill) -> bool {
+    candidate.amount_cents > 0
+        && !candidate.iban_norm.is_empty()
+        && !compact_identity_text(&candidate.reference).is_empty()
+}
+
+fn reconcile_page_candidates(page: &ExtractedPage) -> Vec<ExtractedBill> {
+    let mut candidates = parse_page_candidates(&page.native_text);
+    let ocr_candidates = parse_page_candidates(&page.ocr_text);
+    if !candidates.iter().any(payment_candidate_usable)
+        && ocr_candidates.iter().any(payment_candidate_usable)
+    {
+        return ocr_candidates;
+    }
+    for mut ocr_candidate in ocr_candidates {
+        if let Some(native_candidate) = candidates
+            .iter_mut()
+            .find(|candidate| same_payment_candidate(candidate, &ocr_candidate))
+        {
+            if native_candidate.reference.is_empty() {
+                native_candidate.reference = std::mem::take(&mut ocr_candidate.reference);
+            }
+            if native_candidate.due_date.is_empty() {
+                native_candidate.due_date = std::mem::take(&mut ocr_candidate.due_date);
+            }
+            if native_candidate.invoice_number.is_empty() {
+                native_candidate.invoice_number = std::mem::take(&mut ocr_candidate.invoice_number);
+            }
+            if native_candidate.purpose_text.is_empty() {
+                native_candidate.purpose_text = std::mem::take(&mut ocr_candidate.purpose_text);
+            }
+        } else {
+            candidates.push(ocr_candidate);
+        }
+    }
+    candidates
+}
+
 fn prepare_multi_bill_import_from_document(
     document: DocumentExtraction,
     filename: String,
@@ -2063,23 +2172,12 @@ fn prepare_multi_bill_import_from_document(
         .iter()
         .map(ExtractedPage::combined_text)
         .collect();
-    let parser_texts: Vec<String> = document
-        .pages
-        .iter()
-        .map(|page| {
-            if page.native_text.trim().is_empty() {
-                page.ocr_text.clone()
-            } else {
-                page.native_text.clone()
-            }
-        })
-        .collect();
     let raw_text = evidence_texts.join("\n");
     let detected_source_period = find_source_period_month_year(&raw_text);
     let (source_month, source_year) = detected_source_period.unwrap_or((month, year));
     let mut anchors: Vec<(usize, ExtractedBill)> = Vec::new();
-    for (page_index, text) in parser_texts.iter().enumerate() {
-        for mut candidate in parse_page_candidates(text) {
+    for (page_index, page) in document.pages.iter().enumerate() {
+        for mut candidate in reconcile_page_candidates(page) {
             candidate.source_page_start = Some(document.pages[page_index].page_number);
             candidate.source_page_end = Some(document.pages[page_index].page_number);
             anchors.push((page_index, candidate));
@@ -2127,14 +2225,11 @@ fn prepare_multi_bill_import_from_document(
             .iter()
             .filter(|page| **page == page_index)
             .count();
-        let next_start = anchor_starts[anchor_index + 1..]
-            .iter()
-            .copied()
-            .find(|start| *start > page_index);
         let start = anchor_starts[anchor_index];
-        let end = next_start
-            .map(|next| next.saturating_sub(1).max(page_index))
-            .unwrap_or_else(|| evidence_texts.len().saturating_sub(1));
+        // A payment anchor proves ownership only through its own page. Trailing
+        // pages may belong to an invoice whose payment fields were unreadable;
+        // borrowing them would let that invoice verify the preceding bill.
+        let end = page_index;
         let (start, end) = if same_page_count > 1 {
             (page_index, page_index)
         } else {
@@ -3281,6 +3376,27 @@ SI12 6330017789210
     }
 
     #[test]
+    fn labeled_rule_rejects_extended_value_and_does_not_scan_later_fields() {
+        let water = identity_provider(
+            "labeled_value",
+            "all",
+            "Št. odjemnega mesta",
+            "5495/109463",
+            "",
+            "",
+        );
+        let result = verify_provider_identity(
+            &water,
+            "Št. odjemnega mesta: 5495/1094630\nDrug podatek: 5495/109463",
+            Some(1),
+            Some(1),
+            false,
+        );
+        assert_eq!(result.status, "mismatched");
+        assert_eq!(result.found_values, vec!["5495/1094630"]);
+    }
+
+    #[test]
     fn ocr_damaged_labels_still_require_the_exact_configured_value() {
         let gas = identity_provider(
             "labeled_value",
@@ -3378,6 +3494,88 @@ SI12 6330017789210
         assert_eq!(
             verify_provider_identity(associated, &bill.segment_text, Some(1), Some(1), false)
                 .status,
+            "matched"
+        );
+    }
+
+    #[test]
+    fn trailing_unparsed_invoice_cannot_verify_preceding_candidate() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![
+                ExtractedPage {
+                    page_number: 1,
+                    native_text: "***10,00\nENRG Prvi račun\nSI56 0400 1004 8988 093\nSI12 111"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+                ExtractedPage {
+                    page_number: 2,
+                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "two-invoices.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        let candidate = &prepared.extracted[0];
+        assert_eq!(candidate.source_page_end, Some(1));
+        assert_eq!(candidate.identity.as_ref().unwrap().status, "missing");
+    }
+
+    #[test]
+    fn partial_native_page_falls_back_to_ocr_payment_candidate() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![ExtractedPage {
+                page_number: 1,
+                native_text: "Energetika Ljubljana — searchable footer".to_string(),
+                ocr_text: "PLIN Odjemno mesto: 01505116659\n***10,00\nENRG Plin\nSI56 0400 1004 8988 093\nSI12 111"
+                    .to_string(),
+                diagnostics: Vec::new(),
+            }],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "partial-native.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        assert_eq!(
+            prepared.extracted[0].identity.as_ref().unwrap().status,
             "matched"
         );
     }
