@@ -3,6 +3,16 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::State;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
+use windows::{
+    core::PCWSTR,
+    Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    },
+};
+
 use super::config::DbState;
 
 const REQUIRED_TABLES: &[&str] = &[
@@ -56,6 +66,36 @@ fn backup_output_path(output_path: &str) -> Result<&Path, String> {
     Ok(path)
 }
 
+#[cfg(target_os = "windows")]
+fn replace_backup_file(source: &Path, destination: &Path) -> Result<(), String> {
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source_wide.as_ptr()),
+            PCWSTR(destination_wide.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|error| format!("Could not replace the selected backup file: {error}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_backup_file(source: &Path, destination: &Path) -> Result<(), String> {
+    if destination.exists() {
+        return Err("Replacing an existing backup is only supported on Windows.".to_string());
+    }
+    std::fs::rename(source, destination).map_err(|error| error.to_string())
+}
+
 fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
     conn.query_row(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
@@ -96,23 +136,44 @@ fn attached_column_exists(conn: &Connection, table: &str, column: &str) -> Resul
 
 #[tauri::command]
 pub fn create_db_backup(db: State<DbState>, output_path: String) -> Result<BackupFileInfo, String> {
+    create_db_backup_inner(&db, output_path)
+}
+
+fn create_db_backup_inner(db: &DbState, output_path: String) -> Result<BackupFileInfo, String> {
     let backup_path = backup_output_path(&output_path)?;
+    let parent = backup_path
+        .parent()
+        .ok_or_else(|| "Backup path must include a parent folder.".to_string())?;
+    let temporary = tempfile::Builder::new()
+        .prefix(".upn-backup-")
+        .suffix(".sqlite3")
+        .tempfile_in(parent)
+        .map_err(|error| format!("Could not create a temporary backup file: {error}"))?;
+    let temporary_path = temporary.into_temp_path();
+    let create_result = (|| -> Result<(), String> {
+        {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            conn.backup(DatabaseName::Main, &temporary_path, None)
+                .map_err(|e| e.to_string())?;
+        }
 
-    {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        conn.backup(DatabaseName::Main, backup_path, None)
-            .map_err(|e| e.to_string())?;
-    }
-
-    let backup_conn = Connection::open(backup_path).map_err(|e| e.to_string())?;
-    ensure_required_tables(&backup_conn)?;
-    backup_conn
-        .execute("UPDATE smtp_config SET password='' WHERE id=1", [])
-        .map_err(|e| e.to_string())?;
-    if table_exists(&backup_conn, "inbox_config")? {
+        let backup_conn = Connection::open(&temporary_path).map_err(|e| e.to_string())?;
+        ensure_required_tables(&backup_conn)?;
         backup_conn
-            .execute("UPDATE inbox_config SET password='' WHERE id=1", [])
+            .execute("UPDATE smtp_config SET password='' WHERE id=1", [])
             .map_err(|e| e.to_string())?;
+        if table_exists(&backup_conn, "inbox_config")? {
+            backup_conn
+                .execute("UPDATE inbox_config SET password='' WHERE id=1", [])
+                .map_err(|e| e.to_string())?;
+        }
+        backup_conn.execute_batch("VACUUM").map_err(|e| e.to_string())?;
+        drop(backup_conn);
+        replace_backup_file(&temporary_path, backup_path)?;
+        Ok(())
+    })();
+    if let Err(error) = create_result {
+        return Err(error);
     }
 
     Ok(BackupFileInfo { path: output_path })
@@ -152,6 +213,9 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
         let has_provider_identity_rules =
             attached_column_exists(&conn, "providers", "identity_rule_type")?;
         let has_bill_identity_status = attached_column_exists(&conn, "bills", "identity_status")?;
+        let has_source_documents = attached_table_exists(&conn, "source_documents")?;
+        let has_bill_source_document_id =
+            attached_column_exists(&conn, "bills", "source_document_id")?;
         let has_billing_periods_closed_at =
             attached_column_exists(&conn, "billing_periods", "closed_at")?;
         let has_smtp_allowlist_enabled =
@@ -168,6 +232,7 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
             DELETE FROM upn_delivery_events;
             DELETE FROM inbox_imports;
             DELETE FROM bills;
+            DELETE FROM source_documents;
             DELETE FROM billing_periods;
             DELETE FROM apartments;
             DELETE FROM providers;
@@ -211,6 +276,24 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
             INSERT INTO billing_periods (id, building_id, month, year, status, created_at)
             SELECT id, building_id, month, year, status, created_at
             FROM restore_db.billing_periods;
+
+            ",
+        )
+        .map_err(|e| e.to_string())?;
+
+        if has_source_documents {
+            tx.execute_batch(
+                "INSERT INTO source_documents (
+                    id, original_name, media_type, byte_size, content_sha256, content, created_at
+                 )
+                 SELECT id, original_name, media_type, byte_size, content_sha256, content, created_at
+                 FROM restore_db.source_documents;",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        tx.execute_batch(
+            "
 
             INSERT INTO bills (
                 id, billing_period_id, provider_id, raw_text, amount_cents,
@@ -293,6 +376,17 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
                     identity_exception_at=(SELECT identity_exception_at FROM restore_db.bills r WHERE r.id=bills.id),
                     source_page_start=(SELECT source_page_start FROM restore_db.bills r WHERE r.id=bills.id),
                     source_page_end=(SELECT source_page_end FROM restore_db.bills r WHERE r.id=bills.id);",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_source_documents && has_bill_source_document_id {
+            tx.execute_batch(
+                "UPDATE bills SET source_document_id=(
+                    SELECT r.source_document_id FROM restore_db.bills r
+                    JOIN source_documents d ON d.id=r.source_document_id
+                    WHERE r.id=bills.id
+                 );",
             )
             .map_err(|e| e.to_string())?;
         }
@@ -414,6 +508,15 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
         }
         tx.execute(
             "INSERT OR IGNORE INTO app_settings (id, theme) VALUES (1, 'refined')",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "DELETE FROM source_documents
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM bills WHERE bills.source_document_id=source_documents.id
+             )",
             [],
         )
         .map_err(|e| e.to_string())?;
@@ -679,5 +782,138 @@ mod tests {
             .expect("bill fallback");
         assert_eq!(provider_rule, "unconfigured");
         assert_eq!(bill_status, "not_checked");
+    }
+
+    #[test]
+    fn restore_round_trips_source_documents_and_bill_links() {
+        let file = backup_file("draft", None, false);
+        {
+            let conn = Connection::open(file.path()).expect("open backup");
+            conn.execute(
+                "INSERT INTO source_documents
+                 (id, original_name, media_type, byte_size, content_sha256, content)
+                 VALUES (7, 'combined.pdf', 'application/pdf', 8, 'source-hash', X'255044462D312E37')",
+                [],
+            )
+            .expect("source document");
+            conn.execute(
+                "INSERT INTO bills
+                 (id, billing_period_id, provider_id, source_filename, source_document_id, source_page_start)
+                 VALUES (9, 1, 1, 'combined.pdf', 7, 3)",
+                [],
+            )
+            .expect("linked bill");
+        }
+
+        let state = restore_backup(&file);
+        let conn = state.0.lock().expect("database lock");
+        let restored: (Option<i64>, Vec<u8>, Option<i32>) = conn
+            .query_row(
+                "SELECT b.source_document_id, d.content, b.source_page_start
+                 FROM bills b JOIN source_documents d ON d.id=b.source_document_id
+                 WHERE b.id=9",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("restored document link");
+        assert_eq!(restored.0, Some(7));
+        assert_eq!(restored.1, b"%PDF-1.7");
+        assert_eq!(restored.2, Some(3));
+    }
+
+    #[test]
+    fn legacy_restore_clears_current_documents_and_uses_null_bill_links() {
+        let file = backup_file("draft", None, false);
+        {
+            let conn = Connection::open(file.path()).expect("open backup");
+            conn.execute(
+                "INSERT INTO bills (id, billing_period_id, provider_id, source_filename)
+                 VALUES (4, 1, 1, 'legacy.pdf')",
+                [],
+            )
+            .expect("legacy bill");
+            conn.execute("ALTER TABLE bills DROP COLUMN source_document_id", [])
+                .expect("drop source link");
+            conn.execute("DROP TABLE source_documents", [])
+                .expect("drop source documents");
+        }
+        let state = DbState(
+            Arc::new(Mutex::new(initialized_connection())),
+            Arc::new(PeriodOperationState::default()),
+        );
+        {
+            let conn = state.0.lock().unwrap();
+            conn.execute(
+                "INSERT INTO source_documents
+                 (id, original_name, media_type, byte_size, content_sha256, content)
+                 VALUES (99, 'unrelated.pdf', 'application/pdf', 1, 'current', X'00')",
+                [],
+            )
+            .unwrap();
+        }
+        restore_db_backup_inner(&state, file.path().to_string_lossy().into_owned())
+            .expect("legacy restore");
+        let conn = state.0.lock().unwrap();
+        let link: Option<i64> = conn
+            .query_row("SELECT source_document_id FROM bills WHERE id=4", [], |row| row.get(0))
+            .unwrap();
+        let document_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM source_documents", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(link, None);
+        assert_eq!(document_count, 0);
+    }
+
+    #[test]
+    fn backup_failure_preserves_existing_destination_and_cleans_temporary_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("existing.sqlite3");
+        std::fs::write(&destination, b"existing backup").unwrap();
+        let state = DbState(
+            Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            Arc::new(PeriodOperationState::default()),
+        );
+
+        let error = create_db_backup_inner(&state, destination.to_string_lossy().into_owned())
+            .unwrap_err();
+
+        assert!(error.contains("missing required table"));
+        assert_eq!(std::fs::read(&destination).unwrap(), b"existing backup");
+        let leftovers = std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".upn-backup-"))
+            .count();
+        assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn backup_atomically_replaces_existing_destination_after_password_scrub() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("existing.sqlite3");
+        std::fs::write(&destination, b"old backup").unwrap();
+        let state = DbState(
+            Arc::new(Mutex::new(initialized_connection())),
+            Arc::new(PeriodOperationState::default()),
+        );
+        {
+            let conn = state.0.lock().unwrap();
+            conn.execute("UPDATE smtp_config SET password='smtp-secret' WHERE id=1", [])
+                .unwrap();
+            conn.execute("UPDATE inbox_config SET password='imap-secret' WHERE id=1", [])
+                .unwrap();
+        }
+
+        create_db_backup_inner(&state, destination.to_string_lossy().into_owned()).unwrap();
+
+        let backup = Connection::open(&destination).unwrap();
+        let smtp_password: String = backup
+            .query_row("SELECT password FROM smtp_config WHERE id=1", [], |row| row.get(0))
+            .unwrap();
+        let inbox_password: String = backup
+            .query_row("SELECT password FROM inbox_config WHERE id=1", [], |row| row.get(0))
+            .unwrap();
+        assert!(smtp_password.is_empty());
+        assert!(inbox_password.is_empty());
     }
 }

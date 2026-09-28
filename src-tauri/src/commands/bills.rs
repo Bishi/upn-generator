@@ -11,6 +11,10 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
 use super::config::{DbState, Provider};
+use super::documents::{
+    clear_local_source_handle, delete_orphan_source_documents, link_bills_to_document,
+    persist_source_document, register_local_source, resolve_local_source, LocalPreviewState,
+};
 
 #[cfg(target_os = "windows")]
 use windows::{
@@ -62,6 +66,7 @@ pub struct Bill {
     pub identity_exception_at: Option<String>,
     pub source_page_start: Option<i32>,
     pub source_page_end: Option<i32>,
+    pub source_document_id: Option<i64>,
     // Joined display fields (not stored)
     pub provider_name: Option<String>,
 }
@@ -737,29 +742,31 @@ pub fn delete_billing_period(db: State<DbState>, id: i64) -> Result<(), String> 
 
 fn delete_billing_period_inner(conn: &Connection, id: i64) -> Result<(), String> {
     ensure_period_open(conn, id)?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     // Cascade: delete splits → bills → period
-    conn.execute(
+    tx.execute(
         "DELETE FROM upn_delivery_events WHERE billing_period_id=?1",
         [id],
     )
     .map_err(|e| e.to_string())?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM bill_splits WHERE bill_id IN (SELECT id FROM bills WHERE billing_period_id=?1)",
         [id],
     )
     .map_err(|e| e.to_string())?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM inbox_bill_hashes WHERE billing_period_id=?1",
         [id],
     )
     .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM bills WHERE billing_period_id=?1", [id])
+    tx.execute("DELETE FROM bills WHERE billing_period_id=?1", [id])
         .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM inbox_imports WHERE billing_period_id=?1", [id])
+    delete_orphan_source_documents(&tx)?;
+    tx.execute("DELETE FROM inbox_imports WHERE billing_period_id=?1", [id])
         .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM billing_periods WHERE id=?1", [id])
+    tx.execute("DELETE FROM billing_periods WHERE id=?1", [id])
         .map_err(|e| e.to_string())?;
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -835,7 +842,8 @@ fn bill_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bill> {
         identity_exception_at: row.get(24)?,
         source_page_start: row.get(25)?,
         source_page_end: row.get(26)?,
-        provider_name: row.get(27)?,
+        source_document_id: row.get(27)?,
+        provider_name: row.get(28)?,
     })
 }
 
@@ -847,7 +855,7 @@ fn load_bill_by_id(conn: &Connection, id: i64) -> Result<Bill, String> {
          b.invoice_number, b.parse_note, b.status, b.source_filename,
          b.reviewed_at, b.review_note, b.identity_status, b.identity_rule_snapshot,
          b.identity_evidence, b.identity_exception_note, b.identity_exception_at,
-         b.source_page_start, b.source_page_end, p.name as provider_name
+         b.source_page_start, b.source_page_end, b.source_document_id, p.name as provider_name
          FROM bills b
          LEFT JOIN providers p ON b.provider_id = p.id
          WHERE b.id = ?1",
@@ -868,7 +876,7 @@ pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>
              b.invoice_number, b.parse_note, b.status, b.source_filename,
              b.reviewed_at, b.review_note, b.identity_status, b.identity_rule_snapshot,
              b.identity_evidence, b.identity_exception_note, b.identity_exception_at,
-             b.source_page_start, b.source_page_end, p.name as provider_name
+             b.source_page_start, b.source_page_end, b.source_document_id, p.name as provider_name
              FROM bills b
              LEFT JOIN providers p ON b.provider_id = p.id
              WHERE b.billing_period_id = ?1
@@ -1058,14 +1066,16 @@ pub fn delete_bill(db: State<DbState>, id: i64) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     ensure_period_open(&conn, billing_period_id)?;
-    conn.execute("DELETE FROM bill_splits WHERE bill_id=?1", [id])
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM bill_splits WHERE bill_id=?1", [id])
         .map_err(|e| e.to_string())?;
-    delete_inbox_imports_for_bill(&conn, id)?;
-    conn.execute("DELETE FROM inbox_bill_hashes WHERE bill_id=?1", [id])
+    delete_inbox_imports_for_bill(&tx, id)?;
+    tx.execute("DELETE FROM inbox_bill_hashes WHERE bill_id=?1", [id])
         .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM bills WHERE id=?1", [id])
+    tx.execute("DELETE FROM bills WHERE id=?1", [id])
         .map_err(|e| e.to_string())?;
-    Ok(())
+    delete_orphan_source_documents(&tx)?;
+    tx.commit().map_err(|e| e.to_string())
 }
 
 struct ExtractedBill {
@@ -2803,7 +2813,7 @@ pub(crate) fn save_prepared_multi_bill_import_with_exceptions(
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LocalBillImportPreview {
     pub source_filename: String,
-    pub file_sha256: String,
+    pub source_handle: String,
     pub bills: Vec<PreparedBillPreviewSummary>,
 }
 
@@ -2817,8 +2827,7 @@ pub struct IdentityExceptionInput {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LocalBillImportFinalizeRequest {
-    pub file_path: String,
-    pub expected_file_sha256: String,
+    pub source_handle: String,
     pub selected_content_hashes: Vec<String>,
     pub exceptions: Vec<IdentityExceptionInput>,
 }
@@ -2836,7 +2845,12 @@ pub async fn preview_bill_import(
     billing_period_id: i64,
 ) -> Result<LocalBillImportPreview, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        preview_bill_import_impl(app.state::<DbState>(), file_path, billing_period_id)
+        preview_bill_import_impl(
+            app.state::<DbState>(),
+            app.state::<LocalPreviewState>(),
+            file_path,
+            billing_period_id,
+        )
     })
     .await
     .map_err(|error| format!("Bill preview task failed: {error}"))?
@@ -2844,6 +2858,7 @@ pub async fn preview_bill_import(
 
 fn preview_bill_import_impl(
     db: State<DbState>,
+    preview_state: State<LocalPreviewState>,
     file_path: String,
     billing_period_id: i64,
 ) -> Result<LocalBillImportPreview, String> {
@@ -2868,9 +2883,15 @@ fn preview_bill_import_impl(
     if bills.is_empty() {
         return Err("No invoice candidates could be parsed from this file.".to_string());
     }
+    let source_handle = register_local_source(
+        &preview_state,
+        &file_path,
+        &after_hash,
+        source_filename.clone(),
+    )?;
     Ok(LocalBillImportPreview {
         source_filename,
-        file_sha256: after_hash,
+        source_handle,
         bills,
     })
 }
@@ -2882,7 +2903,12 @@ pub async fn finalize_bill_import_batch(
     files: Vec<LocalBillImportFinalizeRequest>,
 ) -> Result<Vec<Bill>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        finalize_bill_import_batch_impl(app.state::<DbState>(), billing_period_id, files)
+        finalize_bill_import_batch_impl(
+            app.state::<DbState>(),
+            app.state::<LocalPreviewState>(),
+            billing_period_id,
+            files,
+        )
     })
     .await
     .map_err(|error| format!("Bill finalization task failed: {error}"))?
@@ -2890,6 +2916,7 @@ pub async fn finalize_bill_import_batch(
 
 fn finalize_bill_import_batch_impl(
     db: State<DbState>,
+    preview_state: State<LocalPreviewState>,
     billing_period_id: i64,
     files: Vec<LocalBillImportFinalizeRequest>,
 ) -> Result<Vec<Bill>, String> {
@@ -2908,34 +2935,21 @@ fn finalize_bill_import_batch_impl(
         if file.selected_content_hashes.is_empty() {
             continue;
         }
-        let before_hash = file_sha256(&file.file_path)?;
-        if before_hash != file.expected_file_sha256 {
-            return Err(
-                "A source file changed after preview. Refresh the preview before importing."
-                    .to_string(),
-            );
-        }
-        let document = extract_document_from_file(&file.file_path)?;
-        let after_hash = file_sha256(&file.file_path)?;
-        if after_hash != before_hash {
-            return Err("A source file changed during final verification. Refresh the preview before importing.".to_string());
-        }
-        let source_filename = Path::new(&file.file_path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(&file.file_path)
-            .to_string();
-        extracted_files.push((file, source_filename, document));
+        let source = resolve_local_source(&preview_state, &file.source_handle)?;
+        let source_path = source.path.to_string_lossy().into_owned();
+        let document = extract_document_from_file(&source_path)?;
+        let unchanged = resolve_local_source(&preview_state, &file.source_handle)?;
+        extracted_files.push((file, unchanged, document));
     }
 
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
     ensure_period_open(&conn, billing_period_id)?;
     let context = load_bill_import_context(&conn, billing_period_id)?;
     let mut prepared_files = Vec::new();
-    for (file, source_filename, document) in extracted_files {
+    for (file, source, document) in extracted_files {
         let mut prepared = prepare_multi_bill_import_from_document(
             document,
-            source_filename,
+            source.original_name.clone(),
             context.month,
             context.year,
             &context.providers,
@@ -2962,11 +2976,11 @@ fn finalize_bill_import_batch_impl(
             .into_iter()
             .map(|exception| (exception.content_hash.clone(), exception))
             .collect();
-        prepared_files.push((prepared, exception_map));
+        prepared_files.push((prepared, exception_map, source, file.source_handle));
     }
 
     let mut retained_hashes = HashSet::new();
-    for (prepared, _) in &mut prepared_files {
+    for (prepared, _, _, _) in &mut prepared_files {
         prepared.extracted.retain(|candidate| {
             retained_hashes.insert(bill_hash(
                 associate_provider(&context.providers, candidate),
@@ -2980,20 +2994,40 @@ fn finalize_bill_import_batch_impl(
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut saved = Vec::new();
-    for (prepared, exception_map) in prepared_files {
+    let mut completed_handles = Vec::new();
+    for (prepared, exception_map, source, source_handle) in prepared_files {
         if prepared.extracted.is_empty() {
             continue;
         }
-        saved.extend(save_prepared_multi_bill_import_with_exceptions(
+        let mut file_bills = save_prepared_multi_bill_import_with_exceptions(
             &tx,
             billing_period_id,
             prepared,
             &context.providers,
             true,
             &exception_map,
-        )?);
+        )?;
+        if !file_bills.is_empty() {
+            let document_id = persist_source_document(
+                &tx,
+                &source.original_name,
+                &source.media_type,
+                &source.bytes,
+                &source.sha256,
+            )?;
+            let bill_ids = file_bills.iter().filter_map(|bill| bill.id).collect::<Vec<_>>();
+            link_bills_to_document(&tx, &bill_ids, document_id)?;
+            for bill in &mut file_bills {
+                bill.source_document_id = Some(document_id);
+            }
+        }
+        saved.extend(file_bills);
+        completed_handles.push(source_handle);
     }
     tx.commit().map_err(|e| e.to_string())?;
+    for source_handle in completed_handles {
+        clear_local_source_handle(&preview_state, &source_handle);
+    }
     Ok(saved)
 }
 
@@ -3102,7 +3136,8 @@ mod tests {
                 identity_exception_note TEXT NOT NULL DEFAULT '',
                 identity_exception_at TEXT,
                 source_page_start INTEGER,
-                source_page_end INTEGER
+                source_page_end INTEGER,
+                source_document_id INTEGER
             );
             INSERT INTO providers (id, name) VALUES (1, 'Provider 1');
             INSERT INTO billing_periods (id, building_id, month, year, status)

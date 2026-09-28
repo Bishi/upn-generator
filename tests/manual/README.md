@@ -35,6 +35,7 @@ Known caveats, environment details, or sample files used.
 | --- | --- |
 | [dashboard.md](./dashboard.md) | Dashboard monthly progress and empty-month setup state |
 | [bills-import.md](./bills-import.md) | Bills page PDF/image/manual import, provider detection, debug log, month matching |
+| [original-documents.md](./original-documents.md) | Staged/stored PDF and image viewing, retention, cleanup, and legacy unavailable states |
 | [inbox-import.md](./inbox-import.md) | Manual read-only IMAP scan, attachment preview, duplicate/allowlist handling |
 | [splits.md](./splits.md) | Split calculation, provider split basis, manual split edits |
 | [upn-preview-send.md](./upn-preview-send.md) | UPN preview, download, email sending, delivery history, email safety |

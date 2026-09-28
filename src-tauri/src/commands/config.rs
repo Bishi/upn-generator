@@ -568,15 +568,27 @@ pub fn save_app_settings(db: State<DbState>, settings: AppSettings) -> Result<Ap
 
 #[tauri::command]
 pub fn reset_all_data(db: State<DbState>) -> Result<ResetAllDataResult, String> {
-    {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        migrations::reset_to_defaults(&conn)?;
-    }
-    let credential_cleanup_warning = credentials::delete_mail_credentials().err().map(|error| {
-        format!(
-            "App data was reset, but saved Windows mail credentials could not be deleted: {error}"
-        )
+    let compaction_warning = {
+        let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        migrations::reset_to_defaults(&tx)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        conn.execute_batch("VACUUM")
+            .err()
+            .map(|error| format!("Database compaction failed after the data reset: {error}"))
+    };
+    let credential_warning = credentials::delete_mail_credentials().err().map(|error| {
+        format!("Saved Windows mail credentials could not be deleted: {error}")
     });
+    let credential_cleanup_warning = match (compaction_warning, credential_warning) {
+        (None, None) => None,
+        (Some(warning), None) | (None, Some(warning)) => Some(format!(
+            "App data was reset, but cleanup needs attention. {warning}"
+        )),
+        (Some(first), Some(second)) => Some(format!(
+            "App data was reset, but cleanup needs attention. {first} {second}"
+        )),
+    };
     Ok(ResetAllDataResult {
         credential_cleanup_warning,
     })

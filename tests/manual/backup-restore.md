@@ -27,7 +27,9 @@
 - [ ] Confirm restore shows a clear success or failure message and does not leave the app half-updated after an error.
 - [ ] Configure a non-default provider identity rule, save matched evidence and a noted exception, then back up and restore; confirm rule, evidence, exception note/time, and page range survive.
 - [ ] Restore a pre-identity-verification backup and confirm restored providers are explicitly Unconfigured and restored bills are Not checked, without inheriting current rules or fabricated matches.
-- [ ] Confirm Phase A backups do not contain supplier original-document blobs because durable originals remain Phase B work.
+- [ ] Back up bills with retained originals, restore the backup, and confirm PDF/image bytes, bill links, relevant page ranges, and View original survive.
+- [ ] Restore a pre-original-storage backup and confirm current unrelated documents are removed, restored bill links are null, and the UI shows Original unavailable.
+- [ ] Confirm backup creation compacts the sanitized output and still leaves SMTP/IMAP password columns blank.
 
 ## Notes
 

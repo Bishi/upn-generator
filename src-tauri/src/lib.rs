@@ -13,10 +13,15 @@ use commands::config::{
     get_providers, get_smtp_config, reset_all_data, save_apartment, save_app_settings,
     save_building, save_provider, save_smtp_config, DbState, PeriodOperationState,
 };
+use commands::documents::{
+    clear_local_preview_source, get_bill_source_document_info, get_local_preview_source_info,
+    read_bill_source_document, read_local_preview_source, LocalPreviewState,
+};
 use commands::inbox::{
-    clear_inbox_preview_session, get_inbox_config, import_inbox_attachments,
-    import_inbox_preview_selection, preview_inbox_attachments, save_inbox_config,
-    save_inbox_password, test_inbox_connection, InboxPreviewState,
+    clear_inbox_preview_session, get_inbox_config, get_inbox_preview_source_info,
+    import_inbox_preview_selection, preview_inbox_attachments,
+    read_inbox_preview_source, save_inbox_config, save_inbox_password, test_inbox_connection,
+    InboxPreviewState,
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
@@ -61,6 +66,7 @@ pub fn run() {
             Arc::new(PeriodOperationState::default()),
         ))
         .manage(InboxPreviewState::default())
+        .manage(LocalPreviewState::default())
         .invoke_handler(tauri::generate_handler![
             // Backup
             create_db_backup,
@@ -80,10 +86,16 @@ pub fn run() {
             save_inbox_config,
             save_inbox_password,
             test_inbox_connection,
-            import_inbox_attachments,
             preview_inbox_attachments,
             import_inbox_preview_selection,
             clear_inbox_preview_session,
+            get_inbox_preview_source_info,
+            read_inbox_preview_source,
+            clear_local_preview_source,
+            get_local_preview_source_info,
+            read_local_preview_source,
+            get_bill_source_document_info,
+            read_bill_source_document,
             get_app_settings,
             save_app_settings,
             reset_all_data,
