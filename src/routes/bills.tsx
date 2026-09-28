@@ -7,7 +7,17 @@ import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FileP
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
-import type { Bill, BillingPeriod, InboxConfig, InboxImportResult, InboxPreviewCandidate, InboxPreviewSession, LocalBillImportPreview } from "@/lib/types";
+import type {
+  Bill,
+  BillingPeriod,
+  IdentityVerification,
+  InboxConfig,
+  InboxImportResult,
+  InboxPreviewBillSummary,
+  InboxPreviewCandidate,
+  InboxPreviewSession,
+  LocalBillImportPreview,
+} from "@/lib/types";
 import { formatEur, parseEurInputCents } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
@@ -701,6 +711,51 @@ function InboxStatusChip({ candidate }: { candidate: InboxPreviewCandidate }) {
   );
 }
 
+function InboxIdentityEvidence({ identity }: { identity: IdentityVerification }) {
+  return (
+    <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+      <div>{identity.explanation}</div>
+      {identity.expected_values.length > 0 && (
+        <div>
+          Expected: <span className="font-mono text-foreground">{identity.expected_values.join(" or ")}</span>
+        </div>
+      )}
+      {identity.found_values.length > 0 && (
+        <div className="break-all">
+          Observed near label: <span className="font-mono text-foreground">{identity.found_values.join("; ")}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InboxBillIdentity({ bill }: { bill: InboxPreviewBillSummary }) {
+  const matched = bill.identity.status === "matched";
+  const page = bill.source_page_start
+    ? ` · page ${bill.source_page_start}${bill.source_page_end !== bill.source_page_start ? `-${bill.source_page_end}` : ""}`
+    : "";
+  const label = matched ? "Building verified" : `Identity: ${bill.identity.status}`;
+
+  if (matched) {
+    return (
+      <details className="mt-1 text-xs">
+        <summary className="cursor-pointer text-muted-foreground marker:text-muted-foreground">
+          <span className="font-semibold text-success">{label}{page}</span>
+          <span className="ml-2 underline underline-offset-2">Evidence</span>
+        </summary>
+        <InboxIdentityEvidence identity={bill.identity} />
+      </details>
+    );
+  }
+
+  return (
+    <>
+      <div className="mt-1 text-xs font-semibold text-warning">{label}{page}</div>
+      <InboxIdentityEvidence identity={bill.identity} />
+    </>
+  );
+}
+
 function InboxImportDrawer({
   open,
   canEnsurePeriod,
@@ -1114,21 +1169,7 @@ function InboxImportDrawer({
                                   {bill.parse_note && (
                                     <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
                                   )}
-                                  <div className={cn("mt-1 text-xs font-semibold", bill.identity.status === "matched" ? "text-success" : "text-warning")}>
-                                    {bill.identity.status === "matched" ? "Building verified" : `Identity: ${bill.identity.status}`}
-                                    {bill.source_page_start ? ` · page ${bill.source_page_start}${bill.source_page_end !== bill.source_page_start ? `-${bill.source_page_end}` : ""}` : ""}
-                                  </div>
-                                  <div className="mt-1 text-xs text-muted-foreground">{bill.identity.explanation}</div>
-                                  {bill.identity.expected_values.length > 0 && (
-                                    <div className="mt-1 text-xs text-muted-foreground">
-                                      Expected: <span className="font-mono text-foreground">{bill.identity.expected_values.join(" or ")}</span>
-                                    </div>
-                                  )}
-                                  {bill.identity.found_values.length > 0 && (
-                                    <div className="mt-1 break-all text-xs text-muted-foreground">
-                                      Observed near label: <span className="font-mono text-foreground">{bill.identity.found_values.join("; ")}</span>
-                                    </div>
-                                  )}
+                                  <InboxBillIdentity bill={bill} />
                                   {selectedIds.has(candidate.id) && bill.identity.status !== "matched" && (
                                     <Input
                                       className="mt-2 h-8"
