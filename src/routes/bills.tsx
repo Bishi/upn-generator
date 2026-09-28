@@ -1114,7 +1114,7 @@ function InboxImportDrawer({
                       <BillingTableHeaderCell>Attachment</BillingTableHeaderCell>
                       <BillingTableHeaderCell>Bill</BillingTableHeaderCell>
                       <BillingTableHeaderCell className="w-28 text-right">Amount</BillingTableHeaderCell>
-                      <BillingTableHeaderCell className="w-40 px-6 text-right">Status</BillingTableHeaderCell>
+                      <BillingTableHeaderCell className="w-24 px-3 text-right">Status</BillingTableHeaderCell>
                     </BillingTableHeaderRow>
                   </thead>
                   <tbody>
@@ -1166,13 +1166,13 @@ function InboxImportDrawer({
                             </div>
                           </td>
                         );
-                        const attachmentCell = (
+                        const attachmentCell = (pageStart?: number | null) => (
                           <td className="max-w-64 px-3 py-4 align-top">
                             <div className="truncate font-semibold">{candidate.attachment_filename}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.sender || "Unknown sender"}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.subject || "No subject"}</div>
                             {candidate.source_available ? (
-                              <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => viewInboxSource(candidate, candidate.bills[0]?.source_page_start)}>
+                              <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => viewInboxSource(candidate, pageStart)}>
                                 <Eye className="size-3.5" />
                                 View source
                               </Button>
@@ -1182,7 +1182,7 @@ function InboxImportDrawer({
                           </td>
                         );
                         const statusCell = (
-                          <td className="w-40 px-6 py-4 text-right align-top">
+                          <td className="w-24 px-3 py-4 text-right align-top">
                             <InboxStatusChip candidate={candidate} />
                           </td>
                         );
@@ -1191,7 +1191,7 @@ function InboxImportDrawer({
                           return (
                             <tr key={candidate.id} className={`border-b border-border align-top ${groupClass}`}>
                               {selectionCell("")}
-                              {attachmentCell}
+                              {attachmentCell(null)}
                               <td className="px-3 py-4 align-top">
                                 <span className="text-xs text-muted-foreground">No importable bills</span>
                               </td>
@@ -1206,7 +1206,7 @@ function InboxImportDrawer({
                             {candidate.bills.map((bill, index) => (
                               <tr key={`${candidate.id}-bill-${index}`} className={`border-b border-border align-top ${groupClass}`}>
                                 {selectionCell(String(index + 1))}
-                                {attachmentCell}
+                                {attachmentCell(bill.source_page_start)}
                                 <td className="px-3 py-4 align-top">
                                   <div className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</div>
                                   <div className="mt-1 truncate text-xs text-muted-foreground">

@@ -11,6 +11,7 @@
 
 - [ ] In local and inbox preview, open supported accepted, rejected, and unselected staged sources; confirm unsupported/oversized items show an explicit unavailable reason.
 - [ ] In the packaged Windows app, confirm a staged PDF opens through WebView2 at the candidate's `#page=N`, with toolbar page navigation, zoom, and search working.
+- [ ] For an inbox attachment containing several bill rows on different pages, click View source on every row and confirm each opens at that row's displayed source page rather than the first bill's page.
 - [ ] Close and reopen the PDF viewer, switch between documents, and confirm no stale document/page remains visible; verify Blob URLs are revoked on close, replacement, unmount, and failed load.
 - [ ] Open a staged image, confirm fit behavior and bounded 25%-400% zoom, then close and reopen it.
 - [ ] Open staged and stored `.tif`/`.tiff` originals and confirm the first TIFF image renders with the normal image zoom controls while retained/downloaded bytes remain unchanged.
