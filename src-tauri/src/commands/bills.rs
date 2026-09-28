@@ -1410,8 +1410,27 @@ fn address_result(text: &str, expected: &str) -> bool {
                 .take_while(|ch| ch.is_whitespace() || *ch == '.')
                 .count();
             let continuation = &folded[end + separator_count..];
+            let postal_digits = continuation
+                .iter()
+                .take_while(|ch| ch.is_ascii_digit())
+                .count();
+            let city_gap = continuation[postal_digits..]
+                .iter()
+                .take_while(|ch| ch.is_whitespace() && !matches!(**ch, '\r' | '\n'))
+                .count();
+            let city_letters = continuation[postal_digits + city_gap..]
+                .iter()
+                .take_while(|ch| ch.is_ascii_alphabetic())
+                .count();
+            let postal_city_line = folded[end..end + separator_count]
+                .iter()
+                .any(|ch| matches!(*ch, '\r' | '\n'))
+                && postal_digits == 4
+                && city_gap > 0
+                && city_letters >= 2;
             let has_separated_house_continuation = separator_count > 0
-                && (continuation.first().is_some_and(|ch| ch.is_ascii_digit())
+                && ((continuation.first().is_some_and(|ch| ch.is_ascii_digit())
+                    && !postal_city_line)
                     || (continuation
                         .first()
                         .is_some_and(|ch| ch.is_ascii_alphabetic())
@@ -3582,6 +3601,8 @@ SI12 6330017789210
             "Redno čiščenje: KAMNISKA\nULICA 3 6",
             "Kamniška 36",
             "Kamniška 36, 100 EUR",
+            "Kamniška 36\n1000 Ljubljana",
+            "Kamniška 36\r\n1000 Ljubljana",
         ] {
             assert_eq!(
                 verify_provider_identity(&provider, text, Some(1), Some(1), false).status,
@@ -3593,6 +3614,8 @@ SI12 6330017789210
             "Kamniška cesta 360",
             "Kamniška 3 6 0",
             "Kamniška 36\n0",
+            "Kamniška 3 6 0\n1000 Ljubljana",
+            "Kamniška 36\n10000 Ljubljana",
             "Kamniška 36A",
             "Kamniška 36 A",
             "Kamniška 36.a",
