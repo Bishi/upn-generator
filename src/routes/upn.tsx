@@ -1192,8 +1192,7 @@ function UpnPage() {
       {isClosed && (
         <div className="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success">
           This billing month is closed
-          {selected?.closed_at ? ` (${formatClosedAt(selected.closed_at)})` : ""}. Reopen it
-          before changing bills, splits, or delivery status.
+          {selected?.closed_at ? ` (${formatClosedAt(selected.closed_at)})` : ""}.
         </div>
       )}
 
