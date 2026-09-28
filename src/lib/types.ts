@@ -40,6 +40,12 @@ export interface Provider {
   invoice_number_pattern: string;
   purpose_text_template: string;
   split_basis: "occupants" | "m2_percentage" | "equal_apartments";
+  identity_rule_type: "unconfigured" | "labeled_value" | "building_address";
+  identity_rule_operator: "all" | "any";
+  identity_label: string;
+  identity_value: string;
+  identity_alternate_label: string;
+  identity_alternate_value: string;
 }
 
 export interface SmtpConfig {
@@ -111,7 +117,68 @@ export interface Bill {
   source_filename: string;
   reviewed_at: string | null;
   review_note: string;
+  identity_status:
+    | "not_checked"
+    | "matched"
+    | "mismatched"
+    | "missing"
+    | "unreadable"
+    | "unconfigured"
+    | "exception";
+  identity_rule_snapshot: string;
+  identity_evidence: string;
+  identity_exception_note: string;
+  identity_exception_at: string | null;
+  source_page_start: number | null;
+  source_page_end: number | null;
   provider_name: string | null;
+}
+
+export interface IdentityVerification {
+  status: "not_checked" | "matched" | "mismatched" | "missing" | "unreadable" | "unconfigured";
+  explanation: string;
+  expected_values: string[];
+  found_values: string[];
+  page_start: number | null;
+  page_end: number | null;
+  rule_snapshot: string;
+}
+
+export interface PreparedBillPreviewSummary {
+  provider_id: number | null;
+  provider_name: string | null;
+  creditor_name: string;
+  amount_cents: number;
+  reference: string;
+  due_date: string;
+  invoice_number: string;
+  purpose_text: string;
+  parse_note: string;
+  status: string;
+  identity: IdentityVerification;
+  content_hash: string;
+  source_page_start: number | null;
+  source_page_end: number | null;
+}
+
+export interface LocalBillImportPreview {
+  source_filename: string;
+  file_sha256: string;
+  bills: PreparedBillPreviewSummary[];
+}
+
+export interface IdentityExceptionInput {
+  content_hash: string;
+  note: string;
+  identity_status: string;
+  rule_snapshot: string;
+}
+
+export interface LocalBillImportFinalizeRequest {
+  file_path: string;
+  expected_file_sha256: string;
+  selected_content_hashes: string[];
+  exceptions: IdentityExceptionInput[];
 }
 
 // Splits
@@ -285,6 +352,10 @@ export interface InboxPreviewBillSummary {
   purpose_text: string;
   parse_note: string;
   status: string;
+  identity: IdentityVerification;
+  content_hash: string;
+  source_page_start: number | null;
+  source_page_end: number | null;
 }
 
 export interface InboxPreviewCandidate {

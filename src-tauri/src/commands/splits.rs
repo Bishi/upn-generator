@@ -2,7 +2,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use super::bills::ensure_period_open;
+use super::bills::{ensure_period_bills_identity_eligible, ensure_period_open};
 use super::config::DbState;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -96,8 +96,9 @@ pub fn calculate_splits(
     db: State<DbState>,
     billing_period_id: i64,
 ) -> Result<Vec<SplitRow>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
     ensure_period_open(&conn, billing_period_id)?;
+    ensure_period_bills_identity_eligible(&conn, billing_period_id)?;
 
     let mut stmt = conn
         .prepare(
@@ -120,6 +121,7 @@ pub fn calculate_splits(
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
+    drop(stmt);
 
     if apartments.is_empty() {
         return Err("No active apartments configured.".to_string());
@@ -148,22 +150,24 @@ pub fn calculate_splits(
     }
 
     let mut result_rows = Vec::new();
+    drop(stmt);
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     for (bill_id, bill_amount, source_filename, provider_name, split_basis) in &bills {
-        conn.execute("DELETE FROM bill_splits WHERE bill_id=?1", [bill_id])
+        tx.execute("DELETE FROM bill_splits WHERE bill_id=?1", [bill_id])
             .map_err(|e| e.to_string())?;
 
         let normalized_basis = normalize_split_basis(split_basis);
         let splits = calculate_weighted_shares(*bill_amount, &apartments, normalized_basis)?;
 
         for (apt_id, share) in &splits {
-            conn.execute(
+            tx.execute(
                 "INSERT OR REPLACE INTO bill_splits (bill_id, apartment_id, amount_cents)
                  VALUES (?1, ?2, ?3)",
                 params![bill_id, apt_id, share],
             )
             .map_err(|e| e.to_string())?;
-            let split_id = conn.last_insert_rowid();
+            let split_id = tx.last_insert_rowid();
 
             let apt = apartments.iter().find(|apt| apt.id == *apt_id).unwrap();
             result_rows.push(SplitRow {
@@ -185,6 +189,8 @@ pub fn calculate_splits(
             });
         }
     }
+
+    tx.commit().map_err(|e| e.to_string())?;
 
     Ok(result_rows)
 }
@@ -246,6 +252,7 @@ pub fn save_split(db: State<DbState>, split: BillSplit) -> Result<BillSplit, Str
                 )
                 .map_err(|e| e.to_string())?;
             ensure_period_open(&conn, billing_period_id)?;
+            ensure_period_bills_identity_eligible(&conn, billing_period_id)?;
             conn.execute(
                 "UPDATE bill_splits SET amount_cents=?1 WHERE id=?2",
                 params![split.amount_cents, id],

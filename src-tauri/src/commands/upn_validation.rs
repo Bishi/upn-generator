@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
 use lettre::message::Mailbox;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use tauri::State;
@@ -60,6 +60,8 @@ struct BillForValidation {
     parse_note: String,
     status: String,
     reviewed_at: Option<String>,
+    identity_status: String,
+    identity_exception_note: String,
 }
 
 #[derive(Debug, Clone)]
@@ -269,7 +271,8 @@ fn load_bills(conn: &Connection, billing_period_id: i64) -> Result<Vec<BillForVa
             "SELECT b.id, b.provider_id, p.name, b.source_filename, b.amount_cents,
                     b.creditor_iban, b.reference, b.due_date, b.purpose_code,
                     b.purpose_text, COALESCE(p.split_basis, 'm2_percentage'),
-                    b.parse_note, b.status, b.reviewed_at
+                    b.parse_note, b.status, b.reviewed_at, b.identity_status,
+                    b.identity_exception_note
              FROM bills b
              LEFT JOIN providers p ON b.provider_id = p.id
              WHERE b.billing_period_id = ?1
@@ -293,6 +296,8 @@ fn load_bills(conn: &Connection, billing_period_id: i64) -> Result<Vec<BillForVa
                 parse_note: row.get(11)?,
                 status: row.get(12)?,
                 reviewed_at: row.get(13)?,
+                identity_status: row.get(14)?,
+                identity_exception_note: row.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -436,6 +441,37 @@ fn validate_unreviewed_import_warnings(
                 bill,
                 "Bill has import/parser warnings that have not been reviewed.".to_string(),
                 all_actions(),
+            ));
+        }
+    }
+}
+
+fn validate_building_identity(
+    bills: &[BillForValidation],
+    period_is_closed: bool,
+    issues: &mut Vec<UpnValidationIssue>,
+) {
+    for bill in bills {
+        if bill.identity_status != "matched"
+            && !(bill.identity_status == "exception"
+                && !bill.identity_exception_note.trim().is_empty())
+        {
+            issues.push(bill_issue(
+                SEVERITY_ERROR,
+                "building_identity_unverified",
+                bill,
+                format!(
+                    "Building identity is '{}'. Verify the invoice or approve a noted exception.",
+                    bill.identity_status
+                ),
+                if period_is_closed && bill.identity_status == "not_checked" {
+                    vec![
+                        ACTION_SEND_EMAILS.to_string(),
+                        ACTION_MARK_DELIVERED.to_string(),
+                    ]
+                } else {
+                    all_actions()
+                },
             ));
         }
     }
@@ -682,33 +718,21 @@ pub fn validate_upn_pre_send_inner(
     conn: &Connection,
     billing_period_id: i64,
 ) -> Result<UpnPreSendValidation, String> {
-    let period_count: i64 = conn
+    let period_status: Option<String> = conn
         .query_row(
-            "SELECT COUNT(*) FROM billing_periods WHERE id = ?1",
+            "SELECT status FROM billing_periods WHERE id = ?1",
             [billing_period_id],
             |row| row.get(0),
         )
+        .optional()
         .map_err(|e| e.to_string())?;
-    if period_count == 0 {
-        return Err(format!(
-            "Billing period {billing_period_id} does not exist."
-        ));
-    }
+    let period_status = period_status
+        .ok_or_else(|| format!("Billing period {billing_period_id} does not exist."))?;
 
     let bills = load_bills(conn, billing_period_id)?;
     let active_apartments = load_active_apartments(conn)?;
     let mut issues = Vec::new();
 
-    if bills.is_empty() {
-        issues.push(issue(
-            SEVERITY_ERROR,
-            "no_bills",
-            ENTITY_PERIOD,
-            "No bills are imported for this billing period.".to_string(),
-            "Billing period".to_string(),
-            all_actions(),
-        ));
-    }
     if active_apartments.is_empty() {
         issues.push(issue(
             SEVERITY_ERROR,
@@ -721,6 +745,7 @@ pub fn validate_upn_pre_send_inner(
     }
 
     validate_unreviewed_import_warnings(&bills, &mut issues);
+    validate_building_identity(&bills, period_status == "closed", &mut issues);
     validate_payment_fields(&bills, &mut issues);
     validate_duplicate_providers(&bills, &mut issues);
     validate_split_inputs(&bills, &active_apartments, &mut issues);
@@ -735,9 +760,13 @@ pub fn validate_upn_pre_send_inner(
         .iter()
         .filter(|issue| issue.severity == SEVERITY_WARNING)
         .count() as i64;
-    let can_send_emails = !validation_blocks_action_from_issues(&issues, ACTION_SEND_EMAILS);
-    let can_mark_delivered = !validation_blocks_action_from_issues(&issues, ACTION_MARK_DELIVERED);
-    let can_download_all = !validation_blocks_action_from_issues(&issues, ACTION_DOWNLOAD_ALL);
+    let has_bills = !bills.is_empty();
+    let can_send_emails =
+        has_bills && !validation_blocks_action_from_issues(&issues, ACTION_SEND_EMAILS);
+    let can_mark_delivered =
+        has_bills && !validation_blocks_action_from_issues(&issues, ACTION_MARK_DELIVERED);
+    let can_download_all =
+        has_bills && !validation_blocks_action_from_issues(&issues, ACTION_DOWNLOAD_ALL);
 
     Ok(UpnPreSendValidation {
         billing_period_id,
@@ -757,7 +786,12 @@ fn validation_blocks_action_from_issues(issues: &[UpnValidationIssue], action: &
 }
 
 pub fn validation_blocks_action(validation: &UpnPreSendValidation, action: &str) -> bool {
-    validation_blocks_action_from_issues(&validation.issues, action)
+    match action {
+        ACTION_SEND_EMAILS => !validation.can_send_emails,
+        ACTION_MARK_DELIVERED => !validation.can_mark_delivered,
+        ACTION_DOWNLOAD_ALL => !validation.can_download_all,
+        _ => validation_blocks_action_from_issues(&validation.issues, action),
+    }
 }
 
 fn action_label(action: &str) -> &str {
@@ -783,6 +817,12 @@ pub fn ensure_validation_allows(
                 issue.severity == SEVERITY_ERROR && issue.blocks.iter().any(|block| block == action)
             })
             .count();
+        if count == 0 {
+            return Err(format!(
+                "Import bills for this billing month before {}.",
+                action_label(action)
+            ));
+        }
         return Err(format!(
             "UPN validation failed for {}: {} blocking issue{}. Open UPN Preview for details.",
             action_label(action),
@@ -871,7 +911,9 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'draft',
                 source_filename TEXT NOT NULL DEFAULT '',
                 reviewed_at TEXT,
-                review_note TEXT NOT NULL DEFAULT ''
+                review_note TEXT NOT NULL DEFAULT '',
+                identity_status TEXT NOT NULL DEFAULT 'matched',
+                identity_exception_note TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE bill_splits (
                 id INTEGER PRIMARY KEY,
@@ -988,6 +1030,30 @@ mod tests {
     }
 
     #[test]
+    fn empty_month_has_no_validation_error_but_cannot_run_bulk_actions() {
+        let conn = setup_conn();
+        insert_apartment(&conn, 1, "Apt 1", "one@example.com", 1, 100.0, true);
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert_eq!(validation.error_count, 0);
+        assert_eq!(validation.warning_count, 0);
+        assert!(validation.issues.is_empty());
+        assert!(!validation.can_send_emails);
+        assert!(!validation.can_mark_delivered);
+        assert!(!validation.can_download_all);
+        for action in [
+            ACTION_SEND_EMAILS,
+            ACTION_MARK_DELIVERED,
+            ACTION_DOWNLOAD_ALL,
+        ] {
+            assert!(validation_blocks_action(&validation, action));
+            assert!(ensure_validation_allows(&conn, 1, action)
+                .unwrap_err()
+                .contains("Import bills"));
+        }
+    }
+
+    #[test]
     fn unreviewed_import_warning_blocks_all_bulk_actions() {
         let conn = setup_valid_period();
         conn.execute(
@@ -1024,6 +1090,76 @@ mod tests {
         assert!(validation.can_send_emails);
         assert!(validation.can_mark_delivered);
         assert!(validation.can_download_all);
+    }
+
+    #[test]
+    fn unverified_identity_blocks_actions_but_noted_exception_allows_them() {
+        let conn = setup_valid_period();
+        conn.execute("UPDATE bills SET identity_status='missing' WHERE id=1", [])
+            .unwrap();
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert!(validation_codes(&validation).contains(&"building_identity_unverified".to_string()));
+        assert!(!validation.can_send_emails);
+        assert!(!validation.can_mark_delivered);
+        assert!(!validation.can_download_all);
+
+        conn.execute(
+            "UPDATE bills SET identity_status='exception',
+             identity_exception_note='Checked against supplier portal' WHERE id=1",
+            [],
+        )
+        .unwrap();
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert!(
+            !validation_codes(&validation).contains(&"building_identity_unverified".to_string())
+        );
+        assert!(validation.can_send_emails);
+        assert!(validation.can_mark_delivered);
+        assert!(validation.can_download_all);
+    }
+
+    #[test]
+    fn closed_legacy_month_with_unchecked_identity_remains_exportable() {
+        let conn = setup_valid_period();
+        conn.execute("UPDATE billing_periods SET status='closed' WHERE id=1", [])
+            .unwrap();
+        conn.execute(
+            "UPDATE bills SET identity_status='not_checked' WHERE id=1",
+            [],
+        )
+        .unwrap();
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        let identity_issue = validation
+            .issues
+            .iter()
+            .find(|issue| issue.code == "building_identity_unverified")
+            .unwrap();
+        assert!(!identity_issue
+            .blocks
+            .contains(&ACTION_DOWNLOAD_ALL.to_string()));
+        assert!(!validation.can_send_emails);
+        assert!(!validation.can_mark_delivered);
+        assert!(validation.can_download_all);
+        assert!(ensure_validation_allows(&conn, 1, ACTION_DOWNLOAD_ALL).is_ok());
+
+        conn.execute("UPDATE billing_periods SET status='draft' WHERE id=1", [])
+            .unwrap();
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert!(!validation.can_download_all);
+    }
+
+    #[test]
+    fn closed_month_with_failed_identity_still_blocks_export() {
+        let conn = setup_valid_period();
+        conn.execute("UPDATE billing_periods SET status='closed' WHERE id=1", [])
+            .unwrap();
+        conn.execute("UPDATE bills SET identity_status='missing' WHERE id=1", [])
+            .unwrap();
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert!(!validation.can_download_all);
     }
 
     #[test]

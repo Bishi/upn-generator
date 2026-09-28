@@ -11,6 +11,7 @@
 
 ## Cases
 
+- [ ] Select an empty billing month and confirm there is no red validation blocker or `0 validation issues` chip; the page prompts for bill import and bulk UPN actions remain disabled.
 - [ ] Select a billing period and confirm each apartment card shows line items and total due.
 - [ ] Confirm the validation panel appears for the selected billing period and summarizes blocking errors and warnings without pushing content down unexpectedly.
 - [ ] Remove an apartment recipient for an apartment with a UPN packet and confirm Send Emails is disabled while Download All PDFs and Mark Delivered remain available.
@@ -32,6 +33,7 @@
 - [ ] Start an email batch for the month, attempt Close Month through another app window or direct command while the batch is active, and confirm closing is rejected with an in-progress message; retry after the batch completes and confirm closing succeeds when eligibility still passes.
 - [ ] Close a month, reload the app, and confirm the closed state and closure timestamp remain visible across Bills, Splits, UPN Preview, and the month picker.
 - [ ] In a closed month, confirm single/apartment previews and Download All PDFs still work, while Send Emails, Mark Delivered, and Unmark Delivered are disabled.
+- [ ] Upgrade or restore a previously closed month whose bills have `Not checked` identity; confirm Download All PDFs remains available, delivery stays blocked, and reopening restores the bulk export identity gate.
 - [ ] With a closed month containing an apartment's splits or delivery history, try deleting that apartment in Settings and confirm a visible error says the affected month must be reopened, while the apartment and closed-month records remain unchanged.
 - [ ] Click Reopen Month once and confirm it reopens immediately without a confirmation dialog; confirm delivery actions become available again when validation allows them.
 - [ ] Click Mark Delivered, cancel the confirmation prompt, and confirm the month remains undelivered.
@@ -50,6 +52,8 @@
 - [ ] Send apartment emails with multiple comma-separated recipients and confirm per-recipient status is recorded.
 - [ ] Reload the UPN page and confirm delivery history is restored for sent, failed, blocked, or partial rows.
 - [ ] Change packet content after a prior send/manual confirmation and confirm the prior delivery is shown as no longer current until sent or manually marked delivered again.
+- [ ] Set a bill identity status to an unverified state and confirm Send Emails, Download All PDFs, and Mark Delivered are blocked by `building_identity_unverified`.
+- [ ] Approve a non-empty identity exception and confirm those actions are eligible again when no unrelated validation issue remains; the UI must not call the exception a match.
 
 ## Notes
 

@@ -1,20 +1,23 @@
 use regex::Regex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::panic::{catch_unwind, UnwindSafe};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use super::config::{DbState, Provider};
 
 #[cfg(target_os = "windows")]
 use windows::{
+    Data::Pdf::{PdfDocument, PdfPageRenderOptions},
     Graphics::Imaging::{BitmapDecoder, SoftwareBitmap},
     Media::Ocr::OcrEngine,
-    Storage::{FileAccessMode, StorageFile},
+    Storage::{FileAccessMode, StorageFile, Streams::InMemoryRandomAccessStream},
 };
 
 // ─── Structs ───────────────────────────────────────────────────────────────
@@ -52,6 +55,13 @@ pub struct Bill {
     pub source_filename: String,
     pub reviewed_at: Option<String>,
     pub review_note: String,
+    pub identity_status: String,
+    pub identity_rule_snapshot: String,
+    pub identity_evidence: String,
+    pub identity_exception_note: String,
+    pub identity_exception_at: Option<String>,
+    pub source_page_start: Option<i32>,
+    pub source_page_end: Option<i32>,
     // Joined display fields (not stored)
     pub provider_name: Option<String>,
 }
@@ -69,16 +79,6 @@ fn parse_amount_to_cents(s: &str) -> i64 {
         trimmed.replace(',', "")
     };
     (normalized.parse::<f64>().unwrap_or(0.0) * 100.0).round() as i64
-}
-
-fn first_capture(pattern: &str, text: &str) -> Option<String> {
-    if pattern.is_empty() {
-        return None;
-    }
-    let re = Regex::new(pattern).ok()?;
-    re.captures(text)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().trim().to_string())
 }
 
 fn normalize_spaces(text: &str) -> String {
@@ -107,12 +107,218 @@ fn is_supported_image_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn extract_text_from_pdf(file_path: &str) -> Result<String, String> {
+#[derive(Debug, Clone)]
+struct ExtractedPage {
+    page_number: i32,
+    native_text: String,
+    ocr_text: String,
+    diagnostics: Vec<String>,
+}
+
+impl ExtractedPage {
+    fn combined_text(&self) -> String {
+        match (
+            self.native_text.trim().is_empty(),
+            self.ocr_text.trim().is_empty(),
+        ) {
+            (false, false) => format!("{}\n{}", self.native_text.trim(), self.ocr_text.trim()),
+            (false, true) => self.native_text.trim().to_string(),
+            (true, false) => self.ocr_text.trim().to_string(),
+            (true, true) => String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DocumentExtraction {
+    pages: Vec<ExtractedPage>,
+    diagnostics: Vec<String>,
+}
+
+#[cfg(target_os = "windows")]
+static PDF_OCR_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+struct PdfOcrWorkerGuard;
+
+#[cfg(target_os = "windows")]
+impl Drop for PdfOcrWorkerGuard {
+    fn drop(&mut self) {
+        PDF_OCR_ACTIVE.store(false, Ordering::Release);
+    }
+}
+
+fn contain_extractor_unwind<T, F>(operation: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, pdf_extract::OutputError> + UnwindSafe,
+{
+    match catch_unwind(operation) {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(format!("PDF text extraction failed: {error}")),
+        Err(_) => Err(
+            "PDF text extraction panicked; the document is unreadable by the text extractor."
+                .to_string(),
+        ),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ocr_pdf_pages(file_path: &str, page_limit: usize) -> Result<Vec<String>, String> {
+    PDF_OCR_ACTIVE
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| "Another PDF rendering/OCR operation is still running.".to_string())?;
+    let canonical_path = std::fs::canonicalize(file_path)
+        .map_err(|e| format!("Could not resolve PDF path: {e}"))?
+        .to_string_lossy()
+        .to_string();
+    // WinRT StorageFile rejects the extended-length prefix returned by
+    // std::fs::canonicalize even though the same path is valid for Win32 APIs.
+    let path = if let Some(path) = canonical_path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{path}")
+    } else {
+        canonical_path
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&canonical_path)
+            .to_string()
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _worker_guard = PdfOcrWorkerGuard;
+        let result = (|| -> Result<Vec<String>, String> {
+            let file = StorageFile::GetFileFromPathAsync(&path.into())
+                .map_err(|e| format!("Could not open PDF for rendering: {e}"))?
+                .get()
+                .map_err(|e| format!("Could not open PDF for rendering: {e}"))?;
+            let document = PdfDocument::LoadFromFileAsync(&file)
+                .map_err(|e| format!("Could not start PDF renderer: {e}"))?
+                .get()
+                .map_err(|e| format!("Could not load PDF renderer: {e}"))?;
+            let page_count = document.PageCount().map_err(|e| e.to_string())? as usize;
+            if page_count > page_limit {
+                return Err(format!(
+                    "PDF has {page_count} pages; the verification limit is {page_limit} pages."
+                ));
+            }
+            let engine = OcrEngine::TryCreateFromUserProfileLanguages()
+                .map_err(|e| format!("Windows OCR is unavailable: {e}"))?;
+            let mut texts = Vec::with_capacity(page_count);
+            for index in 0..page_count {
+                let page = document.GetPage(index as u32).map_err(|e| e.to_string())?;
+                let size = page.Size().map_err(|e| e.to_string())?;
+                let width = 1800u32;
+                let height = ((size.Height / size.Width) * width as f32)
+                    .round()
+                    .clamp(1.0, 2600.0) as u32;
+                let options = PdfPageRenderOptions::new().map_err(|e| e.to_string())?;
+                options
+                    .SetDestinationWidth(width)
+                    .map_err(|e| e.to_string())?;
+                options
+                    .SetDestinationHeight(height)
+                    .map_err(|e| e.to_string())?;
+                let stream = InMemoryRandomAccessStream::new().map_err(|e| e.to_string())?;
+                page.RenderWithOptionsToStreamAsync(&stream, &options)
+                    .map_err(|e| format!("Could not render PDF page {}: {e}", index + 1))?
+                    .get()
+                    .map_err(|e| format!("Could not render PDF page {}: {e}", index + 1))?;
+                stream.Seek(0).map_err(|e| e.to_string())?;
+                let decoder = BitmapDecoder::CreateAsync(&stream)
+                    .map_err(|e| e.to_string())?
+                    .get()
+                    .map_err(|e| e.to_string())?;
+                let bitmap = decoder
+                    .GetSoftwareBitmapAsync()
+                    .map_err(|e| e.to_string())?
+                    .get()
+                    .map_err(|e| e.to_string())?;
+                let bitmap = SoftwareBitmap::Convert(
+                    &bitmap,
+                    windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
+                )
+                .map_err(|e| e.to_string())?;
+                let recognized = engine
+                    .RecognizeAsync(&bitmap)
+                    .map_err(|e| e.to_string())?
+                    .get()
+                    .map_err(|e| e.to_string())?;
+                texts.push(
+                    recognized
+                        .Text()
+                        .map_err(|e| e.to_string())?
+                        .to_string_lossy()
+                        .trim()
+                        .to_string(),
+                );
+                let _ = page.Close();
+            }
+            Ok(texts)
+        })();
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(Duration::from_secs(75)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err("PDF rendering/OCR timed out after 75 seconds.".to_string())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("PDF rendering/OCR worker stopped unexpectedly.".to_string())
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ocr_pdf_pages(_file_path: &str, _page_limit: usize) -> Result<Vec<String>, String> {
+    Err("PDF page rendering/OCR is only supported on Windows builds.".to_string())
+}
+
+fn extract_pdf_document(file_path: &str) -> Result<DocumentExtraction, String> {
+    const MAX_PDF_BYTES: u64 = 25 * 1024 * 1024;
+    const MAX_PDF_PAGES: usize = 30;
+    let metadata = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
+    if metadata.len() > MAX_PDF_BYTES {
+        return Err("PDF is larger than the 25 MB verification limit.".to_string());
+    }
     let pdf_bytes = std::fs::read(file_path).map_err(|e| e.to_string())?;
-    Ok(pdf_extract::extract_text_from_mem(&pdf_bytes)
-        .unwrap_or_default()
-        .trim()
-        .to_string())
+    let native_result =
+        contain_extractor_unwind(|| pdf_extract::extract_text_from_mem_by_pages(&pdf_bytes));
+    let ocr_result = ocr_pdf_pages(file_path, MAX_PDF_PAGES);
+    let mut diagnostics = Vec::new();
+    let native_pages = match native_result {
+        Ok(pages) => pages,
+        Err(error) => {
+            diagnostics.push(error);
+            Vec::new()
+        }
+    };
+    let ocr_pages = match ocr_result {
+        Ok(pages) => pages,
+        Err(error) => {
+            diagnostics.push(error);
+            Vec::new()
+        }
+    };
+    let page_count = native_pages.len().max(ocr_pages.len());
+    if page_count == 0 {
+        return Err(if diagnostics.is_empty() {
+            "PDF contains no readable pages.".to_string()
+        } else {
+            diagnostics.join(" ")
+        });
+    }
+    if page_count > MAX_PDF_PAGES {
+        return Err(format!(
+            "PDF has {page_count} pages; the verification limit is {MAX_PDF_PAGES} pages."
+        ));
+    }
+    let pages = (0..page_count)
+        .map(|index| ExtractedPage {
+            page_number: index as i32 + 1,
+            native_text: native_pages.get(index).cloned().unwrap_or_default(),
+            ocr_text: ocr_pages.get(index).cloned().unwrap_or_default(),
+            diagnostics: Vec::new(),
+        })
+        .collect();
+    Ok(DocumentExtraction { pages, diagnostics })
 }
 
 #[cfg(target_os = "windows")]
@@ -174,24 +380,6 @@ fn extract_text_from_image(file_path: &str) -> Result<String, String> {
 #[cfg(not(target_os = "windows"))]
 fn extract_text_from_image(_file_path: &str) -> Result<String, String> {
     Err("Image bill import is only supported on Windows builds.".to_string())
-}
-
-fn extract_text_from_file(file_path: &str) -> Result<String, String> {
-    let path = Path::new(file_path);
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .unwrap_or_default();
-
-    match extension.as_str() {
-        "pdf" => extract_text_from_pdf(file_path),
-        _ if is_supported_image_file(path) => extract_text_from_image(file_path),
-        _ => Err(format!(
-            "Unsupported bill file type: {}. Supported files: PDF, JPG, JPEG, PNG, BMP, TIF, TIFF.",
-            extension
-        )),
-    }
 }
 
 fn extract_upn_purpose_from_context(
@@ -420,7 +608,8 @@ fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
         "SELECT id, name, service_type, creditor_name, creditor_address, creditor_city,
          creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern,
          reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template,
-         split_basis
+         split_basis, identity_rule_type, identity_rule_operator, identity_label,
+         identity_value, identity_alternate_label, identity_alternate_value
          FROM providers ORDER BY name",
     ) {
         Ok(s) => s,
@@ -444,6 +633,12 @@ fn get_providers_inner(conn: &rusqlite::Connection) -> Vec<Provider> {
             invoice_number_pattern: row.get(13)?,
             purpose_text_template: row.get(14)?,
             split_basis: row.get(15)?,
+            identity_rule_type: row.get(16)?,
+            identity_rule_operator: row.get(17)?,
+            identity_label: row.get(18)?,
+            identity_value: row.get(19)?,
+            identity_alternate_label: row.get(20)?,
+            identity_alternate_value: row.get(21)?,
         })
     })
     .map(|rows| rows.filter_map(|r| r.ok()).collect())
@@ -633,7 +828,14 @@ fn bill_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bill> {
         source_filename: row.get(17)?,
         reviewed_at: row.get(18)?,
         review_note: row.get(19)?,
-        provider_name: row.get(20)?,
+        identity_status: row.get(20)?,
+        identity_rule_snapshot: row.get(21)?,
+        identity_evidence: row.get(22)?,
+        identity_exception_note: row.get(23)?,
+        identity_exception_at: row.get(24)?,
+        source_page_start: row.get(25)?,
+        source_page_end: row.get(26)?,
+        provider_name: row.get(27)?,
     })
 }
 
@@ -643,7 +845,9 @@ fn load_bill_by_id(conn: &Connection, id: i64) -> Result<Bill, String> {
          b.creditor_name, b.creditor_iban, b.creditor_address, b.creditor_city,
          b.creditor_postal_code, b.reference, b.due_date, b.purpose_code, b.purpose_text,
          b.invoice_number, b.parse_note, b.status, b.source_filename,
-         b.reviewed_at, b.review_note, p.name as provider_name
+         b.reviewed_at, b.review_note, b.identity_status, b.identity_rule_snapshot,
+         b.identity_evidence, b.identity_exception_note, b.identity_exception_at,
+         b.source_page_start, b.source_page_end, p.name as provider_name
          FROM bills b
          LEFT JOIN providers p ON b.provider_id = p.id
          WHERE b.id = ?1",
@@ -662,7 +866,9 @@ pub fn get_bills(db: State<DbState>, billing_period_id: i64) -> Result<Vec<Bill>
              b.creditor_name, b.creditor_iban, b.creditor_address, b.creditor_city,
              b.creditor_postal_code, b.reference, b.due_date, b.purpose_code, b.purpose_text,
              b.invoice_number, b.parse_note, b.status, b.source_filename,
-             b.reviewed_at, b.review_note, p.name as provider_name
+             b.reviewed_at, b.review_note, b.identity_status, b.identity_rule_snapshot,
+             b.identity_evidence, b.identity_exception_note, b.identity_exception_at,
+             b.source_page_start, b.source_page_end, p.name as provider_name
              FROM bills b
              LEFT JOIN providers p ON b.provider_id = p.id
              WHERE b.billing_period_id = ?1
@@ -714,6 +920,16 @@ fn save_bill_inner(conn: &Connection, bill: Bill) -> Result<Bill, String> {
             if meaningful_change && bill_has_review_warning(&bill.parse_note, &bill.status) {
                 tx.execute(
                     "UPDATE bills SET reviewed_at=NULL, review_note='' WHERE id=?1",
+                    [id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            if meaningful_change && previous.identity_status == "exception" {
+                tx.execute(
+                    "UPDATE bills
+                     SET identity_status='not_checked', identity_exception_note='',
+                         identity_exception_at=NULL
+                     WHERE id=?1",
                     [id],
                 )
                 .map_err(|e| e.to_string())?;
@@ -852,181 +1068,6 @@ pub fn delete_bill(db: State<DbState>, id: i64) -> Result<(), String> {
     Ok(())
 }
 
-/// Parse a bill file and try to match it against configured providers.
-/// Returns a partially-filled Bill that the user can review before saving.
-#[tauri::command]
-pub fn import_bill(
-    db: State<DbState>,
-    file_path: String,
-    billing_period_id: i64,
-) -> Result<Bill, String> {
-    let raw_text = extract_text_from_file(&file_path)?;
-
-    let filename = std::path::Path::new(&file_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&file_path)
-        .to_string();
-
-    // Get billing period for month/year interpolation
-    let (month, year) = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        ensure_period_open(&conn, billing_period_id)?;
-        conn.query_row(
-            "SELECT month, year FROM billing_periods WHERE id=?1",
-            [billing_period_id],
-            |r| Ok((r.get::<_, i32>(0)?, r.get::<_, i32>(1)?)),
-        )
-        .map_err(|e| e.to_string())?
-    };
-    let (source_month, source_year) =
-        find_source_period_month_year(&raw_text).unwrap_or((month, year));
-
-    // Try to match against providers
-    let providers = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        get_providers_inner(&conn)
-    };
-
-    let mut matched_provider: Option<&Provider> = None;
-    for provider in &providers {
-        if provider.match_pattern.is_empty() {
-            continue;
-        }
-        if let Ok(re) = Regex::new(&provider.match_pattern) {
-            if re.is_match(&raw_text) {
-                matched_provider = Some(provider);
-                break;
-            }
-        }
-    }
-
-    let (
-        provider_id,
-        amount_cents,
-        reference,
-        due_date,
-        invoice_number,
-        purpose_code,
-        purpose_text,
-        creditor_name,
-        creditor_iban,
-        creditor_address,
-        creditor_city,
-        creditor_postal_code,
-    ) = if let Some(p) = matched_provider {
-        let amount_str = first_capture(&p.amount_pattern, &raw_text).unwrap_or_default();
-        let amount_cents = parse_amount_to_cents(&amount_str);
-        let reference = first_capture(&p.reference_pattern, &raw_text).unwrap_or_default();
-        let due_date = first_capture(&p.due_date_pattern, &raw_text).unwrap_or_default();
-        let invoice_number =
-            first_capture(&p.invoice_number_pattern, &raw_text).unwrap_or_default();
-        let purpose_text = interpolate_template(
-            &p.purpose_text_template,
-            &invoice_number,
-            source_month,
-            source_year,
-        );
-        (
-            p.id,
-            amount_cents,
-            reference,
-            due_date,
-            invoice_number,
-            p.purpose_code.clone(),
-            purpose_text,
-            p.creditor_name.clone(),
-            p.creditor_iban.clone(),
-            p.creditor_address.clone(),
-            p.creditor_city.clone(),
-            p.creditor_postal_code.clone(),
-        )
-    } else {
-        (
-            None,
-            0,
-            String::new(),
-            String::new(),
-            String::new(),
-            "OTHR".to_string(),
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-        )
-    };
-
-    let parse_note =
-        import_review_parse_note("", amount_cents, &creditor_iban, &reference, &due_date);
-    let status = if parse_note.is_empty() {
-        "draft".to_string()
-    } else {
-        "needs_review".to_string()
-    };
-
-    // Insert into DB
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    ensure_period_open(&conn, billing_period_id)?;
-    conn.execute(
-        "INSERT INTO bills
-         (billing_period_id, provider_id, raw_text, amount_cents, creditor_name, creditor_iban,
-          creditor_address, creditor_city, creditor_postal_code, reference, due_date,
-          purpose_code, purpose_text, invoice_number, parse_note, status, source_filename)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
-        params![
-            billing_period_id,
-            provider_id,
-            raw_text,
-            amount_cents,
-            creditor_name,
-            creditor_iban,
-            creditor_address,
-            creditor_city,
-            creditor_postal_code,
-            reference,
-            due_date,
-            purpose_code,
-            purpose_text,
-            invoice_number,
-            parse_note,
-            status,
-            filename
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-
-    let id = conn.last_insert_rowid();
-    let provider_name = matched_provider.map(|p| p.name.clone());
-
-    Ok(Bill {
-        id: Some(id),
-        billing_period_id,
-        provider_id,
-        raw_text: String::new(), // don't send raw text back
-        amount_cents,
-        creditor_name,
-        creditor_iban,
-        creditor_address,
-        creditor_city,
-        creditor_postal_code,
-        reference,
-        due_date,
-        purpose_code,
-        purpose_text,
-        invoice_number,
-        parse_note,
-        status,
-        source_filename: filename,
-        reviewed_at: None,
-        review_note: String::new(),
-        provider_name,
-    })
-}
-
-// ─── Smart multi-bill parser ───────────────────────────────────────────────
-
 struct ExtractedBill {
     iban_norm: String,
     iban_raw: String,
@@ -1037,6 +1078,482 @@ struct ExtractedBill {
     purpose_text: String,
     invoice_number: String,
     parse_note: String,
+    source_page_start: Option<i32>,
+    source_page_end: Option<i32>,
+    identity: Option<IdentityVerification>,
+    segment_text: String,
+}
+
+pub(crate) fn ensure_period_bills_identity_eligible(
+    conn: &Connection,
+    billing_period_id: i64,
+) -> Result<(), String> {
+    let blocked: Option<(String, String)> = conn
+        .query_row(
+            "SELECT COALESCE(p.name, b.source_filename), b.identity_status
+             FROM bills b
+             LEFT JOIN providers p ON p.id=b.provider_id
+             WHERE b.billing_period_id=?1
+               AND NOT (
+                    b.identity_status='matched'
+                    OR (b.identity_status='exception' AND trim(b.identity_exception_note) != '')
+               )
+             ORDER BY b.id LIMIT 1",
+            [billing_period_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if let Some((label, status)) = blocked {
+        return Err(format!(
+            "Cannot calculate or edit splits because {label} has building identity status '{status}'. Verify it or approve a noted exception first."
+        ));
+    }
+    Ok(())
+}
+
+fn extract_document_from_file(file_path: &str) -> Result<DocumentExtraction, String> {
+    let path = Path::new(file_path);
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    match extension.as_str() {
+        "pdf" => extract_pdf_document(file_path),
+        _ if is_supported_image_file(path) => {
+            let text = extract_text_from_image(file_path)?;
+            Ok(DocumentExtraction {
+                pages: vec![ExtractedPage {
+                    page_number: 1,
+                    native_text: String::new(),
+                    ocr_text: text,
+                    diagnostics: Vec::new(),
+                }],
+                diagnostics: Vec::new(),
+            })
+        }
+        _ => Err(format!(
+            "Unsupported bill file type: {}. Supported files: PDF, JPG, JPEG, PNG, BMP, TIF, TIFF.",
+            extension
+        )),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IdentityVerification {
+    pub status: String,
+    pub explanation: String,
+    pub expected_values: Vec<String>,
+    pub found_values: Vec<String>,
+    pub page_start: Option<i32>,
+    pub page_end: Option<i32>,
+    pub rule_snapshot: String,
+}
+
+fn fold_identity_char(ch: char) -> char {
+    match ch.to_uppercase().next().unwrap_or(ch) {
+        'Č' | 'Ć' => 'C',
+        'Š' => 'S',
+        'Ž' => 'Z',
+        other => other,
+    }
+}
+
+fn compact_identity_text(value: &str) -> String {
+    value
+        .chars()
+        .map(fold_identity_char)
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-'))
+        .collect()
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (left_index, left_char) in left.chars().enumerate() {
+        let mut current = vec![left_index + 1];
+        for (right_index, right_char) in right.iter().enumerate() {
+            current.push(
+                (previous[right_index + 1] + 1)
+                    .min(current[right_index] + 1)
+                    .min(previous[right_index] + usize::from(left_char != *right_char)),
+            );
+        }
+        previous = current;
+    }
+    previous[right.len()]
+}
+
+fn identity_label_end(text: &str, label: &str) -> Option<usize> {
+    if let Some(offset) = text.find(label) {
+        return Some(offset + label.len());
+    }
+    // OCR commonly drops or substitutes a few characters in human-readable
+    // labels. Only the label is matched approximately; the configured account
+    // value must still occur exactly (after separator/spacing normalization).
+    let tolerance = (label.len() / 5).clamp(1, 3);
+    let min_len = label.len().saturating_sub(tolerance);
+    let max_len = label.len() + tolerance;
+    for start in 0..text.len() {
+        for length in min_len..=max_len {
+            let end = start + length;
+            if end <= text.len() && edit_distance(&text[start..end], label) <= tolerance {
+                return Some(end);
+            }
+        }
+    }
+    None
+}
+
+fn provider_rule_snapshot(provider: &Provider) -> String {
+    serde_json::json!({
+        "type": provider.identity_rule_type,
+        "operator": provider.identity_rule_operator,
+        "label": provider.identity_label,
+        "value": provider.identity_value,
+        "alternate_label": provider.identity_alternate_label,
+        "alternate_value": provider.identity_alternate_value,
+    })
+    .to_string()
+}
+
+fn compact_identity_projection(text: &str) -> (String, Vec<usize>, Vec<char>) {
+    let folded: Vec<char> = text.chars().map(fold_identity_char).collect();
+    let mut compact = String::new();
+    let mut positions = Vec::new();
+    for (index, ch) in folded.iter().copied().enumerate() {
+        if ch.is_ascii_alphanumeric() {
+            compact.push(ch.to_ascii_uppercase());
+            positions.push(index);
+        }
+    }
+    (compact, positions, folded)
+}
+
+fn normalize_identity_value(value: &str) -> String {
+    value
+        .chars()
+        .map(fold_identity_char)
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-'))
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect()
+}
+
+fn contains_complete_normalized_value(text: &str, expected: &str) -> bool {
+    let expected = normalize_identity_value(expected);
+    if expected.is_empty() {
+        return false;
+    }
+    let mut value_pattern = String::new();
+    for (index, ch) in expected.chars().enumerate() {
+        if index > 0 {
+            value_pattern.push_str(r"\s*");
+        }
+        value_pattern.push_str(&regex::escape(&ch.to_string()));
+    }
+    let folded_text: String = text.chars().map(fold_identity_char).collect();
+    let Ok(pattern) = Regex::new(&value_pattern) else {
+        return false;
+    };
+    let found = pattern.find_iter(&folded_text).any(|matched| {
+        let previous = folded_text[..matched.start()].chars().next_back();
+        if previous.is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-')) {
+            return false;
+        }
+        let following = &folded_text[matched.end()..];
+        let immediate = following.chars().next();
+        if immediate.is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-')) {
+            return false;
+        }
+        let continuation = following
+            .chars()
+            .skip_while(|ch| matches!(ch, ' ' | '\t' | '\u{00a0}'))
+            .next();
+        !continuation.is_some_and(|ch| ch.is_ascii_digit() || matches!(ch, '/' | '-'))
+    });
+    found
+}
+
+fn identity_label_value_start(line: &str, label: &str) -> Option<usize> {
+    let (compact_text, compact_positions, _) = compact_identity_projection(line);
+    let compact_label = compact_identity_text(label);
+    let bookend_label = || {
+        let tokens: Vec<String> = label
+            .split_whitespace()
+            .map(compact_identity_text)
+            .filter(|token| token.len() >= 3)
+            .collect();
+        let first = tokens.first()?;
+        let last = tokens.last()?;
+        if first == last {
+            return None;
+        }
+        let start = compact_text.find(first)? + first.len();
+        let bounded_end = (start + 80).min(compact_text.len());
+        compact_text[start..bounded_end]
+            .find(last)
+            .map(|offset| start + offset + last.len())
+    };
+    let value_start = identity_label_end(&compact_text, &compact_label).or_else(bookend_label)?;
+    Some(
+        value_start
+            .checked_sub(1)
+            .and_then(|index| compact_positions.get(index))
+            .map(|index| index + 1)
+            .unwrap_or(0),
+    )
+}
+
+fn complete_identity_value(value_text: &str, expected: &str) -> String {
+    let chars: Vec<char> = value_text.chars().map(fold_identity_char).collect();
+    let Some(start) = chars.iter().position(|ch| ch.is_ascii_alphanumeric()) else {
+        return String::new();
+    };
+    let expected_is_numeric = normalize_identity_value(expected)
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || matches!(ch, '/' | '-'));
+    let mut value = String::new();
+    let mut index = start;
+    while let Some(ch) = chars.get(index).copied() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-') {
+            value.push(ch);
+            index += 1;
+            continue;
+        }
+        if ch.is_whitespace() {
+            let next = chars[index + 1..]
+                .iter()
+                .copied()
+                .find(|next| !next.is_whitespace());
+            let can_join_numeric_piece = expected_is_numeric
+                && next.is_some_and(|next| next.is_ascii_digit() || matches!(next, '/' | '-'))
+                && value
+                    .chars()
+                    .all(|current| current.is_ascii_digit() || matches!(current, '/' | '-'));
+            if can_join_numeric_piece {
+                index += 1;
+                continue;
+            }
+        }
+        break;
+    }
+    normalize_identity_value(&value)
+}
+
+fn labeled_value_result(text: &str, label: &str, expected: &str) -> (bool, bool, String) {
+    let lines: Vec<&str> = text.lines().collect();
+    let expected = normalize_identity_value(expected);
+    let mut label_found = false;
+    let mut first_candidate = String::new();
+    for (line_index, line) in lines.iter().enumerate() {
+        let Some(value_start) = identity_label_value_start(line, label) else {
+            continue;
+        };
+        label_found = true;
+        let line_chars: Vec<char> = line.chars().collect();
+        let mut candidate = complete_identity_value(
+            &line_chars[value_start.min(line_chars.len())..]
+                .iter()
+                .collect::<String>(),
+            &expected,
+        );
+        if candidate.is_empty() {
+            candidate = lines[line_index + 1..]
+                .iter()
+                .find(|next| !next.trim().is_empty())
+                .map(|next| complete_identity_value(next, &expected))
+                .unwrap_or_default();
+        }
+        if candidate == expected && !expected.is_empty() {
+            return (true, true, candidate);
+        }
+        if first_candidate.is_empty() && !candidate.is_empty() {
+            first_candidate = candidate;
+        }
+    }
+    (label_found, false, first_candidate)
+}
+
+fn address_result(text: &str, expected: &str) -> bool {
+    let expected_compact = compact_identity_text(expected);
+    let Some(house_start) = expected_compact.find(|ch: char| ch.is_ascii_digit()) else {
+        return false;
+    };
+    let (street, house) = expected_compact.split_at(house_start);
+    if street.is_empty() || house.is_empty() {
+        return false;
+    }
+    let folded: Vec<char> = text.chars().map(fold_identity_char).collect();
+    let mut compact = String::new();
+    let mut positions = Vec::new();
+    for (index, ch) in folded.iter().copied().enumerate() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-') {
+            compact.push(ch);
+            positions.push(index);
+        }
+    }
+    ["", "ULICA", "CESTA"].iter().any(|middle| {
+        let phrase = format!("{street}{middle}{house}");
+        compact.match_indices(&phrase).any(|(offset, _)| {
+            let start = positions[offset];
+            let end = positions[offset + phrase.len() - 1] + 1;
+            let starts_at_boundary = start == 0 || !folded[start - 1].is_ascii_alphanumeric();
+            let ends_at_boundary = folded
+                .get(end)
+                .is_none_or(|next| !next.is_ascii_alphanumeric() && !matches!(next, '/' | '-'));
+            // OCR may space out another house-number digit; a separated single
+            // letter can likewise be a suffix. Neither may extend the match.
+            let separator_count = folded[end..]
+                .iter()
+                .copied()
+                .take_while(|ch| ch.is_whitespace() || *ch == '.')
+                .count();
+            let continuation = &folded[end + separator_count..];
+            let postal_digits = continuation
+                .iter()
+                .take_while(|ch| ch.is_ascii_digit())
+                .count();
+            let city_gap = continuation[postal_digits..]
+                .iter()
+                .take_while(|ch| ch.is_whitespace() && !matches!(**ch, '\r' | '\n'))
+                .count();
+            let city_letters = continuation[postal_digits + city_gap..]
+                .iter()
+                .take_while(|ch| ch.is_ascii_alphabetic())
+                .count();
+            let postal_city_line = folded[end..end + separator_count]
+                .iter()
+                .any(|ch| matches!(*ch, '\r' | '\n'))
+                && postal_digits == 4
+                && city_gap > 0
+                && city_letters >= 2;
+            let has_separated_house_continuation = separator_count > 0
+                && ((continuation.first().is_some_and(|ch| ch.is_ascii_digit())
+                    && !postal_city_line)
+                    || (continuation
+                        .first()
+                        .is_some_and(|ch| ch.is_ascii_alphabetic())
+                        && continuation
+                            .get(1)
+                            .is_none_or(|ch| !ch.is_ascii_alphanumeric())));
+            starts_at_boundary && ends_at_boundary && !has_separated_house_continuation
+        })
+    })
+}
+
+fn verify_provider_identity(
+    provider: &Provider,
+    text: &str,
+    page_start: Option<i32>,
+    page_end: Option<i32>,
+    extraction_unreadable: bool,
+) -> IdentityVerification {
+    let snapshot = provider_rule_snapshot(provider);
+    if provider.identity_rule_type == "unconfigured" {
+        return IdentityVerification {
+            status: "unconfigured".to_string(),
+            explanation: "This provider has no building identity rule configured.".to_string(),
+            expected_values: Vec::new(),
+            found_values: Vec::new(),
+            page_start,
+            page_end,
+            rule_snapshot: snapshot,
+        };
+    }
+
+    if provider.identity_rule_type == "building_address" {
+        let matched = address_result(text, &provider.identity_value);
+        return IdentityVerification {
+            status: if matched {
+                "matched"
+            } else if extraction_unreadable {
+                "unreadable"
+            } else {
+                "missing"
+            }
+            .to_string(),
+            explanation: if matched {
+                "Temporary weaker evidence: the configured building street and house number appear together in a relevant invoice segment.".to_string()
+            } else {
+                "The configured building street and house number were not found together in the invoice segment.".to_string()
+            },
+            expected_values: vec![provider.identity_value.clone()],
+            found_values: Vec::new(),
+            page_start,
+            page_end,
+            rule_snapshot: snapshot,
+        };
+    }
+
+    let mut clauses = vec![(
+        provider.identity_label.as_str(),
+        provider.identity_value.as_str(),
+    )];
+    if !provider.identity_alternate_label.trim().is_empty()
+        && !provider.identity_alternate_value.trim().is_empty()
+    {
+        clauses.push((
+            provider.identity_alternate_label.as_str(),
+            provider.identity_alternate_value.as_str(),
+        ));
+    }
+    let results: Vec<_> = clauses
+        .iter()
+        .map(|(label, value)| labeled_value_result(text, label, value))
+        .collect();
+    let matched = if provider.identity_rule_operator == "any" {
+        results.iter().any(|(_, matched, _)| *matched)
+    } else {
+        results.iter().all(|(_, matched, _)| *matched)
+    };
+    let any_label = results.iter().any(|(found, _, _)| *found);
+    let all_labels = results.iter().all(|(found, _, _)| *found);
+    let status = if matched {
+        "matched"
+    } else if provider.identity_rule_operator == "all" && !all_labels {
+        if extraction_unreadable {
+            "unreadable"
+        } else {
+            "missing"
+        }
+    } else if any_label {
+        "mismatched"
+    } else if extraction_unreadable {
+        "unreadable"
+    } else {
+        "missing"
+    };
+    IdentityVerification {
+        status: status.to_string(),
+        explanation: match status {
+            "matched" => format!(
+                "Configured {} identity rule matched this invoice segment.",
+                provider.identity_rule_operator
+            ),
+            "mismatched" => {
+                "A configured identity label was found, but its value did not satisfy the rule."
+                    .to_string()
+            }
+            "unreadable" => {
+                "Identity evidence could not be read because document extraction or OCR failed."
+                    .to_string()
+            }
+            _ => "No configured identity label was found in this invoice segment.".to_string(),
+        },
+        expected_values: clauses
+            .iter()
+            .map(|(_, value)| (*value).to_string())
+            .collect(),
+        found_values: results
+            .iter()
+            .filter(|(found, _, _)| *found)
+            .map(|(_, _, window)| window.clone())
+            .collect(),
+        page_start,
+        page_end,
+        rule_snapshot: snapshot,
+    }
 }
 
 /// Parse all UPN payment stubs (***amount sections) from PDF text.
@@ -1049,7 +1566,6 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
     };
     let purpose_code_re = Regex::new(r"\b(ENRG|SCVE|WTER|OTHR|RENT|SALA|COST)\b").unwrap();
     let mut results: Vec<ExtractedBill> = Vec::new();
-    let mut seen_ibans: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for m in stub_re.find_iter(text) {
         let amount_str = m.as_str().trim_matches('*');
@@ -1067,7 +1583,6 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
         };
         let iban_norm = normalize_iban(&iban_raw);
 
-        // Extract everything BEFORE dedup check so duplicate stubs can contribute data
         let reference = find_payment_reference(after);
         let stub_line_end = after.find('\n').unwrap_or(after.len());
         let search_area = &after[..stub_line_end.min(after.len())];
@@ -1108,25 +1623,6 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             due_date = first_date_in_text(&purpose_text);
         }
 
-        if !seen_ibans.insert(iban_norm.clone()) {
-            // Duplicate stub: merge any better data into the existing entry
-            if let Some(existing) = results.iter_mut().find(|b| b.iban_norm == iban_norm) {
-                if existing.due_date.is_empty() && !due_date.is_empty() {
-                    existing.due_date = due_date;
-                }
-                if let Some((context_code, context_text)) = &parsed_from_context {
-                    existing.purpose_code = context_code.clone();
-                    existing.purpose_text = context_text.clone();
-                } else if existing.purpose_text.is_empty() && !purpose_text.is_empty() {
-                    existing.purpose_text = purpose_text;
-                }
-                if existing.purpose_code == "OTHR" && purpose_code != "OTHR" {
-                    existing.purpose_code = purpose_code;
-                }
-            }
-            continue;
-        }
-
         let (purpose_code, purpose_text) =
             parsed_from_context.unwrap_or((purpose_code, purpose_text));
 
@@ -1140,6 +1636,10 @@ fn parse_upn_stubs(text: &str) -> Vec<ExtractedBill> {
             purpose_text,
             invoice_number: String::new(),
             parse_note: String::new(),
+            source_page_start: None,
+            source_page_end: None,
+            identity: None,
+            segment_text: String::new(),
         });
     }
     results
@@ -1191,6 +1691,10 @@ fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
         purpose_text: String::new(), // will use template
         invoice_number,
         parse_note: String::new(),
+        source_page_start: None,
+        source_page_end: None,
+        identity: None,
+        segment_text: String::new(),
     })
 }
 
@@ -1246,6 +1750,10 @@ fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
         purpose_text: String::new(), // will use template
         invoice_number,
         parse_note: String::new(),
+        source_page_start: None,
+        source_page_end: None,
+        identity: None,
+        segment_text: String::new(),
     })
 }
 
@@ -1359,6 +1867,10 @@ fn parse_dimnikar_style(text: &str) -> Option<ExtractedBill> {
         purpose_text: String::new(),
         invoice_number,
         parse_note,
+        source_page_start: None,
+        source_page_end: None,
+        identity: None,
+        segment_text: String::new(),
     })
 }
 
@@ -1381,10 +1893,13 @@ pub struct PreparedBillPreviewSummary {
     pub purpose_text: String,
     pub parse_note: String,
     pub status: String,
+    pub identity: IdentityVerification,
+    pub content_hash: String,
+    pub source_page_start: Option<i32>,
+    pub source_page_end: Option<i32>,
 }
 
 pub(crate) struct PreparedBillImport {
-    raw_text: String,
     filename: String,
     source_month: i32,
     source_year: i32,
@@ -1392,11 +1907,6 @@ pub(crate) struct PreparedBillImport {
     extracted: Vec<ExtractedBill>,
     log: String,
     redact_details: bool,
-}
-
-pub(crate) struct ExpectedProviderFilterResult {
-    pub skipped_status: Option<&'static str>,
-    pub skipped_reason: Option<String>,
 }
 
 pub(crate) struct BillHashFilterResult {
@@ -1440,120 +1950,41 @@ pub(crate) fn bill_content_hash(
 }
 
 fn bill_hash(provider: Option<&Provider>, bill: &ExtractedBill) -> String {
-    bill_content_hash(
+    let payment_hash = bill_content_hash(
         provider.and_then(|p| p.id),
         &bill.iban_norm,
         bill.amount_cents,
         &bill.reference,
         &bill.due_date,
         &bill.invoice_number,
+    );
+    let source_hash = Sha256::digest(bill.segment_text.as_bytes());
+    format!(
+        "{payment_hash}:{}",
+        source_hash
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     )
 }
 
-pub(crate) fn retain_expected_provider_bills(
-    prepared: &mut PreparedBillImport,
-    providers: &[Provider],
-    missing_provider_ids: &HashSet<i64>,
-) -> ExpectedProviderFilterResult {
-    let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
+fn associate_provider<'a>(providers: &'a [Provider], bill: &ExtractedBill) -> Option<&'a Provider> {
+    if let Some(provider) = providers.iter().find(|provider| {
+        !provider.creditor_iban.trim().is_empty()
+            && normalize_iban(&provider.creditor_iban) == bill.iban_norm
+    }) {
+        return Some(provider);
+    }
+    let matches: Vec<&Provider> = providers
         .iter()
-        .filter(|p| p.id.is_some() && !p.creditor_iban.is_empty())
-        .map(|p| (normalize_iban(&p.creditor_iban), p))
+        .filter(|provider| {
+            !provider.match_pattern.trim().is_empty()
+                && Regex::new(&format!("(?s){}", provider.match_pattern))
+                    .map(|pattern| pattern.is_match(&bill.segment_text))
+                    .unwrap_or(false)
+        })
         .collect();
-
-    let mut kept: Vec<ExtractedBill> = Vec::new();
-    let mut unknown_count = 0;
-    let mut already_present: Vec<String> = Vec::new();
-
-    for bill in prepared.extracted.drain(..) {
-        let Some(provider) = provider_by_iban.get(&bill.iban_norm).copied() else {
-            unknown_count += 1;
-            continue;
-        };
-        let Some(provider_id) = provider.id else {
-            unknown_count += 1;
-            continue;
-        };
-        if missing_provider_ids.contains(&provider_id) {
-            kept.push(bill);
-        } else {
-            already_present.push(provider.name.clone());
-        }
-    }
-
-    let kept_count = kept.len();
-    prepared.extracted = kept;
-    let partial = kept_count > 0;
-    let skipped = if unknown_count > 0 && already_present.is_empty() {
-        Some((
-            "skipped_unknown_provider",
-            if partial {
-                "Some parsed bills were ignored because no configured provider matched them."
-                    .to_string()
-            } else {
-                "No configured provider matched the parsed bill attachment.".to_string()
-            },
-        ))
-    } else if !already_present.is_empty() && unknown_count == 0 {
-        already_present.sort();
-        already_present.dedup();
-        Some((
-            "skipped_already_present",
-            if partial {
-                format!(
-                    "Some parsed bills were ignored because configured providers already have bills in this period: {}.",
-                    already_present.join(", ")
-                )
-            } else {
-                format!(
-                    "Configured provider already has a bill in this period: {}.",
-                    already_present.join(", ")
-                )
-            },
-        ))
-    } else if unknown_count > 0 || !already_present.is_empty() {
-        Some((
-            "skipped_not_expected",
-            if partial {
-                "Some parsed bills were ignored because they were unknown or already present for this period."
-                    .to_string()
-            } else {
-                "No parsed bill matched a configured provider that is still missing for this period."
-                    .to_string()
-            },
-        ))
-    } else {
-        None
-    };
-
-    if kept_count > 0 {
-        prepared.log.push_str(&format!(
-            "Inbox expected-provider filter: {} bill(s) kept\n",
-            kept_count
-        ));
-        let (skipped_status, skipped_reason) = skipped
-            .map(|(status, reason)| (Some(status), Some(reason)))
-            .unwrap_or((None, None));
-        return ExpectedProviderFilterResult {
-            skipped_status,
-            skipped_reason,
-        };
-    }
-
-    if let Some((status, reason)) = skipped {
-        return ExpectedProviderFilterResult {
-            skipped_status: Some(status),
-            skipped_reason: Some(reason),
-        };
-    }
-
-    ExpectedProviderFilterResult {
-        skipped_status: Some("skipped_not_expected"),
-        skipped_reason: Some(
-            "No parsed bill matched a configured provider that is still missing for this period."
-                .to_string(),
-        ),
-    }
+    (matches.len() == 1).then(|| matches[0])
 }
 
 pub(crate) fn retain_new_bill_hashes(
@@ -1561,18 +1992,13 @@ pub(crate) fn retain_new_bill_hashes(
     providers: &[Provider],
     existing_hashes: &HashSet<String>,
 ) -> BillHashFilterResult {
-    let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
-        .iter()
-        .filter(|p| !p.creditor_iban.is_empty())
-        .map(|p| (normalize_iban(&p.creditor_iban), p))
-        .collect();
     let mut seen_in_attachment = HashSet::new();
     let mut kept = Vec::new();
     let mut kept_hashes = Vec::new();
     let mut skipped_duplicate_count = 0;
 
     for bill in prepared.extracted.drain(..) {
-        let provider = provider_by_iban.get(&bill.iban_norm).copied();
+        let provider = associate_provider(providers, &bill);
         let hash = bill_hash(provider, &bill);
         if existing_hashes.contains(&hash) || !seen_in_attachment.insert(hash.clone()) {
             skipped_duplicate_count += 1;
@@ -1593,24 +2019,24 @@ pub(crate) fn preview_prepared_bills(
     prepared: &PreparedBillImport,
     providers: &[Provider],
 ) -> Vec<PreparedBillPreviewSummary> {
-    let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
-        .iter()
-        .filter(|p| !p.creditor_iban.is_empty())
-        .map(|p| (normalize_iban(&p.creditor_iban), p))
-        .collect();
-
     prepared
         .extracted
         .iter()
         .map(|eb| {
-            let provider = provider_by_iban.get(&eb.iban_norm).copied();
-            let parse_note = import_review_parse_note(
+            let provider = associate_provider(providers, eb);
+            let mut parse_note = import_review_parse_note(
                 &eb.parse_note,
                 eb.amount_cents,
                 &eb.iban_norm,
                 &eb.reference,
                 &eb.due_date,
             );
+            if provider.is_some_and(|provider| normalize_iban(&provider.creditor_iban) != eb.iban_norm) {
+                parse_note = append_parse_note(
+                    &parse_note,
+                    "Invoice IBAN differs from the configured provider IBAN; verify bank details before payment.",
+                );
+            }
             let status = if parse_note.is_empty() {
                 "draft".to_string()
             } else {
@@ -1634,6 +2060,17 @@ pub(crate) fn preview_prepared_bills(
                 ),
                 None => (None, None, String::new(), eb.purpose_text.clone()),
             };
+            let identity = eb.identity.clone().unwrap_or_else(|| IdentityVerification {
+                status: "not_checked".to_string(),
+                explanation:
+                    "This candidate has not been checked against a building identity rule."
+                        .to_string(),
+                expected_values: Vec::new(),
+                found_values: Vec::new(),
+                page_start: eb.source_page_start,
+                page_end: eb.source_page_end,
+                rule_snapshot: String::new(),
+            });
 
             PreparedBillPreviewSummary {
                 provider_id,
@@ -1646,6 +2083,10 @@ pub(crate) fn preview_prepared_bills(
                 purpose_text,
                 parse_note,
                 status,
+                content_hash: bill_hash(provider, eb),
+                identity,
+                source_page_start: eb.source_page_start,
+                source_page_end: eb.source_page_end,
             }
         })
         .collect()
@@ -1676,16 +2117,306 @@ pub(crate) fn prepare_multi_bill_import_from_path(
     context: &BillImportContext,
     include_raw_text_in_log: bool,
 ) -> Result<PreparedBillImport, String> {
-    let raw_text = extract_text_from_file(file_path)?;
-    Ok(prepare_multi_bill_import_from_text(
-        raw_text,
+    let document = extract_document_from_file(file_path)?;
+    Ok(prepare_multi_bill_import_from_document(
+        document,
         source_filename,
         context.month,
         context.year,
+        &context.providers,
         include_raw_text_in_log,
     ))
 }
 
+#[tauri::command]
+pub fn approve_bill_identity_exception(
+    db: State<DbState>,
+    bill_id: i64,
+    note: String,
+) -> Result<Bill, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    approve_bill_identity_exception_inner(&conn, bill_id, &note)
+}
+
+fn approve_bill_identity_exception_inner(
+    conn: &Connection,
+    bill_id: i64,
+    note: &str,
+) -> Result<Bill, String> {
+    let note = note.trim();
+    if note.is_empty() {
+        return Err("An identity exception requires a note.".to_string());
+    }
+    let bill = load_bill_by_id(conn, bill_id)?;
+    ensure_period_open(conn, bill.billing_period_id)?;
+    let snapshot = if let Some(provider_id) = bill.provider_id {
+        let providers = get_providers_inner(conn);
+        providers
+            .iter()
+            .find(|provider| provider.id == Some(provider_id))
+            .map(provider_rule_snapshot)
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let evidence = serde_json::json!({
+        "status": bill.identity_status,
+        "explanation": "Explicit manual exception approved without changing the underlying verification result.",
+        "previous_evidence": bill.identity_evidence,
+    })
+    .to_string();
+    conn.execute(
+        "UPDATE bills
+         SET identity_status='exception', identity_rule_snapshot=?1,
+             identity_evidence=?2, identity_exception_note=?3,
+             identity_exception_at=datetime('now')
+         WHERE id=?4",
+        params![snapshot, evidence, note, bill_id],
+    )
+    .map_err(|e| e.to_string())?;
+    load_bill_by_id(conn, bill_id)
+}
+
+fn parse_page_candidates(text: &str) -> Vec<ExtractedBill> {
+    let mut candidates = parse_upn_stubs(text);
+    let mut seen_stubs = HashSet::new();
+    candidates.retain(|candidate| {
+        seen_stubs.insert(bill_content_hash(
+            None,
+            &candidate.iban_norm,
+            candidate.amount_cents,
+            &candidate.reference,
+            &candidate.due_date,
+            &candidate.invoice_number,
+        ))
+    });
+    for candidate in [
+        parse_elektro_style(text),
+        parse_zlm_style(text),
+        parse_dimnikar_style(text),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let fingerprint = bill_content_hash(
+            None,
+            &candidate.iban_norm,
+            candidate.amount_cents,
+            &candidate.reference,
+            &candidate.due_date,
+            &candidate.invoice_number,
+        );
+        let already_represented = candidates.iter().any(|existing| {
+            bill_content_hash(
+                None,
+                &existing.iban_norm,
+                existing.amount_cents,
+                &existing.reference,
+                &existing.due_date,
+                &existing.invoice_number,
+            ) == fingerprint
+        });
+        if !already_represented {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+fn same_payment_candidate(left: &ExtractedBill, right: &ExtractedBill) -> bool {
+    if left.iban_norm != right.iban_norm || left.amount_cents != right.amount_cents {
+        return false;
+    }
+    let left_reference = compact_identity_text(&left.reference);
+    let right_reference = compact_identity_text(&right.reference);
+    if !left_reference.is_empty() && left_reference == right_reference {
+        return true;
+    }
+    let left_invoice = compact_identity_text(&left.invoice_number);
+    let right_invoice = compact_identity_text(&right.invoice_number);
+    !left_invoice.is_empty() && left_invoice == right_invoice
+}
+
+fn payment_candidate_usable(candidate: &ExtractedBill) -> bool {
+    candidate.amount_cents > 0
+        && !candidate.iban_norm.is_empty()
+        && !compact_identity_text(&candidate.reference).is_empty()
+}
+
+fn reconcile_page_candidates(page: &ExtractedPage) -> Vec<ExtractedBill> {
+    let mut candidates = parse_page_candidates(&page.native_text);
+    let ocr_candidates = parse_page_candidates(&page.ocr_text);
+    if !candidates.iter().any(payment_candidate_usable)
+        && ocr_candidates.iter().any(payment_candidate_usable)
+    {
+        return ocr_candidates;
+    }
+    for mut ocr_candidate in ocr_candidates {
+        if let Some(native_candidate) = candidates
+            .iter_mut()
+            .find(|candidate| same_payment_candidate(candidate, &ocr_candidate))
+        {
+            if native_candidate.reference.is_empty() {
+                native_candidate.reference = std::mem::take(&mut ocr_candidate.reference);
+            }
+            if native_candidate.due_date.is_empty() {
+                native_candidate.due_date = std::mem::take(&mut ocr_candidate.due_date);
+            }
+            if native_candidate.invoice_number.is_empty() {
+                native_candidate.invoice_number = std::mem::take(&mut ocr_candidate.invoice_number);
+            }
+            if native_candidate.purpose_text.is_empty() {
+                native_candidate.purpose_text = std::mem::take(&mut ocr_candidate.purpose_text);
+            }
+        } else {
+            candidates.push(ocr_candidate);
+        }
+    }
+    candidates
+}
+
+fn page_links_to_payment_candidate(text: &str, candidate: &ExtractedBill) -> bool {
+    let reference = normalize_identity_value(&candidate.reference);
+    let invoice_number = normalize_identity_value(&candidate.invoice_number);
+    (reference.len() >= 6 && contains_complete_normalized_value(text, &reference))
+        || (invoice_number.len() >= 5 && contains_complete_normalized_value(text, &invoice_number))
+}
+
+fn prepare_multi_bill_import_from_document(
+    document: DocumentExtraction,
+    filename: String,
+    month: i32,
+    year: i32,
+    providers: &[Provider],
+    include_raw_text_in_log: bool,
+) -> PreparedBillImport {
+    let evidence_texts: Vec<String> = document
+        .pages
+        .iter()
+        .map(ExtractedPage::combined_text)
+        .collect();
+    let raw_text = evidence_texts.join("\n");
+    let detected_source_period = find_source_period_month_year(&raw_text);
+    let (source_month, source_year) = detected_source_period.unwrap_or((month, year));
+    let mut anchors: Vec<(usize, ExtractedBill)> = Vec::new();
+    for (page_index, page) in document.pages.iter().enumerate() {
+        for mut candidate in reconcile_page_candidates(page) {
+            candidate.source_page_start = Some(document.pages[page_index].page_number);
+            candidate.source_page_end = Some(document.pages[page_index].page_number);
+            anchors.push((page_index, candidate));
+        }
+    }
+    anchors.sort_by_key(|(page, _)| *page);
+    let anchor_pages: Vec<usize> = anchors.iter().map(|(page, _)| *page).collect();
+    let anchor_starts: Vec<usize> = anchors
+        .iter()
+        .enumerate()
+        .map(|(index, (page_index, candidate))| {
+            let lower_bound = anchor_pages[..index]
+                .iter()
+                .rev()
+                .copied()
+                .find(|page| *page != *page_index)
+                .map(|page| page + 1)
+                .unwrap_or(0);
+            (lower_bound..=*page_index)
+                .find(|page| page_links_to_payment_candidate(&evidence_texts[*page], candidate))
+                .unwrap_or(*page_index)
+        })
+        .collect();
+    let mut extracted = Vec::new();
+    let mut seen = HashSet::new();
+    for (anchor_index, (page_index, mut candidate)) in anchors.into_iter().enumerate() {
+        let same_page_count = anchor_pages
+            .iter()
+            .filter(|page| **page == page_index)
+            .count();
+        let start = anchor_starts[anchor_index];
+        // A payment anchor proves ownership only through its own page. Trailing
+        // pages may belong to an invoice whose payment fields were unreadable;
+        // borrowing them would let that invoice verify the preceding bill.
+        let end = page_index;
+        let (start, end) = if same_page_count > 1 {
+            (page_index, page_index)
+        } else {
+            (start.min(page_index), end.max(page_index))
+        };
+        candidate.source_page_start = Some(document.pages[start].page_number);
+        candidate.source_page_end = Some(document.pages[end].page_number);
+        let segment_text = evidence_texts[start..=end].join("\n");
+        let extraction_unreadable = document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| !diagnostic.is_empty())
+            || document.pages[start..=end]
+                .iter()
+                .any(|page| !page.diagnostics.is_empty())
+            || segment_text.trim().is_empty();
+        candidate.segment_text = segment_text.clone();
+        candidate.identity = Some(if same_page_count > 1 {
+            IdentityVerification {
+                status: "unreadable".to_string(),
+                explanation: "Multiple distinct invoices share one page and their identity evidence cannot be attributed safely.".to_string(),
+                expected_values: Vec::new(),
+                found_values: Vec::new(),
+                page_start: candidate.source_page_start,
+                page_end: candidate.source_page_end,
+                rule_snapshot: associate_provider(providers, &candidate)
+                    .map(provider_rule_snapshot)
+                    .unwrap_or_default(),
+            }
+        } else if let Some(provider) = associate_provider(providers, &candidate) {
+            verify_provider_identity(
+                provider,
+                &segment_text,
+                candidate.source_page_start,
+                candidate.source_page_end,
+                extraction_unreadable,
+            )
+        } else {
+            IdentityVerification {
+                status: "unconfigured".to_string(),
+                explanation: "No configured provider could be associated with this invoice."
+                    .to_string(),
+                expected_values: Vec::new(),
+                found_values: Vec::new(),
+                page_start: candidate.source_page_start,
+                page_end: candidate.source_page_end,
+                rule_snapshot: String::new(),
+            }
+        });
+        let key = bill_hash(associate_provider(providers, &candidate), &candidate);
+        if seen.insert(key) {
+            extracted.push(candidate);
+        }
+    }
+    let raw_log = if include_raw_text_in_log {
+        raw_text.as_str()
+    } else {
+        "(redacted for inbox import)"
+    };
+    let mut log = format!(
+        "=== import_bills: {} ===\n\n--- RAW TEXT ---\n{}\n\n--- PARSE RESULTS ---\n",
+        filename, raw_log
+    );
+    log.push_str(&format!(
+        "Page-aware extraction: {} page(s), {} candidate(s), {} document diagnostic(s)\n",
+        document.pages.len(),
+        extracted.len(),
+        document.diagnostics.len()
+    ));
+    PreparedBillImport {
+        filename,
+        source_month,
+        source_year,
+        detected_source_period,
+        extracted,
+        log,
+        redact_details: !include_raw_text_in_log,
+    }
+}
+
+#[cfg(test)]
 fn prepare_multi_bill_import_from_text(
     raw_text: String,
     filename: String,
@@ -1783,7 +2514,6 @@ fn prepare_multi_bill_import_from_text(
     }
 
     PreparedBillImport {
-        raw_text,
         filename,
         source_month,
         source_year,
@@ -1802,81 +2532,115 @@ fn write_import_debug_log(log: &str) {
     }
 }
 
-pub(crate) fn save_prepared_multi_bill_import(
+pub(crate) fn save_prepared_multi_bill_import_with_exceptions(
     conn: &Connection,
     billing_period_id: i64,
     mut prepared: PreparedBillImport,
     providers: &[Provider],
     persist_fallback_raw_text: bool,
+    identity_exceptions: &HashMap<String, IdentityExceptionInput>,
 ) -> Result<Vec<Bill>, String> {
     ensure_period_open(conn, billing_period_id)?;
 
-    let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
-        .iter()
-        .filter(|p| !p.creditor_iban.is_empty())
-        .map(|p| (normalize_iban(&p.creditor_iban), p))
-        .collect();
+    for candidate in &mut prepared.extracted {
+        if let Some(provider) = associate_provider(providers, candidate) {
+            let ambiguous_same_page = candidate
+                .identity
+                .as_ref()
+                .map(|identity| {
+                    identity
+                        .explanation
+                        .starts_with("Multiple distinct invoices share one page")
+                })
+                .unwrap_or(false);
+            if !ambiguous_same_page {
+                let extraction_unreadable = candidate.segment_text.trim().is_empty()
+                    || candidate
+                        .identity
+                        .as_ref()
+                        .map(|identity| identity.status == "unreadable")
+                        .unwrap_or(false);
+                candidate.identity = Some(verify_provider_identity(
+                    provider,
+                    &candidate.segment_text,
+                    candidate.source_page_start,
+                    candidate.source_page_end,
+                    extraction_unreadable,
+                ));
+            }
+        }
+    }
+
+    let mut providers_in_batch = HashSet::new();
+    for candidate in &prepared.extracted {
+        let provider = associate_provider(providers, candidate).ok_or_else(|| {
+            "Candidate has no configured provider and cannot be imported automatically.".to_string()
+        })?;
+        let provider_id = provider
+            .id
+            .ok_or_else(|| "Candidate provider is not persisted.".to_string())?;
+        if !providers_in_batch.insert(provider_id) {
+            return Err(format!(
+                "Multiple distinct candidates target {} in this billing month. Resolve the conflict before importing.",
+                provider.name
+            ));
+        }
+        let existing_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM bills WHERE billing_period_id=?1 AND provider_id=?2",
+                params![billing_period_id, provider_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if existing_count > 0 {
+            return Err(format!(
+                "{} already has a bill in this billing month. Remove the existing bill before importing this candidate.",
+                provider.name
+            ));
+        }
+        let identity = candidate.identity.as_ref().ok_or_else(|| {
+            "Candidate identity was not checked; refresh the preview before importing.".to_string()
+        })?;
+        if identity.status != "matched" {
+            let hash = bill_hash(Some(provider), candidate);
+            let exception = identity_exceptions.get(&hash);
+            let note = exception
+                .map(|exception| exception.note.trim())
+                .unwrap_or("");
+            if note.is_empty() {
+                return Err(format!(
+                    "{} is {} and requires an explicit exception note before import.",
+                    provider.name, identity.status
+                ));
+            }
+            if exception.is_some_and(|exception| {
+                exception.identity_status != identity.status
+                    || exception.rule_snapshot != identity.rule_snapshot
+            }) {
+                return Err(format!(
+                    "{} identity evidence changed after preview. Refresh the preview and review it again.",
+                    provider.name
+                ));
+            }
+        }
+    }
 
     if prepared.extracted.is_empty() {
-        let raw_text = if persist_fallback_raw_text {
-            prepared.raw_text.clone()
-        } else {
-            String::new()
-        };
-        conn.execute(
-            "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
-             creditor_name, creditor_iban, creditor_address, creditor_city,
-             creditor_postal_code, reference, due_date, purpose_code, purpose_text,
-             invoice_number, parse_note, status, source_filename)
-             VALUES (?1,NULL,?2,0,'','','','','','','','OTHR','','',
-                     'No bill data could be parsed automatically. Review this import manually.',
-                     'needs_review',?3)",
-            params![billing_period_id, raw_text, prepared.filename],
-        )
-        .map_err(|e| e.to_string())?;
-        let id = conn.last_insert_rowid();
-        prepared.log.push_str("--- SAVED BILLS ---\n");
-        if prepared.redact_details {
-            prepared
-                .log
-                .push_str("  status=needs_review details=(redacted for inbox import)\n");
-        } else {
-            prepared.log.push_str(
-                "  status=needs_review parse_note=No bill data could be parsed automatically. Review this import manually.\n",
-            );
-        }
-        write_import_debug_log(&prepared.log);
-        return Ok(vec![Bill {
-            id: Some(id),
-            billing_period_id,
-            provider_id: None,
-            raw_text: String::new(),
-            amount_cents: 0,
-            creditor_name: String::new(),
-            creditor_iban: String::new(),
-            creditor_address: String::new(),
-            creditor_city: String::new(),
-            creditor_postal_code: String::new(),
-            reference: String::new(),
-            due_date: String::new(),
-            purpose_code: "OTHR".to_string(),
-            purpose_text: String::new(),
-            invoice_number: String::new(),
-            parse_note: "No bill data could be parsed automatically. Review this import manually."
+        let _ = persist_fallback_raw_text;
+        return Err(
+            "No invoice candidate could be parsed. Nothing was saved; inspect the source and add a manual bill with an explicit identity exception if appropriate."
                 .to_string(),
-            status: "needs_review".to_string(),
-            source_filename: prepared.filename,
-            reviewed_at: None,
-            review_note: String::new(),
-            provider_name: None,
-        }]);
+        );
     }
 
     let mut results: Vec<Bill> = Vec::new();
     prepared.log.push_str("--- SAVED BILLS ---\n");
 
     for eb in prepared.extracted {
-        let provider = provider_by_iban.get(&eb.iban_norm).copied();
+        let provider = associate_provider(providers, &eb);
+        let changed_iban = provider
+            .map(|provider| normalize_iban(&provider.creditor_iban) != eb.iban_norm)
+            .unwrap_or(false);
 
         let (
             provider_id,
@@ -1890,7 +2654,11 @@ pub(crate) fn save_prepared_multi_bill_import(
             Some(p) => (
                 p.id,
                 p.creditor_name.clone(),
-                p.creditor_iban.clone(),
+                if changed_iban {
+                    eb.iban_raw.clone()
+                } else {
+                    p.creditor_iban.clone()
+                },
                 p.creditor_address.clone(),
                 p.creditor_city.clone(),
                 p.creditor_postal_code.clone(),
@@ -1924,25 +2692,59 @@ pub(crate) fn save_prepared_multi_bill_import(
             String::new()
         };
 
-        let parse_note = import_review_parse_note(
+        let mut parse_note = import_review_parse_note(
             &eb.parse_note,
             eb.amount_cents,
             &eb.iban_norm,
             &eb.reference,
             &eb.due_date,
         );
+        if changed_iban {
+            parse_note = append_parse_note(
+                &parse_note,
+                "Invoice IBAN differs from the configured provider IBAN; verify bank details before payment.",
+            );
+        }
         let status = if parse_note.is_empty() {
             "draft".to_string()
         } else {
             "needs_review".to_string()
         };
 
+        let identity = eb.identity.clone().unwrap_or_else(|| IdentityVerification {
+            status: "not_checked".to_string(),
+            explanation: "Identity was not checked.".to_string(),
+            expected_values: Vec::new(),
+            found_values: Vec::new(),
+            page_start: eb.source_page_start,
+            page_end: eb.source_page_end,
+            rule_snapshot: String::new(),
+        });
+        let candidate_hash = bill_hash(provider, &eb);
+        let exception_note = if identity.status == "matched" {
+            String::new()
+        } else {
+            identity_exceptions
+                .get(&candidate_hash)
+                .map(|exception| exception.note.trim().to_string())
+                .unwrap_or_default()
+        };
+        let persisted_identity_status = if exception_note.is_empty() {
+            identity.status.clone()
+        } else {
+            "exception".to_string()
+        };
+        let identity_evidence = serde_json::to_string(&identity).map_err(|e| e.to_string())?;
+
         conn.execute(
             "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
              creditor_name, creditor_iban, creditor_address, creditor_city,
              creditor_postal_code, reference, due_date, purpose_code, purpose_text,
-             invoice_number, parse_note, status, source_filename)
-             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+             invoice_number, parse_note, status, source_filename, identity_status,
+             identity_rule_snapshot, identity_evidence, identity_exception_note,
+             identity_exception_at, source_page_start, source_page_end)
+             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,
+                     ?17,?18,?19,?20,CASE WHEN ?20='' THEN NULL ELSE datetime('now') END,?21,?22)",
             params![
                 billing_period_id,
                 provider_id,
@@ -1960,6 +2762,12 @@ pub(crate) fn save_prepared_multi_bill_import(
                 parse_note,
                 status,
                 prepared.filename,
+                persisted_identity_status,
+                identity.rule_snapshot,
+                identity_evidence,
+                exception_note,
+                eb.source_page_start,
+                eb.source_page_end,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1985,33 +2793,208 @@ pub(crate) fn save_prepared_multi_bill_import(
                 }
             ));
         }
-        results.push(Bill {
-            id: Some(id),
-            billing_period_id,
-            provider_id,
-            raw_text: String::new(),
-            amount_cents: eb.amount_cents,
-            creditor_name,
-            creditor_iban,
-            creditor_address,
-            creditor_city,
-            creditor_postal_code,
-            reference: eb.reference,
-            due_date: eb.due_date,
-            purpose_code,
-            purpose_text,
-            invoice_number: eb.invoice_number,
-            parse_note,
-            status,
-            source_filename: prepared.filename.clone(),
-            reviewed_at: None,
-            review_note: String::new(),
-            provider_name: provider.map(|p| p.name.clone()),
-        });
+        results.push(load_bill_by_id(conn, id)?);
     }
 
     write_import_debug_log(&prepared.log);
     Ok(results)
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LocalBillImportPreview {
+    pub source_filename: String,
+    pub file_sha256: String,
+    pub bills: Vec<PreparedBillPreviewSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IdentityExceptionInput {
+    pub content_hash: String,
+    pub note: String,
+    pub identity_status: String,
+    pub rule_snapshot: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LocalBillImportFinalizeRequest {
+    pub file_path: String,
+    pub expected_file_sha256: String,
+    pub selected_content_hashes: Vec<String>,
+    pub exceptions: Vec<IdentityExceptionInput>,
+}
+
+fn file_sha256(file_path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(file_path).map_err(|e| e.to_string())?;
+    let digest = Sha256::digest(bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+#[tauri::command]
+pub async fn preview_bill_import(
+    app: AppHandle,
+    file_path: String,
+    billing_period_id: i64,
+) -> Result<LocalBillImportPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_bill_import_impl(app.state::<DbState>(), file_path, billing_period_id)
+    })
+    .await
+    .map_err(|error| format!("Bill preview task failed: {error}"))?
+}
+
+fn preview_bill_import_impl(
+    db: State<DbState>,
+    file_path: String,
+    billing_period_id: i64,
+) -> Result<LocalBillImportPreview, String> {
+    let context = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_period_open(&conn, billing_period_id)?;
+        load_bill_import_context(&conn, billing_period_id)?
+    };
+    let source_filename = Path::new(&file_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&file_path)
+        .to_string();
+    let before_hash = file_sha256(&file_path)?;
+    let prepared =
+        prepare_multi_bill_import_from_path(&file_path, source_filename.clone(), &context, true)?;
+    let after_hash = file_sha256(&file_path)?;
+    if before_hash != after_hash {
+        return Err("The source file changed while it was being inspected. Try again.".to_string());
+    }
+    let bills = preview_prepared_bills(&prepared, &context.providers);
+    if bills.is_empty() {
+        return Err("No invoice candidates could be parsed from this file.".to_string());
+    }
+    Ok(LocalBillImportPreview {
+        source_filename,
+        file_sha256: after_hash,
+        bills,
+    })
+}
+
+#[tauri::command]
+pub async fn finalize_bill_import_batch(
+    app: AppHandle,
+    billing_period_id: i64,
+    files: Vec<LocalBillImportFinalizeRequest>,
+) -> Result<Vec<Bill>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        finalize_bill_import_batch_impl(app.state::<DbState>(), billing_period_id, files)
+    })
+    .await
+    .map_err(|error| format!("Bill finalization task failed: {error}"))?
+}
+
+fn finalize_bill_import_batch_impl(
+    db: State<DbState>,
+    billing_period_id: i64,
+    files: Vec<LocalBillImportFinalizeRequest>,
+) -> Result<Vec<Bill>, String> {
+    if files.is_empty()
+        || files
+            .iter()
+            .all(|file| file.selected_content_hashes.is_empty())
+    {
+        return Err("Select at least one invoice candidate to import.".to_string());
+    }
+
+    // Extraction and OCR stay outside the database lock. All resulting inserts
+    // are nevertheless committed in one transaction after current-rule checks.
+    let mut extracted_files = Vec::with_capacity(files.len());
+    for file in files {
+        if file.selected_content_hashes.is_empty() {
+            continue;
+        }
+        let before_hash = file_sha256(&file.file_path)?;
+        if before_hash != file.expected_file_sha256 {
+            return Err(
+                "A source file changed after preview. Refresh the preview before importing."
+                    .to_string(),
+            );
+        }
+        let document = extract_document_from_file(&file.file_path)?;
+        let after_hash = file_sha256(&file.file_path)?;
+        if after_hash != before_hash {
+            return Err("A source file changed during final verification. Refresh the preview before importing.".to_string());
+        }
+        let source_filename = Path::new(&file.file_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&file.file_path)
+            .to_string();
+        extracted_files.push((file, source_filename, document));
+    }
+
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_period_open(&conn, billing_period_id)?;
+    let context = load_bill_import_context(&conn, billing_period_id)?;
+    let mut prepared_files = Vec::new();
+    for (file, source_filename, document) in extracted_files {
+        let mut prepared = prepare_multi_bill_import_from_document(
+            document,
+            source_filename,
+            context.month,
+            context.year,
+            &context.providers,
+            true,
+        );
+        let selected: HashSet<String> = file.selected_content_hashes.into_iter().collect();
+        let mut found = HashSet::new();
+        prepared.extracted.retain(|candidate| {
+            let hash = bill_hash(associate_provider(&context.providers, candidate), candidate);
+            if !selected.contains(&hash) {
+                return false;
+            }
+            found.insert(hash.clone());
+            true
+        });
+        if found != selected {
+            return Err(
+                "One or more selected candidates changed after preview. Refresh the preview."
+                    .to_string(),
+            );
+        }
+        let exception_map = file
+            .exceptions
+            .into_iter()
+            .map(|exception| (exception.content_hash.clone(), exception))
+            .collect();
+        prepared_files.push((prepared, exception_map));
+    }
+
+    let mut retained_hashes = HashSet::new();
+    for (prepared, _) in &mut prepared_files {
+        prepared.extracted.retain(|candidate| {
+            retained_hashes.insert(bill_hash(
+                associate_provider(&context.providers, candidate),
+                candidate,
+            ))
+        });
+    }
+    if retained_hashes.is_empty() {
+        return Err("No selected invoice candidates remained after duplicate checks.".to_string());
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut saved = Vec::new();
+    for (prepared, exception_map) in prepared_files {
+        if prepared.extracted.is_empty() {
+            continue;
+        }
+        saved.extend(save_prepared_multi_bill_import_with_exceptions(
+            &tx,
+            billing_period_id,
+            prepared,
+            &context.providers,
+            true,
+            &exception_map,
+        )?);
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(saved)
 }
 
 #[cfg(test)]
@@ -2036,6 +3019,12 @@ mod tests {
             invoice_number_pattern: String::new(),
             purpose_text_template: String::new(),
             split_basis: "m2_percentage".to_string(),
+            identity_rule_type: "unconfigured".to_string(),
+            identity_rule_operator: "all".to_string(),
+            identity_label: String::new(),
+            identity_value: String::new(),
+            identity_alternate_label: String::new(),
+            identity_alternate_value: String::new(),
         }
     }
 
@@ -2050,12 +3039,15 @@ mod tests {
             purpose_text: String::new(),
             invoice_number: String::new(),
             parse_note: String::new(),
+            source_page_start: None,
+            source_page_end: None,
+            identity: None,
+            segment_text: String::new(),
         }
     }
 
     fn test_prepared(extracted: Vec<ExtractedBill>) -> PreparedBillImport {
         PreparedBillImport {
-            raw_text: String::new(),
             filename: "invoice.pdf".to_string(),
             source_month: 4,
             source_year: 2026,
@@ -2103,7 +3095,14 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'draft',
                 source_filename TEXT NOT NULL DEFAULT '',
                 reviewed_at TEXT,
-                review_note TEXT NOT NULL DEFAULT ''
+                review_note TEXT NOT NULL DEFAULT '',
+                identity_status TEXT NOT NULL DEFAULT 'matched',
+                identity_rule_snapshot TEXT NOT NULL DEFAULT '',
+                identity_evidence TEXT NOT NULL DEFAULT '',
+                identity_exception_note TEXT NOT NULL DEFAULT '',
+                identity_exception_at TEXT,
+                source_page_start INTEGER,
+                source_page_end INTEGER
             );
             INSERT INTO providers (id, name) VALUES (1, 'Provider 1');
             INSERT INTO billing_periods (id, building_id, month, year, status)
@@ -2182,6 +3181,32 @@ mod tests {
 
         assert!(saved.reviewed_at.is_none());
         assert_eq!(saved.review_note, "");
+    }
+
+    #[test]
+    fn identity_exception_requires_note_and_is_invalidated_by_edit() {
+        let conn = setup_bill_command_conn();
+        insert_review_test_bill(&conn, 1, "", false);
+
+        let error = approve_bill_identity_exception_inner(&conn, 1, "   ").unwrap_err();
+        assert!(error.contains("requires a note"));
+
+        let approved =
+            approve_bill_identity_exception_inner(&conn, 1, "Checked against the supplier portal")
+                .unwrap();
+        assert_eq!(approved.identity_status, "exception");
+        assert_eq!(
+            approved.identity_exception_note,
+            "Checked against the supplier portal"
+        );
+        assert!(approved.identity_exception_at.is_some());
+
+        let mut edited = approved;
+        edited.amount_cents += 1;
+        let saved = save_bill_inner(&conn, edited).unwrap();
+        assert_eq!(saved.identity_status, "not_checked");
+        assert_eq!(saved.identity_exception_note, "");
+        assert!(saved.identity_exception_at.is_none());
     }
 
     #[test]
@@ -2312,60 +3337,6 @@ SI12 6330017789210
     }
 
     #[test]
-    fn expected_provider_filter_keeps_missing_configured_provider() {
-        let providers = vec![test_provider(7, "SI56 0400 1004 8988 093", "Elektro")];
-        let mut missing = HashSet::new();
-        missing.insert(7);
-        let mut prepared = test_prepared(vec![test_extracted_bill("SI56 0400 1004 8988 093")]);
-
-        let result = retain_expected_provider_bills(&mut prepared, &providers, &missing);
-
-        assert_eq!(prepared.extracted.len(), 1);
-        assert!(result.skipped_status.is_none());
-    }
-
-    #[test]
-    fn expected_provider_filter_skips_unknown_provider() {
-        let providers = vec![test_provider(7, "SI56 0400 1004 8988 093", "Elektro")];
-        let mut missing = HashSet::new();
-        missing.insert(7);
-        let mut prepared = test_prepared(vec![test_extracted_bill("SI56 9999 0000 0000 000")]);
-
-        let result = retain_expected_provider_bills(&mut prepared, &providers, &missing);
-
-        assert!(prepared.extracted.is_empty());
-        assert_eq!(result.skipped_status, Some("skipped_unknown_provider"));
-    }
-
-    #[test]
-    fn expected_provider_filter_skips_already_present_provider() {
-        let providers = vec![test_provider(7, "SI56 0400 1004 8988 093", "Elektro")];
-        let missing = HashSet::new();
-        let mut prepared = test_prepared(vec![test_extracted_bill("SI56 0400 1004 8988 093")]);
-
-        let result = retain_expected_provider_bills(&mut prepared, &providers, &missing);
-
-        assert!(prepared.extracted.is_empty());
-        assert_eq!(result.skipped_status, Some("skipped_already_present"));
-    }
-
-    #[test]
-    fn expected_provider_filter_reports_partial_unknown_skip() {
-        let providers = vec![test_provider(7, "SI56 0400 1004 8988 093", "Elektro")];
-        let mut missing = HashSet::new();
-        missing.insert(7);
-        let mut prepared = test_prepared(vec![
-            test_extracted_bill("SI56 0400 1004 8988 093"),
-            test_extracted_bill("SI56 9999 0000 0000 000"),
-        ]);
-
-        let result = retain_expected_provider_bills(&mut prepared, &providers, &missing);
-
-        assert_eq!(prepared.extracted.len(), 1);
-        assert_eq!(result.skipped_status, Some("skipped_unknown_provider"));
-    }
-
-    #[test]
     fn bill_hash_filter_skips_previously_imported_bill_content() {
         let providers = vec![test_provider(7, "SI56 0400 1004 8988 093", "Elektro")];
         let mut first = test_prepared(vec![test_extracted_bill("SI56 0400 1004 8988 093")]);
@@ -2380,9 +3351,9 @@ SI12 6330017789210
     }
 
     #[test]
-    fn bill_content_hash_matches_saved_bill_fields() {
+    fn source_aware_hash_keeps_payment_fingerprint_and_distinguishes_documents() {
         let provider = test_provider(7, "SI56 0400 1004 8988 093", "Elektro");
-        let bill = test_extracted_bill("SI56 0400 1004 8988 093");
+        let mut bill = test_extracted_bill("SI56 0400 1004 8988 093");
 
         let parsed_hash = bill_hash(Some(&provider), &bill);
         let saved_hash = bill_content_hash(
@@ -2394,7 +3365,578 @@ SI12 6330017789210
             &bill.invoice_number,
         );
 
-        assert_eq!(parsed_hash, saved_hash);
+        assert!(parsed_hash.starts_with(&format!("{saved_hash}:")));
+        bill.segment_text = "A different supplier document with the same payment tuple".to_string();
+        assert_ne!(parsed_hash, bill_hash(Some(&provider), &bill));
+    }
+
+    fn identity_provider(
+        rule_type: &str,
+        operator: &str,
+        label: &str,
+        value: &str,
+        alternate_label: &str,
+        alternate_value: &str,
+    ) -> Provider {
+        let mut provider = test_provider(1, "SI56 0400 1004 8988 093", "Provider");
+        provider.identity_rule_type = rule_type.to_string();
+        provider.identity_rule_operator = operator.to_string();
+        provider.identity_label = label.to_string();
+        provider.identity_value = value.to_string();
+        provider.identity_alternate_label = alternate_label.to_string();
+        provider.identity_alternate_value = alternate_value.to_string();
+        provider
+    }
+
+    #[test]
+    fn electricity_any_rule_accepts_either_identifier_even_when_other_differs() {
+        let provider = identity_provider(
+            "labeled_value",
+            "any",
+            "Številka kupca",
+            "C0367125",
+            "Številka merilnega mesta",
+            "3-82858",
+        );
+        for text in [
+            "Številka kupca: C0367125",
+            "Številka kupca: C0039985\nŠtevilka merilnega mesta: 3-82858",
+            "Številka kupca: C0367125\nŠtevilka merilnega mesta: 9-99999",
+        ] {
+            assert_eq!(
+                verify_provider_identity(&provider, text, Some(1), Some(2), false).status,
+                "matched"
+            );
+        }
+        assert_eq!(
+            verify_provider_identity(
+                &provider,
+                "Številka kupca: C0000000\nŠtevilka merilnega mesta: 9-99999",
+                Some(1),
+                Some(2),
+                false,
+            )
+            .status,
+            "mismatched"
+        );
+    }
+
+    #[test]
+    fn all_rule_preserves_missing_clause_separately_from_mismatch() {
+        let provider = identity_provider("labeled_value", "all", "Customer", "001", "Meter", "002");
+        assert_eq!(
+            verify_provider_identity(&provider, "Customer: 001", Some(1), Some(1), false).status,
+            "missing"
+        );
+        assert_eq!(
+            verify_provider_identity(
+                &provider,
+                "Customer: 001 Meter: 999",
+                Some(1),
+                Some(1),
+                false,
+            )
+            .status,
+            "mismatched"
+        );
+    }
+
+    #[test]
+    fn labeled_rules_preserve_zeroes_and_separators() {
+        for (label, value) in [
+            ("PLIN Odjemno mesto", "01505116659"),
+            ("Šifra naročnika", "0040113249"),
+            ("Št. odjemnega mesta", "5495/109463"),
+        ] {
+            let provider = identity_provider("labeled_value", "all", label, value, "", "");
+            assert_eq!(
+                verify_provider_identity(
+                    &provider,
+                    &format!("{label}: {value}"),
+                    Some(1),
+                    Some(1),
+                    false,
+                )
+                .status,
+                "matched"
+            );
+            assert_eq!(
+                verify_provider_identity(
+                    &provider,
+                    &format!(
+                        "{label}: {}",
+                        if value.starts_with('0') {
+                            value.trim_start_matches('0').to_string()
+                        } else {
+                            value.replace('/', "")
+                        }
+                    ),
+                    Some(1),
+                    Some(1),
+                    false,
+                )
+                .status,
+                "mismatched"
+            );
+        }
+    }
+
+    #[test]
+    fn labeled_rule_rejects_extended_value_and_does_not_scan_later_fields() {
+        let water = identity_provider(
+            "labeled_value",
+            "all",
+            "Št. odjemnega mesta",
+            "5495/109463",
+            "",
+            "",
+        );
+        for (text, found) in [
+            (
+                "Št. odjemnega mesta: 5495/1094630\nDrug podatek: 5495/109463",
+                "5495/1094630",
+            ),
+            (
+                "Št. odjemnega mesta: 5495/109463-0\nDrug podatek: 5495/109463",
+                "5495/109463-0",
+            ),
+            (
+                "Št. odjemnega mesta: napačno\nDrug podatek: 5495/109463",
+                "NAPACNO",
+            ),
+        ] {
+            let result = verify_provider_identity(&water, text, Some(1), Some(1), false);
+            assert_eq!(result.status, "mismatched", "{text}");
+            assert_eq!(result.found_values, vec![found], "{text}");
+        }
+    }
+
+    #[test]
+    fn labeled_rule_allows_spaces_around_identifier_separators() {
+        for (label, expected, extracted) in [
+            ("Št. odjemnega mesta", "5495/109463", "5495 / 109463"),
+            ("Številka merilnega mesta", "3-82858", "3 - 82858"),
+        ] {
+            let provider = identity_provider("labeled_value", "all", label, expected, "", "");
+            let result = verify_provider_identity(
+                &provider,
+                &format!("{label}: {extracted}"),
+                Some(1),
+                Some(1),
+                false,
+            );
+            assert_eq!(result.status, "matched", "{extracted}");
+            assert_eq!(result.found_values, vec![expected], "{extracted}");
+        }
+    }
+
+    #[test]
+    fn payment_link_values_require_complete_token_boundaries() {
+        for (text, expected_match) in [
+            ("Sklic: SI12 111", true),
+            ("Sklic: SI12   111", true),
+            ("Sklic: SI12 111\n100,00 EUR", true),
+            ("Sklic: SI12 111\r\n100,00 EUR", true),
+            ("Sklic: SI12 1110", false),
+            ("Sklic: SI12 111-0", false),
+            ("Sklic: SI12 111 0", false),
+            ("Sklic: SI12 111 - 0", false),
+            ("Sklic: SI12 111\u{00a0}0", false),
+            ("Sklic: 0SI12 111", false),
+        ] {
+            assert_eq!(
+                contains_complete_normalized_value(text, "SI12 111"),
+                expected_match,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn ocr_damaged_labels_still_require_the_exact_configured_value() {
+        let gas = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        assert_eq!(
+            verify_provider_identity(
+                &gas,
+                "PLIN j Od mesto: 01 505116659",
+                Some(8),
+                Some(8),
+                false,
+            )
+            .status,
+            "matched"
+        );
+        assert_eq!(
+            verify_provider_identity(
+                &gas,
+                "PLIN j Od mesto: 01 505116658",
+                Some(8),
+                Some(8),
+                false,
+            )
+            .status,
+            "mismatched"
+        );
+    }
+
+    #[test]
+    fn temporary_zlm_address_rule_is_bounded_to_house_number() {
+        let provider = identity_provider(
+            "building_address",
+            "all",
+            "Relevant building address",
+            "Kamniška 36",
+            "",
+            "",
+        );
+        for text in [
+            "Etažni lastniki Kamniška cesta 36, Ljubljana",
+            "Redno čiščenje: KAMNISKA\nULICA 3 6",
+            "Kamniška 36",
+            "Kamniška 36, 100 EUR",
+            "Kamniška 36\n1000 Ljubljana",
+            "Kamniška 36\r\n1000 Ljubljana",
+        ] {
+            assert_eq!(
+                verify_provider_identity(&provider, text, Some(1), Some(1), false).status,
+                "matched"
+            );
+        }
+        for text in [
+            "Postavka 36, naslov Kamniška 40",
+            "Kamniška cesta 360",
+            "Kamniška 3 6 0",
+            "Kamniška 36\n0",
+            "Kamniška 3 6 0\n1000 Ljubljana",
+            "Kamniška 36\n10000 Ljubljana",
+            "Kamniška 36A",
+            "Kamniška 36 A",
+            "Kamniška 36.a",
+            "PredKamniška 36",
+        ] {
+            assert_ne!(
+                verify_provider_identity(&provider, text, Some(1), Some(1), false).status,
+                "matched"
+            );
+        }
+        let suffixed_provider = identity_provider(
+            "building_address",
+            "all",
+            "Relevant building address",
+            "Kamniška 36A",
+            "",
+            "",
+        );
+        assert_eq!(
+            verify_provider_identity(
+                &suffixed_provider,
+                "Kamniška cesta 36 A, Ljubljana",
+                Some(1),
+                Some(1),
+                false
+            )
+            .status,
+            "matched"
+        );
+        assert_ne!(
+            verify_provider_identity(
+                &suffixed_provider,
+                "Kamniška cesta 36, Ljubljana",
+                Some(1),
+                Some(1),
+                false
+            )
+            .status,
+            "matched"
+        );
+    }
+
+    #[test]
+    fn same_iban_distinct_upn_stubs_remain_separate() {
+        let text = "***10,00\nOTHR First\nSI56 0400 1004 8988 093\nSI12 111\n\n***20,00\nOTHR Second\nSI56 0400 1004 8988 093\nSI12 222";
+        let parsed = parse_page_candidates(text);
+        assert_eq!(parsed.len(), 2);
+        assert_ne!(parsed[0].amount_cents, parsed[1].amount_cents);
+    }
+
+    #[test]
+    fn identical_upn_stub_repetition_is_not_a_second_invoice() {
+        let stub = "***10,00\nOTHR First\nSI56 0400 1004 8988 093\nSI12 111";
+        let parsed = parse_page_candidates(&format!("{stub}\n\n{stub}"));
+        assert_eq!(parsed.len(), 1);
+    }
+
+    #[test]
+    fn provider_identity_can_be_evaluated_when_invoice_iban_changed() {
+        let mut provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        provider.match_pattern = "(?i)energetika\\s+ljubljana".to_string();
+        let mut bill = test_extracted_bill("SI56 9999 9999 9999 999");
+        bill.segment_text = "Energetika Ljubljana\nPLIN Odjemno mesto: 01505116659".to_string();
+
+        let associated = associate_provider(std::slice::from_ref(&provider), &bill)
+            .expect("supplier match should associate provider");
+        assert_eq!(associated.id, provider.id);
+        assert_ne!(normalize_iban(&associated.creditor_iban), bill.iban_norm);
+        assert_eq!(
+            verify_provider_identity(associated, &bill.segment_text, Some(1), Some(1), false)
+                .status,
+            "matched"
+        );
+    }
+
+    #[test]
+    fn trailing_unparsed_invoice_cannot_verify_preceding_candidate() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![
+                ExtractedPage {
+                    page_number: 1,
+                    native_text: "***10,00\nENRG Prvi račun\nSI56 0400 1004 8988 093\nSI12 111"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+                ExtractedPage {
+                    page_number: 2,
+                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "two-invoices.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        let candidate = &prepared.extracted[0];
+        assert_eq!(candidate.source_page_end, Some(1));
+        assert_eq!(candidate.identity.as_ref().unwrap().status, "missing");
+    }
+
+    #[test]
+    fn preceding_unparsed_invoice_cannot_verify_later_candidate() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![
+                ExtractedPage {
+                    page_number: 1,
+                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659\nSI56 0400 1004 8988 093\nSI12 111 0"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+                ExtractedPage {
+                    page_number: 2,
+                    native_text: "***10,00\nENRG Poznejši račun\nSI56 0400 1004 8988 093\nSI12 111"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "reverse-two-invoices.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        let candidate = &prepared.extracted[0];
+        assert_eq!(candidate.source_page_start, Some(2));
+        assert_eq!(candidate.identity.as_ref().unwrap().status, "missing");
+    }
+
+    #[test]
+    fn preceding_identity_page_links_when_reference_ends_at_line_boundary() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![
+                ExtractedPage {
+                    page_number: 1,
+                    native_text: "PLIN Odjemno mesto: 01505116659\nSklic: SI12 111\n100,00 EUR"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+                ExtractedPage {
+                    page_number: 2,
+                    native_text: "***10,00\nENRG Račun za plin\nSI56 0400 1004 8988 093\nSI12 111"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "split-invoice.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        let candidate = &prepared.extracted[0];
+        assert_eq!(candidate.source_page_start, Some(1));
+        assert_eq!(candidate.source_page_end, Some(2));
+        assert_eq!(candidate.identity.as_ref().unwrap().status, "matched");
+    }
+
+    #[test]
+    fn partial_native_page_falls_back_to_ocr_payment_candidate() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![ExtractedPage {
+                page_number: 1,
+                native_text: "Energetika Ljubljana — searchable footer".to_string(),
+                ocr_text: "PLIN Odjemno mesto: 01505116659\n***10,00\nENRG Plin\nSI56 0400 1004 8988 093\nSI12 111"
+                    .to_string(),
+                diagnostics: Vec::new(),
+            }],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "partial-native.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        assert_eq!(
+            prepared.extracted[0].identity.as_ref().unwrap().status,
+            "matched"
+        );
+    }
+
+    #[test]
+    fn extractor_panic_is_contained() {
+        let result: Result<Vec<String>, String> = contain_extractor_unwind(|| {
+            panic!("synthetic extractor panic");
+            #[allow(unreachable_code)]
+            Ok(Vec::new())
+        });
+        assert!(result.unwrap_err().contains("panicked"));
+    }
+
+    #[test]
+    #[ignore = "requires the local Git-ignored whole-house sample and Windows OCR"]
+    fn local_august_sample_verifies_all_requested_services() {
+        let path = Path::new("../file-examples/Racuni_09_2026_s.pdf");
+        if !path.exists() {
+            return;
+        }
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run_migrations(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO billing_periods (building_id, month, year) VALUES (1, 9, 2026)",
+            [],
+        )
+        .unwrap();
+        let period_id = conn.last_insert_rowid();
+        let context = load_bill_import_context(&conn, period_id).unwrap();
+        let document = extract_document_from_file(&path.to_string_lossy()).unwrap();
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "Racuni_09_2026_s.pdf".to_string(),
+            context.month,
+            context.year,
+            &context.providers,
+            true,
+        );
+        let previews = preview_prepared_bills(&prepared, &context.providers);
+        assert_eq!(
+            previews.len(),
+            5,
+            "native/OCR reconciliation created extra candidates"
+        );
+        for service in [
+            "Electricity",
+            "Gas/Heating",
+            "VO-KA komunalne storitve",
+            "Water/Sewage",
+            "Cleaning",
+        ] {
+            let matches = previews.iter().any(|preview| {
+                preview.identity.status == "matched"
+                    && preview
+                        .provider_id
+                        .and_then(|provider_id| {
+                            context
+                                .providers
+                                .iter()
+                                .find(|provider| provider.id == Some(provider_id))
+                        })
+                        .map(|provider| provider.service_type == service)
+                        .unwrap_or(false)
+            });
+            assert!(
+                matches,
+                "missing matched preview for {service}: {previews:#?}"
+            );
+        }
     }
 
     #[test]
@@ -2427,318 +3969,4 @@ SI12 6330017789210
         };
         assert_eq!(remaining, vec!["[10]:imported", "[1]:failed"]);
     }
-}
-
-/// Import a bill file that may contain multiple bills.
-/// Uses smart parsing: finds UPN payment stubs (***amount), falls back to
-/// Elektro narrative format and ZLM format. Matches providers by IBAN.
-#[tauri::command]
-pub fn import_bills(
-    db: State<DbState>,
-    file_path: String,
-    billing_period_id: i64,
-) -> Result<Vec<Bill>, String> {
-    let raw_text = extract_text_from_file(&file_path)?;
-
-    let filename = std::path::Path::new(&file_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&file_path)
-        .to_string();
-
-    let (month, year) = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        ensure_period_open(&conn, billing_period_id)?;
-        conn.query_row(
-            "SELECT month, year FROM billing_periods WHERE id=?1",
-            [billing_period_id],
-            |r| Ok((r.get::<_, i32>(0)?, r.get::<_, i32>(1)?)),
-        )
-        .map_err(|e| e.to_string())?
-    };
-    let (source_month, source_year) =
-        find_source_period_month_year(&raw_text).unwrap_or((month, year));
-
-    let providers = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        get_providers_inner(&conn)
-    };
-
-    // Build IBAN → provider map (normalized, no spaces)
-    let provider_by_iban: std::collections::HashMap<String, &Provider> = providers
-        .iter()
-        .filter(|p| !p.creditor_iban.is_empty())
-        .map(|p| (normalize_iban(&p.creditor_iban), p))
-        .collect();
-
-    // Write debug log: raw extracted text + parse results
-    let log_path =
-        dirs_next::data_dir().map(|d| d.join("si.upn-generator").join("import_debug.log"));
-    let mut log = format!(
-        "=== import_bills: {} ===\n\n--- RAW TEXT ---\n{}\n\n--- PARSE RESULTS ---\n",
-        filename, raw_text
-    );
-
-    // --- Collect extracted bills ---
-    let mut extracted: Vec<ExtractedBill> = Vec::new();
-    let mut seen_ibans: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    // Phase 1: UPN payment stubs (***amount) — covers VOKA ×2 and Energetika
-    let stubs = parse_upn_stubs(&raw_text);
-    log.push_str(&format!("Phase 1 (UPN stubs): {} found\n", stubs.len()));
-    for bill in stubs {
-        log.push_str(&format!(
-            "  IBAN={} amount={} ref={} due={}\n",
-            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
-        ));
-        if seen_ibans.insert(bill.iban_norm.clone()) {
-            extracted.push(bill);
-        }
-    }
-
-    // Phase 2: Elektro narrative format (ZA PLACILO Z DDV:)
-    let elektro = parse_elektro_style(&raw_text);
-    log.push_str(&format!(
-        "Phase 2 (Elektro): {}\n",
-        if elektro.is_some() {
-            "found"
-        } else {
-            "NOT FOUND"
-        }
-    ));
-    if let Some(bill) = elektro {
-        log.push_str(&format!(
-            "  IBAN={} amount={} ref={} due={}\n",
-            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
-        ));
-        if seen_ibans.insert(bill.iban_norm.clone()) {
-            extracted.push(bill);
-        }
-    }
-
-    // Phase 3: ZLM format (Za placilo EUR: + TRR:)
-    let zlm = parse_zlm_style(&raw_text);
-    log.push_str(&format!(
-        "Phase 3 (ZLM): {}\n",
-        if zlm.is_some() { "found" } else { "NOT FOUND" }
-    ));
-    if let Some(bill) = zlm {
-        log.push_str(&format!(
-            "  IBAN={} amount={} ref={} due={}\n",
-            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
-        ));
-        if seen_ibans.insert(bill.iban_norm.clone()) {
-            extracted.push(bill);
-        }
-    }
-
-    // Phase 4: OCR-tolerant Dimnikar image format
-    let dimnikar = parse_dimnikar_style(&raw_text);
-    log.push_str(&format!(
-        "Phase 4 (Dimnikar OCR): {}\n",
-        if dimnikar.is_some() {
-            "found"
-        } else {
-            "NOT FOUND"
-        }
-    ));
-    if let Some(bill) = dimnikar {
-        log.push_str(&format!(
-            "  IBAN={} amount={} ref={} due={}\n",
-            bill.iban_raw, bill.amount_cents, bill.reference, bill.due_date
-        ));
-        if seen_ibans.insert(bill.iban_norm.clone()) {
-            extracted.push(bill);
-        }
-    }
-
-    // Fallback: nothing found — create one blank bill
-    if extracted.is_empty() {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        ensure_period_open(&conn, billing_period_id)?;
-        conn.execute(
-            "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
-             creditor_name, creditor_iban, creditor_address, creditor_city,
-             creditor_postal_code, reference, due_date, purpose_code, purpose_text,
-             invoice_number, parse_note, status, source_filename)
-             VALUES (?1,NULL,?2,0,'','','','','','','','OTHR','','',
-                     'No bill data could be parsed automatically. Review this import manually.',
-                     'needs_review',?3)",
-            params![billing_period_id, raw_text, filename],
-        )
-        .map_err(|e| e.to_string())?;
-        let id = conn.last_insert_rowid();
-        log.push_str("--- SAVED BILLS ---\n");
-        log.push_str(
-            "  status=needs_review parse_note=No bill data could be parsed automatically. Review this import manually.\n",
-        );
-        if let Some(ref path) = log_path {
-            let _ = std::fs::write(path, &log);
-        }
-        return Ok(vec![Bill {
-            id: Some(id),
-            billing_period_id,
-            provider_id: None,
-            raw_text: String::new(),
-            amount_cents: 0,
-            creditor_name: String::new(),
-            creditor_iban: String::new(),
-            creditor_address: String::new(),
-            creditor_city: String::new(),
-            creditor_postal_code: String::new(),
-            reference: String::new(),
-            due_date: String::new(),
-            purpose_code: "OTHR".to_string(),
-            purpose_text: String::new(),
-            invoice_number: String::new(),
-            parse_note: "No bill data could be parsed automatically. Review this import manually."
-                .to_string(),
-            status: "needs_review".to_string(),
-            source_filename: filename,
-            reviewed_at: None,
-            review_note: String::new(),
-            provider_name: None,
-        }]);
-    }
-
-    // --- Match to providers and insert ---
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    ensure_period_open(&conn, billing_period_id)?;
-    let mut results: Vec<Bill> = Vec::new();
-    log.push_str("--- SAVED BILLS ---\n");
-
-    for eb in extracted {
-        let provider = provider_by_iban.get(&eb.iban_norm).copied();
-
-        // Determine creditor info from provider (if matched) or from extracted IBAN
-        let (
-            provider_id,
-            creditor_name,
-            creditor_iban,
-            creditor_address,
-            creditor_city,
-            creditor_postal_code,
-            purpose_code,
-        ) = match provider {
-            Some(p) => (
-                p.id,
-                p.creditor_name.clone(),
-                p.creditor_iban.clone(),
-                p.creditor_address.clone(),
-                p.creditor_city.clone(),
-                p.creditor_postal_code.clone(),
-                if eb.purpose_code != "OTHR" {
-                    eb.purpose_code.clone()
-                } else {
-                    p.purpose_code.clone()
-                },
-            ),
-            None => (
-                None,
-                String::new(),
-                eb.iban_raw.clone(),
-                String::new(),
-                String::new(),
-                String::new(),
-                eb.purpose_code.clone(),
-            ),
-        };
-
-        // Purpose text: use extracted text if non-empty, else use provider template
-        let purpose_text = if !eb.purpose_text.is_empty() {
-            eb.purpose_text.clone()
-        } else if let Some(p) = provider {
-            interpolate_template(
-                &p.purpose_text_template,
-                &eb.invoice_number,
-                source_month,
-                source_year,
-            )
-        } else {
-            String::new()
-        };
-
-        let parse_note = import_review_parse_note(
-            &eb.parse_note,
-            eb.amount_cents,
-            &eb.iban_norm,
-            &eb.reference,
-            &eb.due_date,
-        );
-        let status = if parse_note.is_empty() {
-            "draft".to_string()
-        } else {
-            "needs_review".to_string()
-        };
-
-        conn.execute(
-            "INSERT INTO bills (billing_period_id, provider_id, raw_text, amount_cents,
-             creditor_name, creditor_iban, creditor_address, creditor_city,
-             creditor_postal_code, reference, due_date, purpose_code, purpose_text,
-             invoice_number, parse_note, status, source_filename)
-             VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
-            params![
-                billing_period_id,
-                provider_id,
-                eb.amount_cents,
-                creditor_name,
-                creditor_iban,
-                creditor_address,
-                creditor_city,
-                creditor_postal_code,
-                eb.reference,
-                eb.due_date,
-                purpose_code,
-                purpose_text,
-                eb.invoice_number,
-                parse_note,
-                status,
-                filename,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-
-        let id = conn.last_insert_rowid();
-        log.push_str(&format!(
-            "  provider={} amount={} ref={} status={} parse_note={}\n",
-            provider.map(|p| p.name.as_str()).unwrap_or("(unmatched)"),
-            eb.amount_cents,
-            eb.reference,
-            status,
-            if parse_note.is_empty() {
-                "(empty)"
-            } else {
-                parse_note.as_str()
-            }
-        ));
-        results.push(Bill {
-            id: Some(id),
-            billing_period_id,
-            provider_id,
-            raw_text: String::new(),
-            amount_cents: eb.amount_cents,
-            creditor_name,
-            creditor_iban,
-            creditor_address,
-            creditor_city,
-            creditor_postal_code,
-            reference: eb.reference,
-            due_date: eb.due_date,
-            purpose_code,
-            purpose_text,
-            invoice_number: eb.invoice_number,
-            parse_note,
-            status,
-            source_filename: filename.clone(),
-            reviewed_at: None,
-            review_note: String::new(),
-            provider_name: provider.map(|p| p.name.clone()),
-        });
-    }
-
-    if let Some(ref path) = log_path {
-        let _ = std::fs::write(path, &log);
-    }
-
-    Ok(results)
 }

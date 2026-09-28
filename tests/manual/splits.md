@@ -25,6 +25,8 @@
 - [ ] Confirm UPN validation blocks delivery actions when a bill has no splits, split totals do not match the bill total, or a split belongs to an inactive apartment.
 - [ ] Set all active apartments to zero occupants for an occupant-based provider and confirm UPN validation blocks delivery actions until occupants or split basis are corrected.
 - [ ] Change m2 percentages so active apartments no longer total 100 and confirm UPN validation shows a warning without blocking delivery actions.
+- [ ] With a bill marked mismatched, missing, unreadable, unconfigured, or Not checked, confirm recalculation and manual split editing are blocked.
+- [ ] Add a non-empty identity exception note and confirm split actions become available while the bill remains visibly marked Exception.
 
 ## Notes
 

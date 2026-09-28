@@ -1,12 +1,23 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
-import type { Bill, BillingPeriod, InboxConfig, InboxImportResult, InboxPreviewCandidate, InboxPreviewSession } from "@/lib/types";
+import type {
+  Bill,
+  BillingPeriod,
+  IdentityVerification,
+  InboxConfig,
+  InboxImportResult,
+  InboxPreviewBillSummary,
+  InboxPreviewCandidate,
+  InboxPreviewSession,
+  LocalBillImportPreview,
+} from "@/lib/types";
 import { formatEur, parseEurInputCents } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
@@ -71,6 +82,7 @@ function BillRow({
   onDelete,
   onMarkReviewed,
   onMarkUnreviewed,
+  onApproveIdentityException,
 }: {
   bill: Bill;
   readOnly: boolean;
@@ -78,6 +90,7 @@ function BillRow({
   onDelete: (id: number) => void;
   onMarkReviewed: (id: number) => void;
   onMarkUnreviewed: (id: number) => void;
+  onApproveIdentityException: (id: number, note: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Bill>(bill);
@@ -87,6 +100,8 @@ function BillRow({
   const reviewWarning = hasReviewWarning(bill);
   const reviewedWarning = isReviewedWarning(bill);
   const unreviewedWarning = isUnreviewedWarning(bill);
+  const identityEligible = bill.identity_status === "matched" || bill.identity_status === "exception";
+  const [identityExceptionNote, setIdentityExceptionNote] = useState("");
   const reviewMessage = bill.parse_note?.trim() || "Review this import manually.";
   const providerName = bill.provider_name?.trim() ?? "";
   const providerTitle = providerName || bill.creditor_name || bill.source_filename;
@@ -171,25 +186,27 @@ function BillRow({
           <TextFieldValue value={bill.due_date} />
         </td>
         <td className={billingTableCellClass}>
-          {reviewWarning ? (
+          {identityEligible ? (
             <span
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold",
-                reviewedWarning
+                bill.identity_status === "matched"
                   ? "bg-success-soft text-success"
                   : "bg-warning-soft text-warning",
               )}
+              title={bill.identity_exception_note || "Building identity matched the configured rule."}
             >
-              {reviewedWarning ? (
+              {bill.identity_status === "matched" ? (
                 <CheckCircle2 className="size-3" />
               ) : (
                 <AlertTriangle className="size-3" />
               )}
-              {reviewedWarning ? "Reviewed" : "OCR - verify"}
+              {bill.identity_status === "matched" ? "Building verified" : "Exception"}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-2 py-1 text-xs font-semibold text-muted-foreground">
-              Auto-matched
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
+              <AlertTriangle className="size-3" />
+              {bill.identity_status.replace("_", " ")}
             </span>
           )}
         </td>
@@ -330,7 +347,7 @@ function BillRow({
             </div>
           </td>
         </tr>
-      ) : reviewWarning && (
+      ) : (reviewWarning || !identityEligible) && (
         <tr
           className={cn(
             "border-b border-border bg-card",
@@ -351,7 +368,7 @@ function BillRow({
                 </span>{" "}
                 {reviewMessage}
               </p>
-              {bill.id && (
+              {bill.id && reviewWarning && (
                 reviewedWarning ? (
                   <Button
                     variant="outline"
@@ -379,6 +396,31 @@ function BillRow({
                 )
               )}
             </div>
+            {!identityEligible && bill.id && (
+              <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border pt-3">
+                <label className="min-w-72 flex-1 text-xs font-semibold text-foreground">
+                  Required identity exception note
+                  <Input
+                    className="mt-1"
+                    value={identityExceptionNote}
+                    disabled={readOnly}
+                    onChange={(event) => setIdentityExceptionNote(event.target.value)}
+                    placeholder="Why this bill is accepted without confirmed building identity"
+                  />
+                </label>
+                <Button
+                  variant="warning"
+                  size="sm"
+                  disabled={readOnly || !identityExceptionNote.trim()}
+                  onClick={() => {
+                    onApproveIdentityException(bill.id!, identityExceptionNote.trim());
+                    setIdentityExceptionNote("");
+                  }}
+                >
+                  Approve exception
+                </Button>
+              </div>
+            )}
           </td>
         </tr>
       )}
@@ -433,7 +475,7 @@ function defaultInboxPreviewSelection(candidates: InboxPreviewCandidate[]) {
   const providerUseCount = new Map<number, number>();
 
   for (const candidate of candidates) {
-    if (!candidate.selectable) continue;
+    if (!candidate.selectable || candidate.bills.some((bill) => bill.provider_id == null)) continue;
     for (const providerId of candidateProviderIds(candidate)) {
       providerUseCount.set(providerId, (providerUseCount.get(providerId) ?? 0) + 1);
     }
@@ -441,7 +483,7 @@ function defaultInboxPreviewSelection(candidates: InboxPreviewCandidate[]) {
 
   return candidates
     .filter((candidate) => {
-      if (!candidate.selectable) return false;
+      if (!candidate.selectable || candidate.bills.some((bill) => bill.provider_id == null)) return false;
       return candidateProviderIds(candidate).every(
         (providerId) => (providerUseCount.get(providerId) ?? 0) === 1,
       );
@@ -669,6 +711,51 @@ function InboxStatusChip({ candidate }: { candidate: InboxPreviewCandidate }) {
   );
 }
 
+function InboxIdentityEvidence({ identity }: { identity: IdentityVerification }) {
+  return (
+    <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+      <div>{identity.explanation}</div>
+      {identity.expected_values.length > 0 && (
+        <div>
+          Expected: <span className="font-mono text-foreground">{identity.expected_values.join(" or ")}</span>
+        </div>
+      )}
+      {identity.found_values.length > 0 && (
+        <div className="break-all">
+          Observed near label: <span className="font-mono text-foreground">{identity.found_values.join("; ")}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InboxBillIdentity({ bill }: { bill: InboxPreviewBillSummary }) {
+  const matched = bill.identity.status === "matched";
+  const page = bill.source_page_start
+    ? ` · page ${bill.source_page_start}${bill.source_page_end !== bill.source_page_start ? `-${bill.source_page_end}` : ""}`
+    : "";
+  const label = matched ? "Building verified" : `Identity: ${bill.identity.status}`;
+
+  if (matched) {
+    return (
+      <details className="mt-1 text-xs">
+        <summary className="cursor-pointer text-muted-foreground marker:text-muted-foreground">
+          <span className="font-semibold text-success">{label}{page}</span>
+          <span className="ml-2 underline underline-offset-2">Evidence</span>
+        </summary>
+        <InboxIdentityEvidence identity={bill.identity} />
+      </details>
+    );
+  }
+
+  return (
+    <>
+      <div className="mt-1 text-xs font-semibold text-warning">{label}{page}</div>
+      <InboxIdentityEvidence identity={bill.identity} />
+    </>
+  );
+}
+
 function InboxImportDrawer({
   open,
   canEnsurePeriod,
@@ -690,6 +777,7 @@ function InboxImportDrawer({
   const [daysToScan, setDaysToScan] = useState(45);
   const [preview, setPreview] = useState<InboxPreviewSession | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [inboxExceptionNotes, setInboxExceptionNotes] = useState<Record<string, string>>({});
   const [results, setResults] = useState<InboxImportResult[]>([]);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -704,6 +792,7 @@ function InboxImportDrawer({
     setPreview(null);
     setResults([]);
     setSelectedIds(new Set());
+    setInboxExceptionNotes({});
     setLoadingConfig(true);
     void ipc
       .getInboxConfig()
@@ -760,6 +849,7 @@ function InboxImportDrawer({
       }
       setPreview(null);
       setSelectedIds(new Set());
+      setInboxExceptionNotes({});
       const clampedDays = clampInboxScanDays(daysToScan);
       setDaysToScan(clampedDays);
       const nextPreview = await ipc.previewInboxAttachments(billingPeriod.id, clampedDays);
@@ -779,13 +869,34 @@ function InboxImportDrawer({
     setError(null);
     setImporting(true);
     try {
-      const imported = await ipc.importInboxPreviewSelection(preview.session_id, Array.from(selectedIds));
+      const exceptions = preview.candidates
+        .filter((candidate) => selectedIds.has(candidate.id))
+        .flatMap((candidate) => candidate.bills)
+        .filter((bill) => bill.identity.status !== "matched")
+        .map((bill) => ({
+          content_hash: bill.content_hash,
+          note: inboxExceptionNotes[bill.content_hash]?.trim() ?? "",
+          identity_status: bill.identity.status,
+          rule_snapshot: bill.identity.rule_snapshot,
+        }));
+      if (exceptions.some((exception) => !exception.note)) {
+        setError("Every selected unverified invoice requires an exception note.");
+        return;
+      }
+      const imported = await ipc.importInboxPreviewSelection(
+        preview.session_id,
+        Array.from(selectedIds),
+        exceptions,
+      );
       setResults(imported);
-      setSelectedIds(new Set());
-      setPreview({
-        ...preview,
-        candidates: preview.candidates.filter((candidate) => !selectedIds.has(candidate.id)),
-      });
+      const failed = imported.some((result) => result.status === "failed");
+      if (!failed) {
+        setSelectedIds(new Set());
+        setPreview({
+          ...preview,
+          candidates: preview.candidates.filter((candidate) => !selectedIds.has(candidate.id)),
+        });
+      }
       await onImported(imported);
     } catch (e) {
       setError(`Failed to import selected inbox items: ${e}`);
@@ -1011,7 +1122,7 @@ function InboxImportDrawer({
                                 type="checkbox"
                                 className="block size-4 accent-primary"
                                 checked={selectedIds.has(candidate.id)}
-                                disabled={!candidate.selectable || importing}
+                                disabled={!candidate.selectable || candidate.bills.some((bill) => bill.provider_id == null) || importing}
                                 onChange={(event) => toggleCandidate(event.target.checked)}
                               />
                             </div>
@@ -1057,6 +1168,16 @@ function InboxImportDrawer({
                                   </div>
                                   {bill.parse_note && (
                                     <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
+                                  )}
+                                  <InboxBillIdentity bill={bill} />
+                                  {selectedIds.has(candidate.id) && bill.identity.status !== "matched" && (
+                                    <Input
+                                      className="mt-2 h-8"
+                                      value={inboxExceptionNotes[bill.content_hash] ?? ""}
+                                      disabled={importing}
+                                      placeholder="Required exception note"
+                                      onChange={(event) => setInboxExceptionNotes((current) => ({ ...current, [bill.content_hash]: event.target.value }))}
+                                    />
                                   )}
                                 </td>
                                 <td className="px-3 py-4 text-right align-top">
@@ -1194,6 +1315,12 @@ function BillsPage() {
   const [inboxDrawerOpen, setInboxDrawerOpen] = useState(false);
   const [inboxResults, setInboxResults] = useState<InboxImportResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [localImportReview, setLocalImportReview] = useState<Array<{
+    path: string;
+    preview: LocalBillImportPreview;
+    selected: Record<string, boolean>;
+    exceptionNotes: Record<string, string>;
+  }> | null>(null);
   const isClosed = selected?.status === "closed";
 
   const importFiles = async () => {
@@ -1218,16 +1345,105 @@ function BillsPage() {
       const billingPeriod = await ensureSelectedPeriod();
       if (!billingPeriod) return;
       const pathArr = Array.isArray(paths) ? paths : [paths];
+      const reviews: NonNullable<typeof localImportReview> = [];
       for (const path of pathArr) {
         try {
-          await ipc.importBills(path, billingPeriod.id);
+          const preview = await ipc.previewBillImport(path, billingPeriod.id);
+          reviews.push({
+            path,
+            preview,
+            selected: Object.fromEntries(preview.bills.map((bill) => [bill.content_hash, bill.provider_id != null])),
+            exceptionNotes: {},
+          });
         } catch (e) {
-          setError(`Failed to import ${path}: ${e}`);
+          setError(`Failed to inspect ${path}: ${e}`);
         }
       }
-      await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
+      if (reviews.length > 0) setLocalImportReview(reviews);
     } catch (e) {
       setError(`Failed to import bills: ${e}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const updateLocalImportReview = (
+    fileIndex: number,
+    contentHash: string,
+    field: "selected" | "exceptionNotes",
+    value: boolean | string,
+  ) => {
+    setLocalImportReview((current) =>
+      current?.map((file, index) =>
+        index === fileIndex
+          ? { ...file, [field]: { ...file[field], [contentHash]: value } }
+          : file,
+      ) ?? null,
+    );
+  };
+
+  const openLocalImportSource = async (path: string) => {
+    setError(null);
+    try {
+      await openPath(path);
+    } catch (e) {
+      setError(`Failed to open source file: ${e}`);
+    }
+  };
+
+  const finalizeLocalImports = async () => {
+    if (!localImportReview || !selected) return;
+    setImporting(true);
+    setError(null);
+    try {
+      const billingPeriod = await ensureSelectedPeriod();
+      if (!billingPeriod) return;
+      const providerHashes = new Map<number, Set<string>>();
+      for (const file of localImportReview) {
+        for (const bill of file.preview.bills) {
+          if (!file.selected[bill.content_hash] || bill.provider_id == null) continue;
+          const hashes = providerHashes.get(bill.provider_id) ?? new Set<string>();
+          hashes.add(bill.content_hash);
+          providerHashes.set(bill.provider_id, hashes);
+        }
+      }
+      if (Array.from(providerHashes.values()).some((hashes) => hashes.size > 1)) {
+        throw new Error("Multiple distinct selected invoices target the same provider/month. Resolve the conflict before importing either invoice.");
+      }
+      const finalizedHashes = new Set<string>();
+      const files = [];
+      for (const file of localImportReview) {
+        const selectedHashes = file.preview.bills
+          .filter((bill) => file.selected[bill.content_hash] && !finalizedHashes.has(bill.content_hash))
+          .map((bill) => bill.content_hash);
+        if (selectedHashes.length === 0) continue;
+        const exceptions = file.preview.bills
+          .filter(
+            (bill) =>
+              file.selected[bill.content_hash] && bill.identity.status !== "matched",
+          )
+          .map((bill) => ({
+            content_hash: bill.content_hash,
+            note: file.exceptionNotes[bill.content_hash]?.trim() ?? "",
+            identity_status: bill.identity.status,
+            rule_snapshot: bill.identity.rule_snapshot,
+          }));
+        if (exceptions.some((exception) => !exception.note)) {
+          throw new Error("Every selected unverified invoice requires an exception note.");
+        }
+        files.push({
+          file_path: file.path,
+          expected_file_sha256: file.preview.file_sha256,
+          selected_content_hashes: selectedHashes,
+          exceptions,
+        });
+        selectedHashes.forEach((hash) => finalizedHashes.add(hash));
+      }
+      await ipc.finalizeBillImportBatch(billingPeriod.id, files);
+      setLocalImportReview(null);
+      await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
+    } catch (e) {
+      setError(`Failed to import reviewed invoices: ${e}`);
     } finally {
       setImporting(false);
     }
@@ -1270,6 +1486,13 @@ function BillsPage() {
         source_filename: "(manual)",
         reviewed_at: null,
         review_note: "",
+        identity_status: "not_checked",
+        identity_rule_snapshot: "",
+        identity_evidence: "",
+        identity_exception_note: "",
+        identity_exception_at: null,
+        source_page_start: null,
+        source_page_end: null,
         provider_name: null,
       };
       await ipc.saveBill(blank);
@@ -1309,6 +1532,19 @@ function BillsPage() {
     await ipc.markBillUnreviewed(id);
     if (selected?.id) {
       await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    }
+  };
+
+  const approveBillIdentityException = async (id: number, note: string) => {
+    if (isClosed) {
+      setError("This billing month is closed. Reopen it before approving an exception.");
+      return;
+    }
+    try {
+      await ipc.approveBillIdentityException(id, note);
+      await snapshot.refresh({ core: false, periods: false, selected: true, statuses: true });
+    } catch (e) {
+      setError(`Failed to approve identity exception: ${e}`);
     }
   };
 
@@ -1390,6 +1626,106 @@ function BillsPage() {
         )
       }
     >
+      {localImportReview &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] grid place-items-center bg-background/75 p-6 backdrop-blur-sm">
+            <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl border border-border bg-card shadow-xl">
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-5 py-4">
+                <div>
+                  <h2 className="font-head text-xl font-semibold">Review building identity</h2>
+                  <p className="text-sm text-muted-foreground">Only matched invoices progress automatically. A selected exception requires a note.</p>
+                </div>
+                <Button variant="ghost" size="icon" disabled={importing} onClick={() => setLocalImportReview(null)} aria-label="Close import review">
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="space-y-5 p-5">
+                {localImportReview.map((file, fileIndex) => (
+                  <section key={file.path} className="space-y-3 rounded-lg border border-border p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div className="font-semibold">{file.preview.source_filename}</div>
+                        <div className="text-xs text-muted-foreground">{file.preview.bills.length} invoice candidate(s)</div>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void openLocalImportSource(file.path)}>
+                        Open source
+                      </Button>
+                    </div>
+                    {file.preview.bills.map((bill) => {
+                      const selectedForImport = Boolean(file.selected[bill.content_hash]);
+                      const pageLabel = bill.source_page_start
+                        ? bill.source_page_start === bill.source_page_end
+                          ? `Page ${bill.source_page_start}`
+                          : `Pages ${bill.source_page_start}-${bill.source_page_end}`
+                        : "Page unavailable";
+                      return (
+                        <div key={bill.content_hash} className="rounded-md border border-border bg-surface-2 p-3">
+                          <label className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              className="mt-1"
+                              checked={selectedForImport}
+                              disabled={importing || bill.provider_id == null}
+                              onChange={(event) => updateLocalImportReview(fileIndex, bill.content_hash, "selected", event.target.checked)}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold">{bill.provider_name ?? "Unknown provider"}</span>
+                                <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", bill.identity.status === "matched" ? "bg-success-soft text-success" : "bg-warning-soft text-warning")}>
+                                  {bill.identity.status === "matched" ? "Verified" : bill.identity.status}
+                                </span>
+                                <span className="text-xs text-muted-foreground">{pageLabel}</span>
+                                <span className="ml-auto font-mono text-sm">{formatEur(bill.amount_cents)} €</span>
+                              </span>
+                              <span className="mt-1 block text-sm text-muted-foreground">{bill.identity.explanation}</span>
+                              {bill.identity.expected_values.length > 0 && (
+                                <span className="mt-1 block text-xs text-muted-foreground">
+                                  Expected: <span className="font-mono text-foreground">{bill.identity.expected_values.join(" or ")}</span>
+                                </span>
+                              )}
+                              {bill.identity.found_values.length > 0 && (
+                                <span className="mt-1 block break-all text-xs text-muted-foreground">
+                                  Observed near label: <span className="font-mono text-foreground">{bill.identity.found_values.join("; ")}</span>
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          {selectedForImport && bill.identity.status !== "matched" && (
+                            <div className="mt-3 pl-7">
+                              <label className="text-xs font-semibold text-foreground">Required exception note</label>
+                              <Input
+                                className="mt-1"
+                                value={file.exceptionNotes[bill.content_hash] ?? ""}
+                                disabled={importing}
+                                placeholder="Why this invoice is accepted despite unconfirmed identity"
+                                onChange={(event) => updateLocalImportReview(fileIndex, bill.content_hash, "exceptionNotes", event.target.value)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </section>
+                ))}
+              </div>
+              <div className="sticky bottom-0 space-y-3 border-t border-border bg-card px-5 py-4">
+                {error && (
+                  <div role="alert" className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                    {error}
+                  </div>
+                )}
+                <div className="flex justify-end gap-3">
+                  <Button variant="outline" disabled={importing} onClick={() => setLocalImportReview(null)}>Cancel</Button>
+                  <Button disabled={importing} onClick={finalizeLocalImports}>
+                    {importing && <Loader2 className="size-4 animate-spin" />}
+                    Import selected
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
       <InboxImportDrawer
         open={inboxDrawerOpen}
         canEnsurePeriod={selected != null}
@@ -1406,7 +1742,7 @@ function BillsPage() {
         </div>
       )}
 
-      {workflowError && (
+      {workflowError && !localImportReview && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {workflowError}
         </div>
@@ -1551,6 +1887,7 @@ function BillsPage() {
                   onDelete={deleteBill}
                   onMarkReviewed={markBillReviewed}
                   onMarkUnreviewed={markBillUnreviewed}
+                  onApproveIdentityException={approveBillIdentityException}
                 />
               ))}
             </tbody>

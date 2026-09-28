@@ -149,6 +149,9 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
         let has_upn_delivery_events = attached_table_exists(&conn, "upn_delivery_events")?;
         let has_bills_reviewed_at = attached_column_exists(&conn, "bills", "reviewed_at")?;
         let has_bills_review_note = attached_column_exists(&conn, "bills", "review_note")?;
+        let has_provider_identity_rules =
+            attached_column_exists(&conn, "providers", "identity_rule_type")?;
+        let has_bill_identity_status = attached_column_exists(&conn, "bills", "identity_status")?;
         let has_billing_periods_closed_at =
             attached_column_exists(&conn, "billing_periods", "closed_at")?;
         let has_smtp_allowlist_enabled =
@@ -263,6 +266,33 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
                     SELECT review_note FROM restore_db.bills WHERE restore_db.bills.id = bills.id
                  ), '')",
                 [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_provider_identity_rules {
+            tx.execute_batch(
+                "UPDATE providers SET
+                    identity_rule_type=(SELECT identity_rule_type FROM restore_db.providers r WHERE r.id=providers.id),
+                    identity_rule_operator=(SELECT identity_rule_operator FROM restore_db.providers r WHERE r.id=providers.id),
+                    identity_label=(SELECT identity_label FROM restore_db.providers r WHERE r.id=providers.id),
+                    identity_value=(SELECT identity_value FROM restore_db.providers r WHERE r.id=providers.id),
+                    identity_alternate_label=(SELECT identity_alternate_label FROM restore_db.providers r WHERE r.id=providers.id),
+                    identity_alternate_value=(SELECT identity_alternate_value FROM restore_db.providers r WHERE r.id=providers.id);",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if has_bill_identity_status {
+            tx.execute_batch(
+                "UPDATE bills SET
+                    identity_status=(SELECT identity_status FROM restore_db.bills r WHERE r.id=bills.id),
+                    identity_rule_snapshot=(SELECT identity_rule_snapshot FROM restore_db.bills r WHERE r.id=bills.id),
+                    identity_evidence=(SELECT identity_evidence FROM restore_db.bills r WHERE r.id=bills.id),
+                    identity_exception_note=(SELECT identity_exception_note FROM restore_db.bills r WHERE r.id=bills.id),
+                    identity_exception_at=(SELECT identity_exception_at FROM restore_db.bills r WHERE r.id=bills.id),
+                    source_page_start=(SELECT source_page_start FROM restore_db.bills r WHERE r.id=bills.id),
+                    source_page_end=(SELECT source_page_end FROM restore_db.bills r WHERE r.id=bills.id);",
             )
             .map_err(|e| e.to_string())?;
         }
@@ -502,5 +532,152 @@ mod tests {
 
         assert_eq!(restored.0, "closed");
         assert_eq!(restored.1, None);
+    }
+
+    #[test]
+    fn restore_round_trips_identity_rules_and_exception_evidence() {
+        let file = backup_file("draft", None, false);
+        {
+            let conn = Connection::open(file.path()).expect("open backup");
+            conn.execute(
+                "UPDATE providers SET identity_rule_type='labeled_value',
+                 identity_rule_operator='any', identity_label='Account',
+                 identity_value='00123', identity_alternate_label='Meter',
+                 identity_alternate_value='4-56' WHERE id=1",
+                [],
+            )
+            .expect("custom rule");
+            conn.execute(
+                "INSERT INTO bills (
+                    id, billing_period_id, provider_id, amount_cents, creditor_name,
+                    identity_status, identity_rule_snapshot, identity_evidence,
+                    identity_exception_note, identity_exception_at,
+                    source_page_start, source_page_end
+                 ) VALUES (1, 1, 1, 1234, 'Provider', 'exception',
+                    '{\"type\":\"labeled_value\"}', '{\"status\":\"missing\"}',
+                    'Accepted after checking the paper copy', '2026-09-28 10:00:00', 2, 3)",
+                [],
+            )
+            .expect("identity bill");
+        }
+
+        let state = restore_backup(&file);
+        let conn = state.0.lock().expect("database lock");
+        let rule: (String, String, String, String, String, String) = conn
+            .query_row(
+                "SELECT identity_rule_type, identity_rule_operator, identity_label,
+                        identity_value, identity_alternate_label, identity_alternate_value
+                 FROM providers WHERE id=1",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("restored rule");
+        assert_eq!(
+            rule,
+            (
+                "labeled_value".into(),
+                "any".into(),
+                "Account".into(),
+                "00123".into(),
+                "Meter".into(),
+                "4-56".into(),
+            )
+        );
+        let evidence: (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<i32>,
+            Option<i32>,
+        ) = conn
+            .query_row(
+                "SELECT identity_status, identity_rule_snapshot, identity_evidence,
+                        identity_exception_note, identity_exception_at,
+                        source_page_start, source_page_end FROM bills WHERE id=1",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .expect("restored evidence");
+        assert_eq!(evidence.0, "exception");
+        assert_eq!(evidence.1, "{\"type\":\"labeled_value\"}");
+        assert_eq!(evidence.2, "{\"status\":\"missing\"}");
+        assert_eq!(evidence.3, "Accepted after checking the paper copy");
+        assert_eq!(evidence.4.as_deref(), Some("2026-09-28 10:00:00"));
+        assert_eq!((evidence.5, evidence.6), (Some(2), Some(3)));
+    }
+
+    #[test]
+    fn legacy_restore_does_not_invent_identity_rules_or_evidence() {
+        let file = backup_file("draft", None, false);
+        {
+            let conn = Connection::open(file.path()).expect("open backup");
+            conn.execute(
+                "INSERT INTO bills (id, billing_period_id, provider_id, amount_cents, creditor_name)
+                 VALUES (1, 1, 1, 1234, 'Legacy provider')",
+                [],
+            )
+            .expect("legacy bill");
+            for column in [
+                "identity_rule_type",
+                "identity_rule_operator",
+                "identity_label",
+                "identity_value",
+                "identity_alternate_label",
+                "identity_alternate_value",
+            ] {
+                conn.execute(&format!("ALTER TABLE providers DROP COLUMN {column}"), [])
+                    .expect("drop provider identity column");
+            }
+            for column in [
+                "identity_status",
+                "identity_rule_snapshot",
+                "identity_evidence",
+                "identity_exception_note",
+                "identity_exception_at",
+                "source_page_start",
+                "source_page_end",
+            ] {
+                conn.execute(&format!("ALTER TABLE bills DROP COLUMN {column}"), [])
+                    .expect("drop bill identity column");
+            }
+        }
+
+        let state = restore_backup(&file);
+        let conn = state.0.lock().expect("database lock");
+        let provider_rule: String = conn
+            .query_row(
+                "SELECT identity_rule_type FROM providers WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("provider fallback");
+        let bill_status: String = conn
+            .query_row("SELECT identity_status FROM bills WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .expect("bill fallback");
+        assert_eq!(provider_rule, "unconfigured");
+        assert_eq!(bill_status, "not_checked");
     }
 }
