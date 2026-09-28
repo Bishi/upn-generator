@@ -1744,12 +1744,16 @@ fn import_inbox_preview_selection_impl(
     Ok(results)
 }
 
-fn remove_selected_candidates<T>(
-    candidates: &mut HashMap<String, T>,
+fn remove_selected_candidates(
+    candidates: &mut HashMap<String, InboxPreviewCandidateData>,
     selected_ids: &[String],
 ) -> bool {
     for candidate_id in selected_ids {
-        candidates.remove(candidate_id);
+        if let Some(candidate) = candidates.remove(candidate_id) {
+            if let Some(path) = candidate.file_path {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
     candidates.is_empty()
 }
@@ -1869,13 +1873,31 @@ mod tests {
 
     #[test]
     fn partial_import_keeps_unselected_preview_candidates() {
-        let mut candidates =
-            HashMap::from([("imported".to_string(), 1), ("remaining".to_string(), 2)]);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let imported_path = temp_dir.path().join("imported.pdf");
+        let remaining_path = temp_dir.path().join("remaining.pdf");
+        std::fs::write(&imported_path, b"imported").unwrap();
+        std::fs::write(&remaining_path, b"remaining").unwrap();
+        let candidate = |path: PathBuf| InboxPreviewCandidateData {
+            message: test_message(),
+            attachment_filename: path.file_name().unwrap().to_string_lossy().into_owned(),
+            attachment_sha256: "attachment".to_string(),
+            file_path: Some(path),
+            status: "ready".to_string(),
+            bill_keys: Vec::new(),
+            has_unmatched_bill: false,
+        };
+        let mut candidates = HashMap::from([
+            ("imported".to_string(), candidate(imported_path.clone())),
+            ("remaining".to_string(), candidate(remaining_path.clone())),
+        ]);
 
         let empty = remove_selected_candidates(&mut candidates, &["imported".to_string()]);
 
         assert!(!empty);
-        assert_eq!(candidates, HashMap::from([("remaining".to_string(), 2)]));
+        assert!(!imported_path.exists());
+        assert!(remaining_path.exists());
+        assert!(candidates.contains_key("remaining"));
     }
 
     #[test]

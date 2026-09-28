@@ -1,9 +1,43 @@
 import { useEffect, useState } from "react";
 import { Loader2, Minus, Plus, X } from "lucide-react";
+import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import type { SourceDocumentInfo } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 
 const TIFF_DECODE_TIMEOUT_MS = 10_000;
+const VIEWER_ESCAPE_SHORTCUT = "Escape";
+
+const viewerEscapeHandlers = new Set<() => void>();
+let viewerEscapeRegistered = false;
+let viewerEscapeSync: Promise<void> = Promise.resolve();
+
+function syncViewerEscapeShortcut() {
+  viewerEscapeSync = viewerEscapeSync.then(async () => {
+    if (viewerEscapeHandlers.size > 0 && !viewerEscapeRegistered) {
+      await register(VIEWER_ESCAPE_SHORTCUT, (event) => {
+        if (event.state !== "Pressed") return;
+        const handlers = Array.from(viewerEscapeHandlers);
+        const handler = handlers[handlers.length - 1];
+        handler?.();
+      });
+      viewerEscapeRegistered = true;
+    } else if (viewerEscapeHandlers.size === 0 && viewerEscapeRegistered) {
+      await unregister(VIEWER_ESCAPE_SHORTCUT);
+      viewerEscapeRegistered = false;
+    }
+  }).catch(() => {
+    viewerEscapeRegistered = false;
+  });
+}
+
+function subscribeViewerEscape(handler: () => void) {
+  viewerEscapeHandlers.add(handler);
+  syncViewerEscapeShortcut();
+  return () => {
+    viewerEscapeHandlers.delete(handler);
+    syncViewerEscapeShortcut();
+  };
+}
 
 type TiffWorkerResponse =
   | { ok: true; width: number; height: number; rgba: ArrayBuffer }
@@ -175,7 +209,11 @@ export function SourceDocumentViewer({
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    const unsubscribeNativeEscape = subscribeViewerEscape(onClose);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      unsubscribeNativeEscape();
+    };
   }, [onClose, open]);
 
   if (!open) return null;
