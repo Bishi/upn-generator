@@ -39,7 +39,7 @@
 - [ ] In the August combined sample, confirm electricity, gas, waste, water, and ZLM candidates all show matched building identity; gas and waste must succeed through rendered-page OCR rather than payment-purpose digits alone.
 - [ ] Change water identity from `5495/109463` to `5495/1094630` or `5495/109463-0` while leaving the configured value in a later unrelated field, and confirm the invoice is mismatched rather than verified.
 - [ ] Confirm extracted values `5495 / 109463` and `3 - 82858` match their configured water and electricity identifiers, while suffixed variants remain mismatches.
-- [ ] Place an unparsed invoice with matching identity evidence before or after a parsed invoice that lacks its own evidence, and confirm the parsed invoice remains unverified unless the pages share its complete reference or invoice number; `SI12 1110`, `SI12 111 0`, and `SI12 111 - 0` must not link to `SI12 111`.
+- [ ] Place an unparsed invoice with matching identity evidence before or after a parsed invoice that lacks its own evidence, and confirm the parsed invoice remains unverified unless the pages share its complete reference or invoice number; `SI12 1110`, `SI12 111 0`, and `SI12 111 - 0` must not link to `SI12 111`, while `SI12 111` followed by an unrelated numeric line still links.
 - [ ] Preview a scanned invoice whose native PDF text contains only a header/footer while OCR contains the payment fields, and confirm the OCR candidate is recovered without duplicating a matching native candidate.
 - [ ] Deselect a candidate, confirm import, and verify only selected candidates are saved.
 - [ ] Select two distinct invoices for the same provider/month across one or more files and confirm neither is saved; exact duplicate content should be deduplicated.

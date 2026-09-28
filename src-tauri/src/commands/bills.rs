@@ -1266,7 +1266,10 @@ fn contains_complete_normalized_value(text: &str, expected: &str) -> bool {
         if immediate.is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-')) {
             return false;
         }
-        let continuation = following.chars().skip_while(|ch| ch.is_whitespace()).next();
+        let continuation = following
+            .chars()
+            .skip_while(|ch| matches!(ch, ' ' | '\t' | '\u{00a0}'))
+            .next();
         !continuation.is_some_and(|ch| ch.is_ascii_digit() || matches!(ch, '/' | '-'))
     });
     found
@@ -3485,10 +3488,13 @@ SI12 6330017789210
         for (text, expected_match) in [
             ("Sklic: SI12 111", true),
             ("Sklic: SI12   111", true),
+            ("Sklic: SI12 111\n100,00 EUR", true),
+            ("Sklic: SI12 111\r\n100,00 EUR", true),
             ("Sklic: SI12 1110", false),
             ("Sklic: SI12 111-0", false),
             ("Sklic: SI12 111 0", false),
             ("Sklic: SI12 111 - 0", false),
+            ("Sklic: SI12 111\u{00a0}0", false),
             ("Sklic: 0SI12 111", false),
         ] {
             assert_eq!(
@@ -3689,6 +3695,52 @@ SI12 6330017789210
         let candidate = &prepared.extracted[0];
         assert_eq!(candidate.source_page_start, Some(2));
         assert_eq!(candidate.identity.as_ref().unwrap().status, "missing");
+    }
+
+    #[test]
+    fn preceding_identity_page_links_when_reference_ends_at_line_boundary() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![
+                ExtractedPage {
+                    page_number: 1,
+                    native_text: "PLIN Odjemno mesto: 01505116659\nSklic: SI12 111\n100,00 EUR"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+                ExtractedPage {
+                    page_number: 2,
+                    native_text: "***10,00\nENRG Račun za plin\nSI56 0400 1004 8988 093\nSI12 111"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "split-invoice.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        let candidate = &prepared.extracted[0];
+        assert_eq!(candidate.source_page_start, Some(1));
+        assert_eq!(candidate.source_page_end, Some(2));
+        assert_eq!(candidate.identity.as_ref().unwrap().status, "matched");
     }
 
     #[test]
