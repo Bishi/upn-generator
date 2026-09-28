@@ -1252,9 +1252,24 @@ fn contains_complete_normalized_value(text: &str, expected: &str) -> bool {
         }
         value_pattern.push_str(&regex::escape(&ch.to_string()));
     }
-    let pattern = format!(r"(?:^|[^A-Z0-9/-]){value_pattern}(?:$|[^A-Z0-9/-])");
     let folded_text: String = text.chars().map(fold_identity_char).collect();
-    Regex::new(&pattern).is_ok_and(|pattern| pattern.is_match(&folded_text))
+    let Ok(pattern) = Regex::new(&value_pattern) else {
+        return false;
+    };
+    let found = pattern.find_iter(&folded_text).any(|matched| {
+        let previous = folded_text[..matched.start()].chars().next_back();
+        if previous.is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-')) {
+            return false;
+        }
+        let following = &folded_text[matched.end()..];
+        let immediate = following.chars().next();
+        if immediate.is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-')) {
+            return false;
+        }
+        let continuation = following.chars().skip_while(|ch| ch.is_whitespace()).next();
+        !continuation.is_some_and(|ch| ch.is_ascii_digit() || matches!(ch, '/' | '-'))
+    });
+    found
 }
 
 fn identity_label_value_start(line: &str, label: &str) -> Option<usize> {
@@ -3472,6 +3487,8 @@ SI12 6330017789210
             ("Sklic: SI12   111", true),
             ("Sklic: SI12 1110", false),
             ("Sklic: SI12 111-0", false),
+            ("Sklic: SI12 111 0", false),
+            ("Sklic: SI12 111 - 0", false),
             ("Sklic: 0SI12 111", false),
         ] {
             assert_eq!(
@@ -3643,7 +3660,7 @@ SI12 6330017789210
             pages: vec![
                 ExtractedPage {
                     page_number: 1,
-                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659\nSI56 0400 1004 8988 093\nSI12 1110"
+                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659\nSI56 0400 1004 8988 093\nSI12 111 0"
                         .to_string(),
                     ocr_text: String::new(),
                     diagnostics: Vec::new(),
