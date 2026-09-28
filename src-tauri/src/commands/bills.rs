@@ -1240,6 +1240,23 @@ fn normalize_identity_value(value: &str) -> String {
         .collect()
 }
 
+fn contains_complete_normalized_value(text: &str, expected: &str) -> bool {
+    let expected = normalize_identity_value(expected);
+    if expected.is_empty() {
+        return false;
+    }
+    let mut value_pattern = String::new();
+    for (index, ch) in expected.chars().enumerate() {
+        if index > 0 {
+            value_pattern.push_str(r"\s*");
+        }
+        value_pattern.push_str(&regex::escape(&ch.to_string()));
+    }
+    let pattern = format!(r"(?:^|[^A-Z0-9/-]){value_pattern}(?:$|[^A-Z0-9/-])");
+    let folded_text: String = text.chars().map(fold_identity_char).collect();
+    Regex::new(&pattern).is_ok_and(|pattern| pattern.is_match(&folded_text))
+}
+
 fn identity_label_value_start(line: &str, label: &str) -> Option<usize> {
     let (compact_text, compact_positions, _) = compact_identity_projection(line);
     let compact_label = compact_identity_text(label);
@@ -1292,7 +1309,7 @@ fn complete_identity_value(value_text: &str, expected: &str) -> String {
                 .copied()
                 .find(|next| !next.is_whitespace());
             let can_join_numeric_piece = expected_is_numeric
-                && next.is_some_and(|next| next.is_ascii_digit())
+                && next.is_some_and(|next| next.is_ascii_digit() || matches!(next, '/' | '-'))
                 && value
                     .chars()
                     .all(|current| current.is_ascii_digit() || matches!(current, '/' | '-'));
@@ -1465,7 +1482,8 @@ fn verify_provider_identity(
             .collect(),
         found_values: results
             .iter()
-            .filter_map(|(found, _, window)| found.then(|| window.clone()))
+            .filter(|(found, _, _)| *found)
+            .map(|(_, _, window)| window.clone())
             .collect(),
         page_start,
         page_end,
@@ -2193,11 +2211,10 @@ fn reconcile_page_candidates(page: &ExtractedPage) -> Vec<ExtractedBill> {
 }
 
 fn page_links_to_payment_candidate(text: &str, candidate: &ExtractedBill) -> bool {
-    let compact_text = compact_identity_text(text);
-    let reference = compact_identity_text(&candidate.reference);
-    let invoice_number = compact_identity_text(&candidate.invoice_number);
-    (reference.len() >= 6 && compact_text.contains(&reference))
-        || (invoice_number.len() >= 5 && compact_text.contains(&invoice_number))
+    let reference = normalize_identity_value(&candidate.reference);
+    let invoice_number = normalize_identity_value(&candidate.invoice_number);
+    (reference.len() >= 6 && contains_complete_normalized_value(text, &reference))
+        || (invoice_number.len() >= 5 && contains_complete_normalized_value(text, &invoice_number))
 }
 
 fn prepare_multi_bill_import_from_document(
@@ -3430,6 +3447,42 @@ SI12 6330017789210
     }
 
     #[test]
+    fn labeled_rule_allows_spaces_around_identifier_separators() {
+        for (label, expected, extracted) in [
+            ("Št. odjemnega mesta", "5495/109463", "5495 / 109463"),
+            ("Številka merilnega mesta", "3-82858", "3 - 82858"),
+        ] {
+            let provider = identity_provider("labeled_value", "all", label, expected, "", "");
+            let result = verify_provider_identity(
+                &provider,
+                &format!("{label}: {extracted}"),
+                Some(1),
+                Some(1),
+                false,
+            );
+            assert_eq!(result.status, "matched", "{extracted}");
+            assert_eq!(result.found_values, vec![expected], "{extracted}");
+        }
+    }
+
+    #[test]
+    fn payment_link_values_require_complete_token_boundaries() {
+        for (text, expected_match) in [
+            ("Sklic: SI12 111", true),
+            ("Sklic: SI12   111", true),
+            ("Sklic: SI12 1110", false),
+            ("Sklic: SI12 111-0", false),
+            ("Sklic: 0SI12 111", false),
+        ] {
+            assert_eq!(
+                contains_complete_normalized_value(text, "SI12 111"),
+                expected_match,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn ocr_damaged_labels_still_require_the_exact_configured_value() {
         let gas = identity_provider(
             "labeled_value",
@@ -3590,7 +3643,7 @@ SI12 6330017789210
             pages: vec![
                 ExtractedPage {
                     page_number: 1,
-                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659\nSI56 0400 1004 8988 093\nSI12 999"
+                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659\nSI56 0400 1004 8988 093\nSI12 1110"
                         .to_string(),
                     ocr_text: String::new(),
                     diagnostics: Vec::new(),
