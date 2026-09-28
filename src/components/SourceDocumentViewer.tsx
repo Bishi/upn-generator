@@ -1,56 +1,95 @@
 import { useEffect, useState } from "react";
 import { Loader2, Minus, Plus, X } from "lucide-react";
-import * as UTIF from "utif2";
 import type { SourceDocumentInfo } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 
-const MAX_TIFF_PIXELS = 40_000_000;
+const TIFF_DECODE_TIMEOUT_MS = 10_000;
+
+type TiffWorkerResponse =
+  | { ok: true; width: number; height: number; rgba: ArrayBuffer }
+  | { ok: false; error: string };
+
+interface TiffDecodeTask {
+  promise: Promise<{ width: number; height: number; rgba: ArrayBuffer }>;
+  cancel: () => void;
+}
 
 function isTiff(mediaType: string) {
   return mediaType === "image/tiff" || mediaType === "image/tif";
 }
 
-function firstTiffTagNumber(value: unknown) {
-  if (Array.isArray(value) || value instanceof Uint8Array) {
-    return Number(value[0] ?? 0);
-  }
-  return Number(value ?? 0);
+function startTiffDecode(bytes: ArrayBuffer): TiffDecodeTask {
+  const worker = new Worker(
+    new URL("../workers/tiffDecoder.worker.ts", import.meta.url),
+    { type: "module" },
+  );
+  let settled = false;
+  let rejectTask: (reason: Error) => void = () => undefined;
+  let timeoutId = 0;
+
+  const finish = () => {
+    window.clearTimeout(timeoutId);
+    worker.terminate();
+  };
+  const promise = new Promise<{ width: number; height: number; rgba: ArrayBuffer }>((resolve, reject) => {
+    rejectTask = reject;
+    worker.onmessage = ({ data }: MessageEvent<TiffWorkerResponse>) => {
+      if (settled) return;
+      settled = true;
+      finish();
+      if (data.ok) resolve(data);
+      else reject(new Error(data.error));
+    };
+    worker.onerror = () => {
+      if (settled) return;
+      settled = true;
+      finish();
+      reject(new Error("The TIFF decoder failed."));
+    };
+    worker.onmessageerror = () => {
+      if (settled) return;
+      settled = true;
+      finish();
+      reject(new Error("The TIFF decoder returned an invalid response."));
+    };
+    timeoutId = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      finish();
+      reject(new Error("The TIFF took too long to decode and was stopped."));
+    }, TIFF_DECODE_TIMEOUT_MS);
+    try {
+      worker.postMessage(bytes, [bytes]);
+    } catch (reason) {
+      settled = true;
+      finish();
+      reject(reason instanceof Error ? reason : new Error(String(reason)));
+    }
+  });
+
+  return {
+    promise,
+    cancel: () => {
+      if (settled) return;
+      settled = true;
+      finish();
+      rejectTask(new Error("TIFF decoding was cancelled."));
+    },
+  };
 }
 
-async function decodeTiffToPngUrl(bytes: ArrayBuffer): Promise<string> {
-  const ifd = UTIF.decode(bytes)[0];
-  if (!ifd) throw new Error("The TIFF does not contain a displayable image.");
-
-  const taggedWidth = firstTiffTagNumber(ifd.t256);
-  const taggedHeight = firstTiffTagNumber(ifd.t257);
-  if (
-    !Number.isSafeInteger(taggedWidth) ||
-    !Number.isSafeInteger(taggedHeight) ||
-    taggedWidth <= 0 ||
-    taggedHeight <= 0 ||
-    taggedWidth * taggedHeight > MAX_TIFF_PIXELS
-  ) {
-    throw new Error("The TIFF dimensions are invalid or too large to display safely.");
-  }
-
-  UTIF.decodeImage(bytes, ifd);
-  if (
-    !Number.isSafeInteger(ifd.width) ||
-    !Number.isSafeInteger(ifd.height) ||
-    ifd.width <= 0 ||
-    ifd.height <= 0 ||
-    ifd.width * ifd.height > MAX_TIFF_PIXELS
-  ) {
-    throw new Error("The decoded TIFF dimensions are invalid or too large to display safely.");
-  }
-  const rgba = UTIF.toRGBA8(ifd);
+async function renderTiffToPngUrl({
+  width,
+  height,
+  rgba,
+}: Awaited<TiffDecodeTask["promise"]>): Promise<string> {
   const canvas = document.createElement("canvas");
-  canvas.width = ifd.width;
-  canvas.height = ifd.height;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("The TIFF viewer could not initialize.");
   context.putImageData(
-    new ImageData(new Uint8ClampedArray(rgba), ifd.width, ifd.height),
+    new ImageData(new Uint8ClampedArray(rgba), width, height),
     0,
     0,
   );
@@ -90,6 +129,7 @@ export function SourceDocumentViewer({
     if (!open || !load) return;
     let cancelled = false;
     let nextUrl: string | null = null;
+    let cancelTiffDecode: (() => void) | null = null;
     setInfo(null);
     setObjectUrl(null);
     setError(null);
@@ -100,9 +140,15 @@ export function SourceDocumentViewer({
         if (nextInfo.media_type !== "application/pdf" && !nextInfo.media_type.startsWith("image/")) {
           throw new Error("This original document type cannot be displayed safely.");
         }
-        nextUrl = isTiff(nextInfo.media_type)
-          ? await decodeTiffToPngUrl(bytes)
-          : URL.createObjectURL(new Blob([bytes], { type: nextInfo.media_type }));
+        if (isTiff(nextInfo.media_type)) {
+          const task = startTiffDecode(bytes);
+          cancelTiffDecode = task.cancel;
+          const decoded = await task.promise;
+          cancelTiffDecode = null;
+          nextUrl = await renderTiffToPngUrl(decoded);
+        } else {
+          nextUrl = URL.createObjectURL(new Blob([bytes], { type: nextInfo.media_type }));
+        }
         if (cancelled) {
           URL.revokeObjectURL(nextUrl);
           nextUrl = null;
@@ -116,6 +162,7 @@ export function SourceDocumentViewer({
       });
     return () => {
       cancelled = true;
+      cancelTiffDecode?.();
       if (nextUrl) URL.revokeObjectURL(nextUrl);
     };
   }, [load, open]);
