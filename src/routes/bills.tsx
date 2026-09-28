@@ -903,6 +903,7 @@ function InboxImportDrawer({
 
   const fetchPreview = async () => {
     if (!canEnsurePeriod || readOnly) return;
+    setViewer(null);
     setError(null);
     setResults([]);
     setLoadingPreview(true);
