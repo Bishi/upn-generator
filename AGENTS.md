@@ -88,15 +88,13 @@ Current status: **v0.5.6. Phases 2 and 3 are largely complete, with Phase 4 in p
 
 ## Documentation
 
-After implementing a feature or completing a plan, update docs as needed:
+Project documentation targets:
 
 - `AGENTS.md` - phase status, architecture decisions, key files
 - `README.md` - user-facing features and workflows
 - `STATUS.md` - current released version/tag and release snapshot when preparing a release
 - `tests/manual/*.md` - manual QA checklist for affected user-facing flows
 - `.agents/developer-workflow.md` - contributor workflow if the way agents collaborate changes
-
-Before finishing a change, check whether any Markdown file now gives a wrong picture of the system. Update the docs in the same change when behavior, workflow, release state, or manual QA expectations move.
 
 ## Workflow Rules
 
@@ -108,15 +106,9 @@ Use `.agents/developer-workflow.md` when a task needs plan review, code review, 
 
 When asked to review a commit, uncommitted changes, a branch, or a PR, treat it as a code-reading task unless the user explicitly asks for verification. Do not run lint, typecheck, tests, or builds for a review by default.
 
-Review findings must be concrete defects grounded in source or diff context. If the concern is only "verify this", "check whether that", or "consider maybe", trace it to a yes/no defect before reporting it, or leave it out.
-
-When a review is delegated to another agent, filter its output before reporting. Keep concrete findings grounded in files or behavior, and drop speculative comments that are not actionable.
-
 ### Plan First
 
-For multi-step features, risky changes, release work, or work likely to span sessions, write the active plan before implementation. Use chat for small plans and `.agents/todo.md` for larger active plans. Mark items complete as work progresses, and remove only the completed active-plan section when the work is fully closed.
-
-If implementation shows the plan is wrong, stop and re-plan before continuing.
+Use `.agents/todo.md` for larger active plans in this repo.
 
 ### Understand Before Building
 
@@ -129,13 +121,9 @@ For credentials, imports, exports, backups, settings, privacy-sensitive data, ne
 
 If the answers are unclear and the choice would change data handling, security posture, or user workflow, stop and ask before implementing.
 
-### Deferred Work
-
-If a plan intentionally defers something to a later phase, call it out clearly before implementation. State what is not being built, why it is deferred, and what decision or request would bring it into scope.
-
 ### Lessons Loop
 
-After a user correction or review finding, consider whether `.agents/lessons.md` needs an update before writing more code. Add a lesson only when it is generalizable, non-obvious, and not already covered by existing docs.
+Use `.agents/lessons.md` for repo-specific lessons.
 
 ### Verification
 
