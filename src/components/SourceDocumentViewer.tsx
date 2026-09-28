@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Loader2, Minus, Plus, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import type { SourceDocumentInfo } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -9,19 +10,22 @@ const VIEWER_ESCAPE_SHORTCUT = "Escape";
 
 const viewerEscapeHandlers = new Set<() => void>();
 let viewerEscapeRegistered = false;
+let viewerWindowFocused = false;
+let viewerFocusListenerStarted = false;
 let viewerEscapeSync: Promise<void> = Promise.resolve();
 
 function syncViewerEscapeShortcut() {
   viewerEscapeSync = viewerEscapeSync.then(async () => {
-    if (viewerEscapeHandlers.size > 0 && !viewerEscapeRegistered) {
+    const shouldRegister = viewerWindowFocused && viewerEscapeHandlers.size > 0;
+    if (shouldRegister && !viewerEscapeRegistered) {
       await register(VIEWER_ESCAPE_SHORTCUT, (event) => {
-        if (event.state !== "Pressed") return;
+        if (!viewerWindowFocused || event.state !== "Pressed") return;
         const handlers = Array.from(viewerEscapeHandlers);
         const handler = handlers[handlers.length - 1];
         handler?.();
       });
       viewerEscapeRegistered = true;
-    } else if (viewerEscapeHandlers.size === 0 && viewerEscapeRegistered) {
+    } else if (!shouldRegister && viewerEscapeRegistered) {
       await unregister(VIEWER_ESCAPE_SHORTCUT);
       viewerEscapeRegistered = false;
     }
@@ -30,8 +34,27 @@ function syncViewerEscapeShortcut() {
   });
 }
 
+function ensureViewerFocusListener() {
+  if (viewerFocusListenerStarted) return;
+  viewerFocusListenerStarted = true;
+  const appWindow = getCurrentWindow();
+  void (async () => {
+    await appWindow.onFocusChanged(({ payload: focused }) => {
+      viewerWindowFocused = focused;
+      syncViewerEscapeShortcut();
+    });
+    viewerWindowFocused = await appWindow.isFocused();
+    syncViewerEscapeShortcut();
+  })().catch(() => {
+    viewerWindowFocused = false;
+    viewerFocusListenerStarted = false;
+    syncViewerEscapeShortcut();
+  });
+}
+
 function subscribeViewerEscape(handler: () => void) {
   viewerEscapeHandlers.add(handler);
+  ensureViewerFocusListener();
   syncViewerEscapeShortcut();
   return () => {
     viewerEscapeHandlers.delete(handler);
