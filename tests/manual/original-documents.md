@@ -14,6 +14,7 @@
 - [ ] For an inbox attachment containing several bill rows on different pages, click View source on every row and confirm each opens at that row's displayed source page rather than the first bill's page.
 - [ ] Close and reopen the PDF viewer, switch between documents, and confirm no stale document/page remains visible; verify Blob URLs are revoked on close, replacement, unmount, and failed load.
 - [ ] Open a staged image, confirm fit behavior and bounded 25%-400% zoom, then close and reopen it.
+- [ ] Zoom a wide image beyond the viewport width and confirm horizontal scrolling reaches both the left and right edges; zoom back until it fits and confirm it is centered without shrinking below the selected percentage.
 - [ ] Open staged and stored `.tif`/`.tiff` originals and confirm the first TIFF image renders with the normal image zoom controls while retained/downloaded bytes remain unchanged.
 - [ ] Open a valid CMYK TIFF and confirm it renders through the background worker instead of reporting `window is not defined`.
 - [ ] Open a malformed TIFF with a cyclic directory pointer and confirm the viewer reports a timeout without freezing the app; close or switch the viewer during TIFF decoding and confirm the worker is terminated without a stale result.

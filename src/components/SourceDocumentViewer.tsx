@@ -232,12 +232,15 @@ export function SourceDocumentViewer({
           />
         )}
         {objectUrl && info?.media_type.startsWith("image/") && (
-          <div className="flex min-h-full items-start justify-center overflow-auto">
+          <div
+            className="flex min-h-full items-start overflow-auto"
+            style={{ justifyContent: "safe center" }}
+          >
             <img
               src={objectUrl}
               alt={info.original_name}
               style={{ width: `${zoom * 100}%` }}
-              className="h-auto max-w-none rounded-md bg-white shadow"
+              className="h-auto max-w-none shrink-0 rounded-md bg-white shadow"
               onError={() => failLoad("The image viewer could not load this document.")}
             />
           </div>
