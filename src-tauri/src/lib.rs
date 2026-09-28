@@ -19,9 +19,8 @@ use commands::documents::{
 };
 use commands::inbox::{
     clear_inbox_preview_session, get_inbox_config, get_inbox_preview_source_info,
-    import_inbox_preview_selection, preview_inbox_attachments,
-    read_inbox_preview_source, save_inbox_config, save_inbox_password, test_inbox_connection,
-    InboxPreviewState,
+    import_inbox_preview_selection, preview_inbox_attachments, read_inbox_preview_source,
+    save_inbox_config, save_inbox_password, test_inbox_connection, InboxPreviewState,
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{

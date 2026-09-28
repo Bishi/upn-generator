@@ -1703,15 +1703,14 @@ fn import_inbox_preview_selection_impl(
             let _ = tx.rollback();
             return Err(error);
         }
-        let source_path = candidate.file_path.as_ref().ok_or_else(|| {
-            "Preview candidate attachment is no longer available.".to_string()
-        })?;
+        let source_path = candidate
+            .file_path
+            .as_ref()
+            .ok_or_else(|| "Preview candidate attachment is no longer available.".to_string())?;
         let source_bytes = std::fs::read(source_path).map_err(|error| error.to_string())?;
         if sha256_hex(&source_bytes) != candidate.attachment_sha256 {
             let _ = tx.rollback();
-            return Err(
-                "The staged inbox attachment changed during finalization.".to_string(),
-            );
+            return Err("The staged inbox attachment changed during finalization.".to_string());
         }
         let media_type = media_type_for_path(source_path)?;
         let document_id = persist_source_document(
@@ -1731,12 +1730,28 @@ fn import_inbox_preview_selection_impl(
     }
     tx.commit().map_err(|e| e.to_string())?;
 
-    preview_state
-        .sessions
-        .lock()
-        .map_err(|e| e.to_string())?
-        .remove(&session_id);
+    let mut sessions = preview_state.sessions.lock().map_err(|e| e.to_string())?;
+    let remove_session = if let Some(session) = sessions.get_mut(&session_id) {
+        let empty = remove_selected_candidates(&mut session.candidates, &candidate_ids);
+        session.last_accessed = Instant::now();
+        empty
+    } else {
+        false
+    };
+    if remove_session {
+        sessions.remove(&session_id);
+    }
     Ok(results)
+}
+
+fn remove_selected_candidates<T>(
+    candidates: &mut HashMap<String, T>,
+    selected_ids: &[String],
+) -> bool {
+    for candidate_id in selected_ids {
+        candidates.remove(candidate_id);
+    }
+    candidates.is_empty()
 }
 
 #[tauri::command]
@@ -1769,9 +1784,10 @@ fn resolve_inbox_preview_source(
             "Inbox preview session expired. Fetch inbox preview again.".to_string()
         })?;
         session.last_accessed = now;
-        let candidate = session.candidates.get(candidate_id).ok_or_else(|| {
-            "Inbox preview attachment is no longer available.".to_string()
-        })?;
+        let candidate = session
+            .candidates
+            .get(candidate_id)
+            .ok_or_else(|| "Inbox preview attachment is no longer available.".to_string())?;
         let path = candidate.file_path.clone().ok_or_else(|| {
             "This inbox attachment was not staged safely and cannot be viewed.".to_string()
         })?;
@@ -1814,9 +1830,10 @@ pub fn read_inbox_preview_source(
     session_id: String,
     candidate_id: String,
 ) -> Result<Response, String> {
-    let (path, _, _, _) =
-        resolve_inbox_preview_source(&preview_state, &session_id, &candidate_id)?;
-    Ok(Response::new(std::fs::read(path).map_err(|e| e.to_string())?))
+    let (path, _, _, _) = resolve_inbox_preview_source(&preview_state, &session_id, &candidate_id)?;
+    Ok(Response::new(
+        std::fs::read(path).map_err(|e| e.to_string())?,
+    ))
 }
 
 #[cfg(test)]
@@ -1848,6 +1865,17 @@ mod tests {
         let mut bad = config;
         bad.folder = "INBOX\r\nBAD".to_string();
         assert!(validate_config(&bad, true, "secret").is_err());
+    }
+
+    #[test]
+    fn partial_import_keeps_unselected_preview_candidates() {
+        let mut candidates =
+            HashMap::from([("imported".to_string(), 1), ("remaining".to_string(), 2)]);
+
+        let empty = remove_selected_candidates(&mut candidates, &["imported".to_string()]);
+
+        assert!(!empty);
+        assert_eq!(candidates, HashMap::from([("remaining".to_string(), 2)]));
     }
 
     #[test]

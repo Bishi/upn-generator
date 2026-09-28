@@ -3015,7 +3015,10 @@ fn finalize_bill_import_batch_impl(
                 &source.bytes,
                 &source.sha256,
             )?;
-            let bill_ids = file_bills.iter().filter_map(|bill| bill.id).collect::<Vec<_>>();
+            let bill_ids = file_bills
+                .iter()
+                .filter_map(|bill| bill.id)
+                .collect::<Vec<_>>();
             link_bills_to_document(&tx, &bill_ids, document_id)?;
             for bill in &mut file_bills {
                 bill.source_document_id = Some(document_id);

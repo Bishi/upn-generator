@@ -13,6 +13,8 @@
 - [ ] In the packaged Windows app, confirm a staged PDF opens through WebView2 at the candidate's `#page=N`, with toolbar page navigation, zoom, and search working.
 - [ ] Close and reopen the PDF viewer, switch between documents, and confirm no stale document/page remains visible; verify Blob URLs are revoked on close, replacement, unmount, and failed load.
 - [ ] Open a staged image, confirm fit behavior and bounded 25%-400% zoom, then close and reopen it.
+- [ ] Open staged and stored `.tif`/`.tiff` originals and confirm the first TIFF image renders with the normal image zoom controls while retained/downloaded bytes remain unchanged.
+- [ ] From an inbox source viewer, press Escape once and confirm only the viewer closes; confirm the drawer, selections, and exception notes remain intact.
 - [ ] Import one candidate from a mixed combined PDF, remove the user's source file, restart the app, and confirm View original still opens the exact full PDF while only imported bills have links.
 - [ ] Import the same exact source for another bill/month and confirm storage is deduplicated while both bills can view it.
 - [ ] Confirm different files with identical parsed fields remain distinct retained documents.

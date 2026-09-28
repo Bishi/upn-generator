@@ -1,7 +1,67 @@
 import { useEffect, useState } from "react";
 import { Loader2, Minus, Plus, X } from "lucide-react";
+import * as UTIF from "utif2";
 import type { SourceDocumentInfo } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+
+const MAX_TIFF_PIXELS = 40_000_000;
+
+function isTiff(mediaType: string) {
+  return mediaType === "image/tiff" || mediaType === "image/tif";
+}
+
+function firstTiffTagNumber(value: unknown) {
+  if (Array.isArray(value) || value instanceof Uint8Array) {
+    return Number(value[0] ?? 0);
+  }
+  return Number(value ?? 0);
+}
+
+async function decodeTiffToPngUrl(bytes: ArrayBuffer): Promise<string> {
+  const ifd = UTIF.decode(bytes)[0];
+  if (!ifd) throw new Error("The TIFF does not contain a displayable image.");
+
+  const taggedWidth = firstTiffTagNumber(ifd.t256);
+  const taggedHeight = firstTiffTagNumber(ifd.t257);
+  if (
+    !Number.isSafeInteger(taggedWidth) ||
+    !Number.isSafeInteger(taggedHeight) ||
+    taggedWidth <= 0 ||
+    taggedHeight <= 0 ||
+    taggedWidth * taggedHeight > MAX_TIFF_PIXELS
+  ) {
+    throw new Error("The TIFF dimensions are invalid or too large to display safely.");
+  }
+
+  UTIF.decodeImage(bytes, ifd);
+  if (
+    !Number.isSafeInteger(ifd.width) ||
+    !Number.isSafeInteger(ifd.height) ||
+    ifd.width <= 0 ||
+    ifd.height <= 0 ||
+    ifd.width * ifd.height > MAX_TIFF_PIXELS
+  ) {
+    throw new Error("The decoded TIFF dimensions are invalid or too large to display safely.");
+  }
+  const rgba = UTIF.toRGBA8(ifd);
+  const canvas = document.createElement("canvas");
+  canvas.width = ifd.width;
+  canvas.height = ifd.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("The TIFF viewer could not initialize.");
+  context.putImageData(
+    new ImageData(new Uint8ClampedArray(rgba), ifd.width, ifd.height),
+    0,
+    0,
+  );
+  const png = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => blob ? resolve(blob) : reject(new Error("The TIFF could not be rendered.")),
+      "image/png",
+    );
+  });
+  return URL.createObjectURL(png);
+}
 
 export interface SourceDocumentLoadResult {
   info: SourceDocumentInfo;
@@ -35,12 +95,19 @@ export function SourceDocumentViewer({
     setError(null);
     setZoom(1);
     void load()
-      .then(({ info: nextInfo, bytes }) => {
+      .then(async ({ info: nextInfo, bytes }) => {
         if (cancelled) return;
         if (nextInfo.media_type !== "application/pdf" && !nextInfo.media_type.startsWith("image/")) {
           throw new Error("This original document type cannot be displayed safely.");
         }
-        nextUrl = URL.createObjectURL(new Blob([bytes], { type: nextInfo.media_type }));
+        nextUrl = isTiff(nextInfo.media_type)
+          ? await decodeTiffToPngUrl(bytes)
+          : URL.createObjectURL(new Blob([bytes], { type: nextInfo.media_type }));
+        if (cancelled) {
+          URL.revokeObjectURL(nextUrl);
+          nextUrl = null;
+          return;
+        }
         setInfo(nextInfo);
         setObjectUrl(nextUrl);
       })

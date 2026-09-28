@@ -8,9 +8,7 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(target_os = "windows")]
 use windows::{
     core::PCWSTR,
-    Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    },
+    Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
 };
 
 use super::config::DbState;
@@ -167,7 +165,9 @@ fn create_db_backup_inner(db: &DbState, output_path: String) -> Result<BackupFil
                 .execute("UPDATE inbox_config SET password='' WHERE id=1", [])
                 .map_err(|e| e.to_string())?;
         }
-        backup_conn.execute_batch("VACUUM").map_err(|e| e.to_string())?;
+        backup_conn
+            .execute_batch("VACUUM")
+            .map_err(|e| e.to_string())?;
         drop(backup_conn);
         replace_backup_file(&temporary_path, backup_path)?;
         Ok(())
@@ -855,10 +855,16 @@ mod tests {
             .expect("legacy restore");
         let conn = state.0.lock().unwrap();
         let link: Option<i64> = conn
-            .query_row("SELECT source_document_id FROM bills WHERE id=4", [], |row| row.get(0))
+            .query_row(
+                "SELECT source_document_id FROM bills WHERE id=4",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let document_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM source_documents", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM source_documents", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(link, None);
         assert_eq!(document_count, 0);
@@ -874,15 +880,20 @@ mod tests {
             Arc::new(PeriodOperationState::default()),
         );
 
-        let error = create_db_backup_inner(&state, destination.to_string_lossy().into_owned())
-            .unwrap_err();
+        let error =
+            create_db_backup_inner(&state, destination.to_string_lossy().into_owned()).unwrap_err();
 
         assert!(error.contains("missing required table"));
         assert_eq!(std::fs::read(&destination).unwrap(), b"existing backup");
         let leftovers = std::fs::read_dir(directory.path())
             .unwrap()
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".upn-backup-"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".upn-backup-")
+            })
             .count();
         assert_eq!(leftovers, 0);
     }
@@ -898,20 +909,30 @@ mod tests {
         );
         {
             let conn = state.0.lock().unwrap();
-            conn.execute("UPDATE smtp_config SET password='smtp-secret' WHERE id=1", [])
-                .unwrap();
-            conn.execute("UPDATE inbox_config SET password='imap-secret' WHERE id=1", [])
-                .unwrap();
+            conn.execute(
+                "UPDATE smtp_config SET password='smtp-secret' WHERE id=1",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE inbox_config SET password='imap-secret' WHERE id=1",
+                [],
+            )
+            .unwrap();
         }
 
         create_db_backup_inner(&state, destination.to_string_lossy().into_owned()).unwrap();
 
         let backup = Connection::open(&destination).unwrap();
         let smtp_password: String = backup
-            .query_row("SELECT password FROM smtp_config WHERE id=1", [], |row| row.get(0))
+            .query_row("SELECT password FROM smtp_config WHERE id=1", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         let inbox_password: String = backup
-            .query_row("SELECT password FROM inbox_config WHERE id=1", [], |row| row.get(0))
+            .query_row("SELECT password FROM inbox_config WHERE id=1", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert!(smtp_password.is_empty());
         assert!(inbox_password.is_empty());

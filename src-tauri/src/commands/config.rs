@@ -577,9 +577,9 @@ pub fn reset_all_data(db: State<DbState>) -> Result<ResetAllDataResult, String> 
             .err()
             .map(|error| format!("Database compaction failed after the data reset: {error}"))
     };
-    let credential_warning = credentials::delete_mail_credentials().err().map(|error| {
-        format!("Saved Windows mail credentials could not be deleted: {error}")
-    });
+    let credential_warning = credentials::delete_mail_credentials()
+        .err()
+        .map(|error| format!("Saved Windows mail credentials could not be deleted: {error}"));
     let credential_cleanup_warning = match (compaction_warning, credential_warning) {
         (None, None) => None,
         (Some(warning), None) | (None, Some(warning)) => Some(format!(

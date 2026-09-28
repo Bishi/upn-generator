@@ -26,8 +26,9 @@
 - [ ] Confirm unknown providers are blocked before import.
 - [ ] Confirm providers already present for the selected month are not duplicated.
 - [ ] Import selected ready candidates and confirm only selected bills are created.
+- [ ] Preview at least two attachments, import only one, then view and import the remaining attachment without rescanning; confirm its selections and exception notes remain available.
 - [ ] Confirm previewing does not mark email as read, move email, delete email, or persist raw extracted text.
-- [ ] Confirm temporary attachment files are cleaned up after import.
+- [ ] Confirm imported attachment files are no longer accessible while unselected preview attachments remain available, then close the drawer and confirm the remaining temporary files are cleaned up.
 - [ ] Confirm every parsed candidate shows its building-identity result and source-page range, including failed/unconfigured candidates instead of silently hiding them.
 - [ ] Confirm matched invoices show a compact verified status, with explanation and expected/observed values available through Evidence; failed identity details remain visible without expanding anything.
 - [ ] Select a failed identity candidate and confirm a required exception note is enforced before final import.

@@ -136,14 +136,14 @@ pub(crate) fn resolve_local_source(
         Ok(bytes) => bytes,
         Err(error) => {
             clear_local_source_inner(state, source_handle);
-            return Err(format!("The selected source file is no longer available: {error}"));
+            return Err(format!(
+                "The selected source file is no longer available: {error}"
+            ));
         }
     };
     if sha256_hex(&bytes) != source.sha256 {
         clear_local_source_inner(state, source_handle);
-        return Err(
-            "The selected source file changed after preview. Select it again.".to_string(),
-        );
+        return Err("The selected source file changed after preview. Select it again.".to_string());
     }
     Ok(ResolvedSource {
         path: source.canonical_path,
@@ -327,7 +327,9 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         migrations::run_migrations(&conn).unwrap();
         let period_id: i64 = conn
-            .query_row("SELECT id FROM billing_periods LIMIT 1", [], |row| row.get(0))
+            .query_row("SELECT id FROM billing_periods LIMIT 1", [], |row| {
+                row.get(0)
+            })
             .unwrap_or_else(|_| {
                 conn.execute(
                     "INSERT INTO billing_periods (building_id, month, year) VALUES (1, 1, 2026)",
@@ -345,18 +347,30 @@ mod tests {
         }
         let bytes = b"%PDF-1.7 exact original";
         let hash = sha256_hex(bytes);
-        let first = persist_source_document(&conn, "combined.pdf", "application/pdf", bytes, &hash).unwrap();
-        let second = persist_source_document(&conn, "renamed.pdf", "application/pdf", bytes, &hash).unwrap();
+        let first = persist_source_document(&conn, "combined.pdf", "application/pdf", bytes, &hash)
+            .unwrap();
+        let second =
+            persist_source_document(&conn, "renamed.pdf", "application/pdf", bytes, &hash).unwrap();
         assert_eq!(first, second);
         link_bills_to_document(&conn, &[1001, 1002], first).unwrap();
 
         conn.execute("DELETE FROM bills WHERE id=1001", []).unwrap();
         delete_orphan_source_documents(&conn).unwrap();
-        assert_eq!(conn.query_row("SELECT COUNT(*) FROM source_documents", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM source_documents", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
 
         conn.execute("DELETE FROM bills WHERE id=1002", []).unwrap();
         delete_orphan_source_documents(&conn).unwrap();
-        assert_eq!(conn.query_row("SELECT COUNT(*) FROM source_documents", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM source_documents", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -376,7 +390,9 @@ mod tests {
         assert_eq!(resolve_local_source(&state, &handle).unwrap().bytes, bytes);
 
         std::fs::write(file.path(), b"%PDF-1.7 changed").unwrap();
-        assert!(resolve_local_source(&state, &handle).unwrap_err().contains("changed"));
+        assert!(resolve_local_source(&state, &handle)
+            .unwrap_err()
+            .contains("changed"));
         assert!(resolve_local_source(&state, &handle).is_err());
 
         let bytes = std::fs::read(file.path()).unwrap();

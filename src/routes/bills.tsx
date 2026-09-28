@@ -849,13 +849,13 @@ function InboxImportDrawer({
   }, [busy, onClose, preview?.session_id]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || viewer !== null) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) void closeDrawer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, busy, closeDrawer]);
+  }, [open, busy, closeDrawer, viewer]);
 
   const fetchPreview = async () => {
     if (!canEnsurePeriod || readOnly) return;
