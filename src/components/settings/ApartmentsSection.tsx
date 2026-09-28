@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Check, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import { ipc } from "@/lib/ipc";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type { Apartment } from "@/lib/types";
@@ -126,6 +127,11 @@ export function ApartmentsSection({
       setEditing(null);
       setBaseline(null);
       setIsNew(false);
+    },
+    onError: (error) => {
+      toast.error("Apartment could not be deleted", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     },
   });
 
