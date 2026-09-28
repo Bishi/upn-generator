@@ -876,17 +876,6 @@ function UpnPage() {
 
   const closeMonth = async () => {
     if (!selected?.id) return;
-    const confirmed = await confirm(
-      "Close this billing month? Bills, splits, inbox imports, and delivery changes will be locked until the month is reopened.",
-      {
-        title: "Close Month",
-        kind: "warning",
-        okLabel: "Close Month",
-        cancelLabel: "Cancel",
-      },
-    );
-    if (!confirmed) return;
-
     setClosingMonth(true);
     try {
       const period = await ipc.closeBillingPeriod(selected.id);
@@ -908,17 +897,6 @@ function UpnPage() {
 
   const reopenMonth = async () => {
     if (!selected?.id) return;
-    const confirmed = await confirm(
-      "Reopen this billing month? Bills, splits, imports, and delivery actions will be editable again.",
-      {
-        title: "Reopen Month",
-        kind: "warning",
-        okLabel: "Reopen Month",
-        cancelLabel: "Cancel",
-      },
-    );
-    if (!confirmed) return;
-
     setClosingMonth(true);
     try {
       const period = await ipc.reopenBillingPeriod(selected.id);

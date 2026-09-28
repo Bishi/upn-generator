@@ -161,7 +161,7 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 
 UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Downloaded PDFs do not mark a month delivered by themselves.
 
-After every current apartment UPN packet is delivered and Mark Delivered validation has no blocking issues, use **Close Month** to mark the billing month done. Closed months remain readable: you can still inspect bills and splits, open UPN previews, and download the PDF ZIP. Editing bills, importing from local files or inbox, recalculating or overriding splits, sending emails, changing manual delivery marks, deleting the period, or deleting an apartment referenced by the month requires **Reopen Month** first.
+After every current apartment UPN packet is delivered and Mark Delivered validation has no blocking issues, use the one-click **Close Month** action to mark the billing month done. Closed months remain readable: you can still inspect bills and splits, open UPN previews, and download the PDF ZIP. Editing bills, importing from local files or inbox, recalculating or overriding splits, sending emails, changing manual delivery marks, deleting the period, or deleting an apartment referenced by the month requires the one-click **Reopen Month** action first.
 
 If an email batch is already running, Close Month waits for the operator to retry instead of closing mid-send. This keeps every successfully sent email paired with its delivery-history record. Downloading or previewing PDFs never counts as delivery and never closes a month.
 
