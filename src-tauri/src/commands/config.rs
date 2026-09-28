@@ -248,7 +248,35 @@ pub fn save_apartment(db: State<DbState>, apartment: Apartment) -> Result<Apartm
 #[tauri::command]
 pub fn delete_apartment(db: State<DbState>, id: i64) -> Result<(), String> {
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    delete_apartment_inner(&mut conn, id)
+}
+
+fn delete_apartment_inner(conn: &mut Connection, id: i64) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let has_closed_records: bool = tx
+        .query_row(
+            "SELECT EXISTS (
+                SELECT 1
+                FROM bill_splits bs
+                JOIN bills b ON b.id = bs.bill_id
+                JOIN billing_periods bp ON bp.id = b.billing_period_id
+                WHERE bs.apartment_id=?1 AND bp.status='closed'
+                UNION ALL
+                SELECT 1
+                FROM upn_delivery_events ude
+                JOIN billing_periods bp ON bp.id = ude.billing_period_id
+                WHERE ude.apartment_id=?1 AND bp.status='closed'
+            )",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if has_closed_records {
+        return Err(
+            "Cannot delete this apartment because it has records in a closed billing month. Reopen the affected month first."
+                .to_string(),
+        );
+    }
     tx.execute(
         "DELETE FROM upn_delivery_events WHERE apartment_id=?1",
         [id],
@@ -567,5 +595,108 @@ mod period_operation_tests {
         assert!(result.is_err());
         assert_eq!(state.active_email_send_count(1), 0);
         assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_ok());
+    }
+
+    fn apartment_delete_conn(period_status: &str) -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(&format!(
+            "CREATE TABLE apartments (id INTEGER PRIMARY KEY);
+             CREATE TABLE billing_periods (id INTEGER PRIMARY KEY, status TEXT NOT NULL);
+             CREATE TABLE bills (
+                id INTEGER PRIMARY KEY,
+                billing_period_id INTEGER NOT NULL
+             );
+             CREATE TABLE bill_splits (
+                id INTEGER PRIMARY KEY,
+                bill_id INTEGER NOT NULL,
+                apartment_id INTEGER NOT NULL
+             );
+             CREATE TABLE upn_delivery_events (
+                id INTEGER PRIMARY KEY,
+                billing_period_id INTEGER NOT NULL,
+                apartment_id INTEGER NOT NULL
+             );
+             INSERT INTO apartments (id) VALUES (1);
+             INSERT INTO billing_periods (id, status) VALUES (1, '{period_status}');
+             INSERT INTO bills (id, billing_period_id) VALUES (1, 1);
+             INSERT INTO bill_splits (id, bill_id, apartment_id) VALUES (1, 1, 1);
+             INSERT INTO upn_delivery_events
+                (id, billing_period_id, apartment_id) VALUES (1, 1, 1);"
+        ))
+        .expect("apartment delete schema");
+        conn
+    }
+
+    #[test]
+    fn apartment_delete_rejects_closed_period_records_without_removing_data() {
+        let mut conn = apartment_delete_conn("closed");
+
+        let error = delete_apartment_inner(&mut conn, 1).unwrap_err();
+
+        assert!(error.contains("closed billing month"));
+        for table in ["apartments", "bill_splits", "upn_delivery_events"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("row count");
+            assert_eq!(count, 1, "{table} data should remain");
+        }
+    }
+
+    #[test]
+    fn apartment_delete_rejects_closed_delivery_history_without_splits() {
+        let mut conn = apartment_delete_conn("closed");
+        conn.execute("DELETE FROM bill_splits", [])
+            .expect("remove split fixture");
+
+        let error = delete_apartment_inner(&mut conn, 1).unwrap_err();
+
+        assert!(error.contains("closed billing month"));
+        let apartment_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM apartments", [], |row| row.get(0))
+            .expect("apartment count");
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM upn_delivery_events", [], |row| {
+                row.get(0)
+            })
+            .expect("event count");
+        assert_eq!(apartment_count, 1);
+        assert_eq!(event_count, 1);
+    }
+
+    #[test]
+    fn apartment_delete_rejects_closed_splits_without_delivery_history() {
+        let mut conn = apartment_delete_conn("closed");
+        conn.execute("DELETE FROM upn_delivery_events", [])
+            .expect("remove delivery fixture");
+
+        let error = delete_apartment_inner(&mut conn, 1).unwrap_err();
+
+        assert!(error.contains("closed billing month"));
+        let apartment_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM apartments", [], |row| row.get(0))
+            .expect("apartment count");
+        let split_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM bill_splits", [], |row| row.get(0))
+            .expect("split count");
+        assert_eq!(apartment_count, 1);
+        assert_eq!(split_count, 1);
+    }
+
+    #[test]
+    fn apartment_delete_removes_records_when_period_is_open() {
+        let mut conn = apartment_delete_conn("draft");
+
+        delete_apartment_inner(&mut conn, 1).expect("delete apartment");
+
+        for table in ["apartments", "bill_splits", "upn_delivery_events"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("row count");
+            assert_eq!(count, 0, "{table} data should be deleted");
+        }
     }
 }

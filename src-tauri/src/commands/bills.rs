@@ -537,6 +537,11 @@ pub fn create_billing_period(
 #[tauri::command]
 pub fn delete_billing_period(db: State<DbState>, id: i64) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    delete_billing_period_inner(&conn, id)
+}
+
+fn delete_billing_period_inner(conn: &Connection, id: i64) -> Result<(), String> {
+    ensure_period_open(conn, id)?;
     // Cascade: delete splits → bills → period
     conn.execute(
         "DELETE FROM upn_delivery_events WHERE billing_period_id=?1",
@@ -2190,6 +2195,33 @@ mod tests {
         let error = save_bill_inner(&conn, bill).unwrap_err();
 
         assert!(error.contains("billing month is closed"));
+    }
+
+    #[test]
+    fn delete_billing_period_rejects_closed_period_before_removing_data() {
+        let conn = setup_bill_command_conn();
+        insert_review_test_bill(&conn, 1, "", false);
+        close_test_period(&conn);
+
+        let error = delete_billing_period_inner(&conn, 1).unwrap_err();
+
+        assert!(error.contains("billing month is closed"));
+        let period_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM billing_periods WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let bill_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM bills WHERE billing_period_id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(period_count, 1);
+        assert_eq!(bill_count, 1);
     }
 
     #[test]
