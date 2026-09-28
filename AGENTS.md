@@ -6,7 +6,7 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 
 ## Contributor Workflow Docs
 
-- `.agents/developer-workflow.md` - two-agent workflow, review loop, planning rules, deferred-work rules, and manual QA expectations
+- `.agents/developer-workflow.md` - review standards, planning rules, deferred-work rules, and manual QA expectations
 - `tests/manual/README.md` - manual QA checklist format and current feature-area index
 - `.agents/todo.md` - active multi-step plans that are too large or risky to keep only in chat
 - `.agents/lessons.md` - general lessons learned after corrections or review findings
@@ -98,13 +98,9 @@ Project documentation targets:
 - `README.md` - user-facing features and workflows
 - `STATUS.md` - current released version/tag and release snapshot when preparing a release
 - `tests/manual/*.md` - manual QA checklist for affected user-facing flows
-- `.agents/developer-workflow.md` - contributor workflow if the way agents collaborate changes
+- `.agents/developer-workflow.md` - contributor planning, review, and QA rules
 
 ## Workflow Rules
-
-### Two-Agent Workflow
-
-Use `.agents/developer-workflow.md` when a task needs plan review, code review, commit review, or PR review from another agent. The default split is Codex/GPT implements and Claude reviews. Claude does not write code unless explicitly asked.
 
 ### Code Reviews
 
