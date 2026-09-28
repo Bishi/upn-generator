@@ -1402,20 +1402,23 @@ fn address_result(text: &str, expected: &str) -> bool {
             let ends_at_boundary = folded
                 .get(end)
                 .is_none_or(|next| !next.is_ascii_alphanumeric() && !matches!(next, '/' | '-'));
-            // A single letter after spacing or a dot is also a house-number suffix.
-            let separated_suffix = folded[end..]
+            // OCR may space out another house-number digit; a separated single
+            // letter can likewise be a suffix. Neither may extend the match.
+            let separator_count = folded[end..]
                 .iter()
                 .copied()
                 .take_while(|ch| ch.is_whitespace() || *ch == '.')
                 .count();
-            let has_separated_suffix = separated_suffix > 0
-                && folded[end + separated_suffix..]
-                    .first()
-                    .is_some_and(|ch| ch.is_ascii_alphabetic())
-                && folded[end + separated_suffix + 1..]
-                    .first()
-                    .is_none_or(|ch| !ch.is_ascii_alphanumeric());
-            starts_at_boundary && ends_at_boundary && !has_separated_suffix
+            let continuation = &folded[end + separator_count..];
+            let has_separated_house_continuation = separator_count > 0
+                && (continuation.first().is_some_and(|ch| ch.is_ascii_digit())
+                    || (continuation
+                        .first()
+                        .is_some_and(|ch| ch.is_ascii_alphabetic())
+                        && continuation
+                            .get(1)
+                            .is_none_or(|ch| !ch.is_ascii_alphanumeric())));
+            starts_at_boundary && ends_at_boundary && !has_separated_house_continuation
         })
     })
 }
@@ -3578,6 +3581,7 @@ SI12 6330017789210
             "Etažni lastniki Kamniška cesta 36, Ljubljana",
             "Redno čiščenje: KAMNISKA\nULICA 3 6",
             "Kamniška 36",
+            "Kamniška 36, 100 EUR",
         ] {
             assert_eq!(
                 verify_provider_identity(&provider, text, Some(1), Some(1), false).status,
@@ -3587,6 +3591,8 @@ SI12 6330017789210
         for text in [
             "Postavka 36, naslov Kamniška 40",
             "Kamniška cesta 360",
+            "Kamniška 3 6 0",
+            "Kamniška 36\n0",
             "Kamniška 36A",
             "Kamniška 36 A",
             "Kamniška 36.a",
