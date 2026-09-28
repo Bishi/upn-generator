@@ -18,6 +18,9 @@
 - [ ] Confirm the Restore Complete dialog appears after the loading overlay is gone, not on top of it.
 - [ ] After restore reloads the app, confirm Settings stays on the App tab instead of jumping to Building.
 - [ ] Confirm building, apartments, providers, billing periods, bills, splits, theme, inbox import history, and UPN delivery history restore as expected.
+- [ ] Close a billing month, create a backup, restore it, and confirm the closed month state and closed badge are preserved.
+- [ ] Restore an older backup without `billing_periods.closed_at` and confirm restore succeeds with months left editable unless their status data says otherwise.
+- [ ] Restore an older backup whose period status is `closed` but which has no `closed_at` column, and confirm the month remains closed with a generic closed label and can be reopened normally.
 - [ ] Confirm SMTP and IMAP password columns are blanked in the backup and are not restored from SQLite.
 - [ ] Restore a backup with the same SMTP/IMAP usernames and confirm matching Windows Credential Manager passwords can still be reused.
 - [ ] Restore a backup with different SMTP/IMAP usernames and confirm the app requires entering new passwords.

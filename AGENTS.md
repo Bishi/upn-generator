@@ -28,6 +28,8 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - Manual backups intentionally blank `smtp_config.password` and `inbox_config.password`
 - SMTP and IMAP passwords are stored in Windows Credential Manager under stable app targets and matched against the configured username before use; legacy DB password columns remain only for schema compatibility and are cleared after successful credential writes
 - `building` table always has exactly 1 row (`id=1`)
+- Billing periods use `billing_periods.status` (`draft`/`closed`) plus nullable `closed_at` for the explicit month close/reopen workflow; closed months are readable/exportable but block bill, split, inbox import, delivery, period deletion, and deletion of apartments with closed-month records until reopened
+- Email batches register an in-memory per-period operation guard before validation; Close Month is rejected while a batch is active so external sends and their delivery audit events finish together
 - `smtp_config` table always has exactly 1 row (`id=1`); seeded defaults use Gmail SMTP host/port/TLS, `kamniska.racuni@gmail.com` username/from/allowlist, and blank password
 - SMTP email safety is stored on `smtp_config`; the recipient allowlist defaults enabled with `kamniska.racuni@gmail.com` as the seeded test recipient so bulk UPN sends remain limited until more recipients are listed or the allowlist is disabled
 - `app_settings` table always has exactly 1 row (`id=1`) for database-backed UI preferences such as theme
@@ -55,7 +57,7 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
 - `src-tauri/src/commands/inbox.rs` - read-only IMAP inbox configuration, connection test, and attachment import commands
 - `src-tauri/src/commands/splits.rs` - split calculation logic
-- `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, email safety, delivery history, SMTP test, and email sending
+- `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, email safety, delivery history, month close/reopen, SMTP test, and email sending
 - `src-tauri/src/commands/upn_validation.rs` - backend-owned pre-send validation gates for UPN delivery actions
 - `src/routes/bills.tsx` - Bills page
 - `src/routes/splits.tsx` - Splits matrix page
@@ -83,7 +85,7 @@ UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 m
 - Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
 - Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send, read-only inbox import, and Windows Credential Manager password storage work)
 
-Current status: **v0.5.6. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, explicit bill review state for parser/OCR warnings, year/month navigation improvements with closed-month indicators, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, guarded multi-recipient apartment emails with persisted delivery history, manual delivery confirmation with current-packet delivery rollups, backend-owned pre-send validation gates for UPN delivery actions including unreviewed import-warning blockers, a grouped UPN validation issue panel, a manual SQLite backup/restore workflow with restore error fixes, preview-first read-only inbox attachment import with today-only scan support, Windows Credential Manager storage for mail passwords, mail/inbox commands moved off the UI thread, settings dirty-form discard confirmations, consolidated billing table styling across Bills/Splits/UPN preview, and ignored local docs/sample bill reference folders.**
+Current status: **v0.6.0. Phases 2 and 3 are largely complete, with Phase 4 in progress. The app includes provider-based split rules, equal apartment split support, chimney-service provider support, OCR image import, timeout protection, improved OCR normalization, explicit bill review state for parser/OCR warnings, year/month navigation improvements with persisted closed-month indicators, multi-bill import stability fixes, corrected Dimnikar OCR confidence checks, richer manual-import debug logging, guarded multi-recipient apartment emails with persisted delivery history, manual delivery confirmation with current-packet delivery rollups, backend-owned pre-send validation gates for UPN delivery actions including unreviewed import-warning blockers, persisted month close/reopen after delivery completion, a grouped UPN validation issue panel, a manual SQLite backup/restore workflow with restore error fixes, preview-first read-only inbox attachment import with today-only scan support, Windows Credential Manager storage for mail passwords, mail/inbox commands moved off the UI thread, settings dirty-form discard confirmations, consolidated billing table styling across Bills/Splits/UPN preview, and ignored local docs/sample bill reference folders.**
 
 ## Documentation
 

@@ -83,7 +83,8 @@ export interface BillingPeriod {
   building_id: number;
   month: number;
   year: number;
-  status: string;
+  status: "draft" | "closed";
+  closed_at: string | null;
   created_at: string;
 }
 
@@ -343,6 +344,19 @@ export function formatEur(cents: number): string {
   const c = Math.abs(cents) % 100;
   const sign = cents < 0 ? "-" : "";
   return `${sign}${euros},${String(c).padStart(2, "0")}`;
+}
+
+export function formatClosedAt(value: string | null | undefined): string {
+  if (!value) return "closed";
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 16);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
 export function parseEurInputCents(value: string): number {

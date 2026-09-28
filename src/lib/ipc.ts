@@ -65,6 +65,10 @@ export const ipc = {
     invoke<BillingPeriod>("create_billing_period", { month, year }),
   createYearPeriods: (year: number) =>
     invoke<BillingPeriod[]>("create_year_periods", { year }),
+  closeBillingPeriod: (billingPeriodId: number) =>
+    invoke<BillingPeriod>("close_billing_period", { billingPeriodId }),
+  reopenBillingPeriod: (billingPeriodId: number) =>
+    invoke<BillingPeriod>("reopen_billing_period", { billingPeriodId }),
 
   // Bills
   getBills: (billingPeriodId: number) =>

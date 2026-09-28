@@ -15,9 +15,10 @@ use tempfile::{Builder as TempFileBuilder, TempDir};
 use crate::credentials::{self, MailCredentialKind};
 
 use super::bills::{
-    bill_content_hash, load_bill_import_context, prepare_multi_bill_import_from_path,
-    preview_prepared_bills, retain_expected_provider_bills, retain_new_bill_hashes,
-    save_prepared_multi_bill_import, PreparedBillImport, PreparedBillPreviewSummary,
+    bill_content_hash, ensure_period_open, load_bill_import_context,
+    prepare_multi_bill_import_from_path, preview_prepared_bills, retain_expected_provider_bills,
+    retain_new_bill_hashes, save_prepared_multi_bill_import, PreparedBillImport,
+    PreparedBillPreviewSummary,
 };
 use super::config::DbState;
 
@@ -940,6 +941,10 @@ fn persist_analysis(
     attachment_sha256: &str,
     analysis: AttachmentAnalysis,
 ) -> Vec<InboxImportResult> {
+    if let Err(error) = ensure_period_open(conn, billing_period_id) {
+        return vec![failure_result(message, safe_filename, error)];
+    }
+
     if analysis.status != "ready" {
         let text = analysis
             .error
@@ -1103,16 +1108,18 @@ fn import_staged_attachment(
         let _ = tx.rollback();
         drop(conn);
         if let Ok(conn) = db.0.lock() {
-            let _ = insert_import_record(
-                &conn,
-                billing_period_id,
-                message,
-                safe_filename,
-                attachment_sha256,
-                &[],
-                "failed",
-                &error,
-            );
+            if ensure_period_open(&conn, billing_period_id).is_ok() {
+                let _ = insert_import_record(
+                    &conn,
+                    billing_period_id,
+                    message,
+                    safe_filename,
+                    attachment_sha256,
+                    &[],
+                    "failed",
+                    &error,
+                );
+            }
         }
         return results;
     }
@@ -1135,16 +1142,18 @@ fn import_attachment(
         Err(error) => {
             let hash = sha256_hex(&attachment.bytes);
             if let Ok(conn) = db.0.lock() {
-                let _ = insert_import_record(
-                    &conn,
-                    billing_period_id,
-                    message,
-                    &safe_filename,
-                    &hash,
-                    &[],
-                    "failed",
-                    &error,
-                );
+                if ensure_period_open(&conn, billing_period_id).is_ok() {
+                    let _ = insert_import_record(
+                        &conn,
+                        billing_period_id,
+                        message,
+                        &safe_filename,
+                        &hash,
+                        &[],
+                        "failed",
+                        &error,
+                    );
+                }
             }
             return vec![failure_result(message, &safe_filename, error)];
         }
@@ -1717,6 +1726,7 @@ pub fn import_inbox_preview_selection(
 
     let context = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_period_open(&conn, billing_period_id)?;
         load_bill_import_context(&conn, billing_period_id)?
     };
     let mut results = Vec::new();
@@ -1803,6 +1813,7 @@ fn import_inbox_attachments_impl(
     validate_config(&credentials.config, true, &credentials.password)?;
     let context = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+        ensure_period_open(&conn, billing_period_id)?;
         load_bill_import_context(&conn, billing_period_id)?
     };
     let allowlist = parse_allowlist(&credentials.config.sender_allowlist);

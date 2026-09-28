@@ -300,6 +300,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             month INTEGER NOT NULL,
             year INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'draft',
+            closed_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(building_id, month, year)
         );
@@ -459,6 +460,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE bills ADD COLUMN review_note TEXT NOT NULL DEFAULT ''",
         [],
     );
+    let _ = conn.execute("ALTER TABLE billing_periods ADD COLUMN closed_at TEXT", []);
 
     let _ = conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_name_iban ON providers(name, creditor_iban)",

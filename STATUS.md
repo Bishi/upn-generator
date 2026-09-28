@@ -1,11 +1,16 @@
 # Status
 
-- Current version: `0.5.6`
-- Current tag: `v0.5.6`
-- Release status: prepared on `feat/validation-gates`
+- Current version: `0.6.0`
+- Current tag: `v0.6.0`
+- Release status: prepared on `codex/month-close-reopen`
 
 ## Latest Included Changes
 
+- Added persisted month close/reopen status with closure timestamps and consistent workflow status across Bills, Splits, UPN, and the month picker
+- Required complete current-packet delivery and backend validation before closing a month
+- Kept closed months viewable and PDF-exportable while blocking bill, import, split, delivery, period-deletion, and relevant apartment-deletion mutations until reopened
+- Prevented month closing while email delivery batches are active
+- Preserved close state through current and legacy backup restores
 - Consolidated Bills, Splits, and UPN preview table chrome for more consistent row, header, footer, and empty-state styling
 - Stopped tracking local `docs/` notes and `file-examples/` bill samples; both folders are now ignored for local reference use
 - Moved the Splits total column to the end and simplified the Splits header labels/dividers

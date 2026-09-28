@@ -1,12 +1,98 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::credentials::{self, MailCredentialKind};
 use crate::db::migrations;
 
-pub struct DbState(pub Arc<Mutex<Connection>>);
+#[derive(Default)]
+pub struct PeriodOperationState {
+    active_email_sends: Mutex<HashMap<i64, usize>>,
+}
+
+pub struct PeriodEmailSendGuard {
+    state: Arc<PeriodOperationState>,
+    billing_period_id: i64,
+}
+
+impl Drop for PeriodEmailSendGuard {
+    fn drop(&mut self) {
+        let mut active = self
+            .state
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = active.get_mut(&self.billing_period_id) {
+            *count -= 1;
+            if *count == 0 {
+                active.remove(&self.billing_period_id);
+            }
+        }
+    }
+}
+
+pub struct DbState(pub Arc<Mutex<Connection>>, pub Arc<PeriodOperationState>);
+
+impl DbState {
+    pub(crate) fn begin_period_email_send<F>(
+        &self,
+        billing_period_id: i64,
+        ensure_open: F,
+    ) -> Result<PeriodEmailSendGuard, String>
+    where
+        F: FnOnce(&Connection) -> Result<(), String>,
+    {
+        // Registration and close use the same operation-state -> database lock order.
+        let mut active = self
+            .1
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let conn = self.0.lock().map_err(|e| e.to_string())?;
+        ensure_open(&conn)?;
+        *active.entry(billing_period_id).or_insert(0) += 1;
+        Ok(PeriodEmailSendGuard {
+            state: Arc::clone(&self.1),
+            billing_period_id,
+        })
+    }
+
+    pub(crate) fn while_period_email_sends_idle<T, F>(
+        &self,
+        billing_period_id: i64,
+        action: F,
+    ) -> Result<T, String>
+    where
+        F: FnOnce(&Connection) -> Result<T, String>,
+    {
+        // Keep the state lock through the status transition so a new send cannot register midway.
+        let active = self
+            .1
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if active.get(&billing_period_id).copied().unwrap_or(0) > 0 {
+            return Err(
+                "Cannot close this billing month while an email send is in progress.".to_string(),
+            );
+        }
+        let conn = self.0.lock().map_err(|e| e.to_string())?;
+        action(&conn)
+    }
+
+    #[cfg(test)]
+    fn active_email_send_count(&self, billing_period_id: i64) -> usize {
+        self.1
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&billing_period_id)
+            .copied()
+            .unwrap_or(0)
+    }
+}
 
 // --- Building ---
 
@@ -162,7 +248,35 @@ pub fn save_apartment(db: State<DbState>, apartment: Apartment) -> Result<Apartm
 #[tauri::command]
 pub fn delete_apartment(db: State<DbState>, id: i64) -> Result<(), String> {
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    delete_apartment_inner(&mut conn, id)
+}
+
+fn delete_apartment_inner(conn: &mut Connection, id: i64) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let has_closed_records: bool = tx
+        .query_row(
+            "SELECT EXISTS (
+                SELECT 1
+                FROM bill_splits bs
+                JOIN bills b ON b.id = bs.bill_id
+                JOIN billing_periods bp ON bp.id = b.billing_period_id
+                WHERE bs.apartment_id=?1 AND bp.status='closed'
+                UNION ALL
+                SELECT 1
+                FROM upn_delivery_events ude
+                JOIN billing_periods bp ON bp.id = ude.billing_period_id
+                WHERE ude.apartment_id=?1 AND bp.status='closed'
+            )",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if has_closed_records {
+        return Err(
+            "Cannot delete this apartment because it has records in a closed billing month. Reopen the affected month first."
+                .to_string(),
+        );
+    }
     tx.execute(
         "DELETE FROM upn_delivery_events WHERE apartment_id=?1",
         [id],
@@ -408,4 +522,181 @@ pub fn reset_all_data(db: State<DbState>) -> Result<ResetAllDataResult, String> 
     Ok(ResetAllDataResult {
         credential_cleanup_warning,
     })
+}
+
+#[cfg(test)]
+mod period_operation_tests {
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    fn test_state() -> DbState {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "CREATE TABLE billing_periods (
+                id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL
+            );
+            INSERT INTO billing_periods (id, status) VALUES (1, 'draft');",
+        )
+        .expect("test schema");
+        DbState(
+            Arc::new(Mutex::new(conn)),
+            Arc::new(PeriodOperationState::default()),
+        )
+    }
+
+    fn register_send(state: &DbState) -> Result<PeriodEmailSendGuard, String> {
+        state.begin_period_email_send(1, |conn| {
+            let status: String = conn
+                .query_row("SELECT status FROM billing_periods WHERE id=1", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|error| error.to_string())?;
+            if status == "closed" {
+                return Err("closed".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn overlapping_email_send_guards_block_until_both_drop() {
+        let state = test_state();
+        let first = register_send(&state).expect("first guard");
+        let second = register_send(&state).expect("second guard");
+
+        assert_eq!(state.active_email_send_count(1), 2);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_err());
+        drop(first);
+        assert_eq!(state.active_email_send_count(1), 1);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_err());
+        drop(second);
+        assert_eq!(state.active_email_send_count(1), 0);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_ok());
+    }
+
+    #[test]
+    fn email_send_registration_failure_does_not_leak_counter() {
+        let state = test_state();
+        let result = state.begin_period_email_send(1, |_| Err("validation failed".to_string()));
+
+        assert!(result.is_err());
+        assert_eq!(state.active_email_send_count(1), 0);
+    }
+
+    #[test]
+    fn email_send_guard_deregisters_during_unwind() {
+        let state = test_state();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = register_send(&state).expect("guard");
+            panic!("simulated send panic");
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(state.active_email_send_count(1), 0);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_ok());
+    }
+
+    fn apartment_delete_conn(period_status: &str) -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(&format!(
+            "CREATE TABLE apartments (id INTEGER PRIMARY KEY);
+             CREATE TABLE billing_periods (id INTEGER PRIMARY KEY, status TEXT NOT NULL);
+             CREATE TABLE bills (
+                id INTEGER PRIMARY KEY,
+                billing_period_id INTEGER NOT NULL
+             );
+             CREATE TABLE bill_splits (
+                id INTEGER PRIMARY KEY,
+                bill_id INTEGER NOT NULL,
+                apartment_id INTEGER NOT NULL
+             );
+             CREATE TABLE upn_delivery_events (
+                id INTEGER PRIMARY KEY,
+                billing_period_id INTEGER NOT NULL,
+                apartment_id INTEGER NOT NULL
+             );
+             INSERT INTO apartments (id) VALUES (1);
+             INSERT INTO billing_periods (id, status) VALUES (1, '{period_status}');
+             INSERT INTO bills (id, billing_period_id) VALUES (1, 1);
+             INSERT INTO bill_splits (id, bill_id, apartment_id) VALUES (1, 1, 1);
+             INSERT INTO upn_delivery_events
+                (id, billing_period_id, apartment_id) VALUES (1, 1, 1);"
+        ))
+        .expect("apartment delete schema");
+        conn
+    }
+
+    #[test]
+    fn apartment_delete_rejects_closed_period_records_without_removing_data() {
+        let mut conn = apartment_delete_conn("closed");
+
+        let error = delete_apartment_inner(&mut conn, 1).unwrap_err();
+
+        assert!(error.contains("closed billing month"));
+        for table in ["apartments", "bill_splits", "upn_delivery_events"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("row count");
+            assert_eq!(count, 1, "{table} data should remain");
+        }
+    }
+
+    #[test]
+    fn apartment_delete_rejects_closed_delivery_history_without_splits() {
+        let mut conn = apartment_delete_conn("closed");
+        conn.execute("DELETE FROM bill_splits", [])
+            .expect("remove split fixture");
+
+        let error = delete_apartment_inner(&mut conn, 1).unwrap_err();
+
+        assert!(error.contains("closed billing month"));
+        let apartment_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM apartments", [], |row| row.get(0))
+            .expect("apartment count");
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM upn_delivery_events", [], |row| {
+                row.get(0)
+            })
+            .expect("event count");
+        assert_eq!(apartment_count, 1);
+        assert_eq!(event_count, 1);
+    }
+
+    #[test]
+    fn apartment_delete_rejects_closed_splits_without_delivery_history() {
+        let mut conn = apartment_delete_conn("closed");
+        conn.execute("DELETE FROM upn_delivery_events", [])
+            .expect("remove delivery fixture");
+
+        let error = delete_apartment_inner(&mut conn, 1).unwrap_err();
+
+        assert!(error.contains("closed billing month"));
+        let apartment_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM apartments", [], |row| row.get(0))
+            .expect("apartment count");
+        let split_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM bill_splits", [], |row| row.get(0))
+            .expect("split count");
+        assert_eq!(apartment_count, 1);
+        assert_eq!(split_count, 1);
+    }
+
+    #[test]
+    fn apartment_delete_removes_records_when_period_is_open() {
+        let mut conn = apartment_delete_conn("draft");
+
+        delete_apartment_inner(&mut conn, 1).expect("delete apartment");
+
+        for table in ["apartments", "bill_splits", "upn_delivery_events"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("row count");
+            assert_eq!(count, 0, "{table} data should be deleted");
+        }
+    }
 }

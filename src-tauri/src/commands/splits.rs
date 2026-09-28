@@ -2,6 +2,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use super::bills::ensure_period_open;
 use super::config::DbState;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -96,6 +97,7 @@ pub fn calculate_splits(
     billing_period_id: i64,
 ) -> Result<Vec<SplitRow>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_period_open(&conn, billing_period_id)?;
 
     let mut stmt = conn
         .prepare(
@@ -233,6 +235,17 @@ pub fn save_split(db: State<DbState>, split: BillSplit) -> Result<BillSplit, Str
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     match split.id {
         Some(id) => {
+            let billing_period_id: i64 = conn
+                .query_row(
+                    "SELECT b.billing_period_id
+                     FROM bill_splits bs
+                     JOIN bills b ON bs.bill_id = b.id
+                     WHERE bs.id=?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            ensure_period_open(&conn, billing_period_id)?;
             conn.execute(
                 "UPDATE bill_splits SET amount_cents=?1 WHERE id=?2",
                 params![split.amount_cents, id],

@@ -13,8 +13,10 @@ import {
   Files,
   ChevronDown,
   Loader2,
+  Lock,
   RotateCcw,
   ChevronRight,
+  Unlock,
 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
@@ -30,7 +32,7 @@ import type {
   UpnValidationAction,
   UpnValidationIssue,
 } from "@/lib/types";
-import { formatEur } from "@/lib/types";
+import { formatClosedAt, formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import {
   BillingEmptyState,
@@ -674,6 +676,7 @@ function UpnPage() {
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [markingDelivered, setMarkingDelivered] = useState(false);
+  const [closingMonth, setClosingMonth] = useState(false);
   const [emailResults, setEmailResults] = useState<EmailResult[]>([]);
   const [deliveryEvents, setDeliveryEvents] = useState<UpnDeliveryEvent[]>([]);
   const [packetHashes, setPacketHashes] = useState<UpnPacketHash[]>([]);
@@ -748,6 +751,10 @@ function UpnPage() {
 
   const sendEmails = async () => {
     if (!selected?.id) return;
+    if (selected.status === "closed") {
+      setPageError("This billing month is closed. Reopen it before sending emails.");
+      return;
+    }
     setSending(true);
     try {
       const results = await sendPeriodEmails(selected.id);
@@ -792,6 +799,10 @@ function UpnPage() {
 
   const markDelivered = async () => {
     if (!selected?.id) return;
+    if (selected.status === "closed") {
+      setPageError("This billing month is closed. Reopen it before changing delivery status.");
+      return;
+    }
     const warningCount = snapshot.selectedPreSendValidation?.warning_count ?? 0;
     const confirmed = await confirm(
       warningCount > 0
@@ -828,6 +839,10 @@ function UpnPage() {
 
   const unmarkDelivered = async () => {
     if (!selected?.id) return;
+    if (selected.status === "closed") {
+      setPageError("This billing month is closed. Reopen it before changing delivery status.");
+      return;
+    }
     const confirmed = await confirm(
       "Remove manual delivery marks for this billing period? Email delivery history will stay unchanged.",
       {
@@ -856,6 +871,68 @@ function UpnPage() {
         .catch(() => undefined);
     } finally {
       setMarkingDelivered(false);
+    }
+  };
+
+  const closeMonth = async () => {
+    if (!selected?.id) return;
+    const confirmed = await confirm(
+      "Close this billing month? Bills, splits, inbox imports, and delivery changes will be locked until the month is reopened.",
+      {
+        title: "Close Month",
+        kind: "warning",
+        okLabel: "Close Month",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!confirmed) return;
+
+    setClosingMonth(true);
+    try {
+      const period = await ipc.closeBillingPeriod(selected.id);
+      setEmailResults([]);
+      await loadDeliveryState(selected.id);
+      await snapshot.refresh({ periods: true, core: false, selected: true, statuses: true });
+      toast.success("Month closed", {
+        description: `${period.month}/${period.year} is locked for changes.`,
+      });
+    } catch (e) {
+      setPageError(String(e));
+      await snapshot
+        .refresh({ periods: true, core: false, selected: true, statuses: true })
+        .catch(() => undefined);
+    } finally {
+      setClosingMonth(false);
+    }
+  };
+
+  const reopenMonth = async () => {
+    if (!selected?.id) return;
+    const confirmed = await confirm(
+      "Reopen this billing month? Bills, splits, imports, and delivery actions will be editable again.",
+      {
+        title: "Reopen Month",
+        kind: "warning",
+        okLabel: "Reopen Month",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!confirmed) return;
+
+    setClosingMonth(true);
+    try {
+      const period = await ipc.reopenBillingPeriod(selected.id);
+      await snapshot.refresh({ periods: true, core: false, selected: true, statuses: true });
+      toast.success("Month reopened", {
+        description: `${period.month}/${period.year} can be changed again.`,
+      });
+    } catch (e) {
+      setPageError(String(e));
+      await snapshot
+        .refresh({ periods: true, core: false, selected: true, statuses: true })
+        .catch(() => undefined);
+    } finally {
+      setClosingMonth(false);
     }
   };
 
@@ -944,6 +1021,24 @@ function UpnPage() {
   const canDownloadAll = validation?.can_download_all ?? false;
   const canMarkDelivered = validation?.can_mark_delivered ?? false;
   const canSendEmails = validation?.can_send_emails ?? false;
+  const isClosed = selected?.status === "closed";
+  const canCloseMonth =
+    !isClosed && !sending && deliveryComplete && validationReady && canMarkDelivered;
+  const closeMonthDisabledTitle = !selected?.id
+    ? "Select a billing month first."
+    : isClosed
+      ? undefined
+      : snapshot.loading
+        ? "Workflow data is still loading."
+        : sending
+          ? "Wait for email sending to finish before closing the month."
+        : !deliveryComplete
+          ? "Close Month is available after every current UPN packet is delivered."
+          : !validationReady
+            ? "Validation is still loading."
+            : !canMarkDelivered
+              ? "Resolve Mark Delivered validation blockers before closing."
+              : undefined;
   const validationBlocked =
     validation != null &&
     (!validation.can_download_all ||
@@ -956,6 +1051,41 @@ function UpnPage() {
       subtitle={null}
       actions={
         <>
+          {isClosed ? (
+            <Button
+              variant="outline"
+              onClick={reopenMonth}
+              disabled={!selected?.id || snapshot.loading || closingMonth}
+              title={
+                selected?.closed_at
+                  ? `Closed on ${formatClosedAt(selected.closed_at)}`
+                  : undefined
+              }
+            >
+              {closingMonth ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Unlock className="size-4" />
+              )}
+              Reopen Month
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={closeMonth}
+              title={closeMonthDisabledTitle}
+              disabled={
+                !selected?.id || snapshot.loading || sending || closingMonth || !canCloseMonth
+              }
+            >
+              {closingMonth ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Lock className="size-4" />
+              )}
+              Close Month
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={downloadAll}
@@ -985,8 +1115,13 @@ function UpnPage() {
             <Button
               variant="outline"
               onClick={unmarkDelivered}
+              title={isClosed ? "Reopen this month before changing delivery status." : undefined}
               disabled={
-                !selected?.id || snapshot.loading || splits.length === 0 || markingDelivered
+                !selected?.id ||
+                isClosed ||
+                snapshot.loading ||
+                splits.length === 0 ||
+                markingDelivered
               }
             >
               {markingDelivered ? (
@@ -1000,14 +1135,19 @@ function UpnPage() {
             <Button
               variant="outline"
               onClick={markDelivered}
-              title={actionDisabledTitle(
-                validation,
-                canMarkDelivered,
-                "Mark Delivered",
-                snapshot.loading,
-              )}
+              title={
+                isClosed
+                  ? "Reopen this month before changing delivery status."
+                  : actionDisabledTitle(
+                      validation,
+                      canMarkDelivered,
+                      "Mark Delivered",
+                      snapshot.loading,
+                    )
+              }
               disabled={
                 !selected?.id ||
+                isClosed ||
                 snapshot.loading ||
                 splits.length === 0 ||
                 markingDelivered ||
@@ -1025,14 +1165,19 @@ function UpnPage() {
           )}
           <Button
             onClick={sendEmails}
-            title={actionDisabledTitle(
-              validation,
-              canSendEmails,
-              "Send All Emails",
-              snapshot.loading,
-            )}
+            title={
+              isClosed
+                ? "Reopen this month before sending emails."
+                : actionDisabledTitle(
+                    validation,
+                    canSendEmails,
+                    "Send All Emails",
+                    snapshot.loading,
+                  )
+            }
             disabled={
               !selected?.id ||
+              isClosed ||
               snapshot.loading ||
               splits.length === 0 ||
               sending ||
@@ -1066,8 +1211,22 @@ function UpnPage() {
         </div>
       )}
 
+      {isClosed && (
+        <div className="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success">
+          This billing month is closed
+          {selected?.closed_at ? ` (${formatClosedAt(selected.closed_at)})` : ""}. Reopen it
+          before changing bills, splits, or delivery status.
+        </div>
+      )}
+
       {showUpnTable && (
         <SummaryStrip>
+          {isClosed && (
+            <SummaryChip className="bg-success-soft text-success">
+              <Lock className="size-3.5" />
+              Closed
+            </SummaryChip>
+          )}
           <SummaryChip className="bg-surface-3 text-muted-foreground">
             <CheckCircle2 className="size-3.5" />
             {readyRecipientCount} email

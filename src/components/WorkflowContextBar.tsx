@@ -11,7 +11,7 @@ import {
   Send,
 } from "lucide-react";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
-import { formatEur, type BillingPeriod } from "@/lib/types";
+import { formatClosedAt, formatEur, type BillingPeriod } from "@/lib/types";
 import {
   createVirtualBillingPeriod,
   EMPTY_PERIOD_STATUS,
@@ -282,13 +282,19 @@ function PeriodPicker({
               ? periodStatuses.get(period.id) ?? EMPTY_PERIOD_STATUS
               : EMPTY_PERIOD_STATUS;
           const isSelected = selected?.year === selectedYear && selected.month === month;
-          const isClosed = status.sent;
+          const isClosed = period?.status === "closed";
 
           return (
             <button
               key={month}
               type="button"
-              title={isClosed ? `${monthName} ${selectedYear} is closed` : undefined}
+              title={
+                isClosed && period?.closed_at
+                  ? `${monthName} ${selectedYear} closed on ${formatClosedAt(period.closed_at)}`
+                  : isClosed
+                    ? `${monthName} ${selectedYear} is closed`
+                    : undefined
+              }
               onClick={() => onSelectMonth(month)}
               className={cn(
                 "flex min-h-14 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-2 py-2 text-xs transition-colors",
