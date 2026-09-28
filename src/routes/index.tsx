@@ -127,6 +127,7 @@ function DashboardPage() {
     : "No billing period";
   const buildingLabel = `${snapshot.buildingName}, ${snapshot.buildingCity}`;
   const billsReady = billCount > 0;
+  const awaitingBills = selected != null && !billsReady && validationErrorCount === 0;
   const splitsReady = splitCount > 0;
   const upnsReady = billsReady && splitsReady;
   const deliveryComplete = selectedStatus.sent;
@@ -430,7 +431,7 @@ function DashboardPage() {
             className={`p-5 ${
               validationErrorCount > 0
                 ? "border-danger bg-danger-soft"
-                : needsReview > 0 || validationWarningCount > 0
+                : !awaitingBills && (needsReview > 0 || validationWarningCount > 0)
                   ? "border-warning bg-warning-soft"
                   : ""
             }`}
@@ -440,12 +441,14 @@ function DashboardPage() {
                 className={`mt-0.5 ${
                   validationErrorCount > 0
                     ? "text-danger"
-                    : needsReview > 0 || validationWarningCount > 0
+                    : !awaitingBills && (needsReview > 0 || validationWarningCount > 0)
                       ? "text-warning"
-                      : "text-success"
+                      : awaitingBills ? "text-muted-foreground" : "text-success"
                 }`}
               >
-                {validationErrorCount > 0 || needsReview > 0 || validationWarningCount > 0 ? (
+                {awaitingBills ? (
+                  <FilePlus className="size-5" />
+                ) : validationErrorCount > 0 || needsReview > 0 || validationWarningCount > 0 ? (
                   <AlertTriangle className="size-5" />
                 ) : (
                   <CheckCircle2 className="size-5" />
@@ -456,13 +459,15 @@ function DashboardPage() {
                   className={`text-sm font-semibold ${
                     validationErrorCount > 0
                       ? "text-danger"
-                      : needsReview > 0 || validationWarningCount > 0
+                      : !awaitingBills && (needsReview > 0 || validationWarningCount > 0)
                         ? "text-warning"
                         : ""
                   }`}
                 >
                   {validationErrorCount > 0
                     ? `UPN validation blocked: ${validationErrorCount} issue${validationErrorCount === 1 ? "" : "s"}`
+                    : awaitingBills
+                      ? "Import bills to begin"
                     : needsReview > 0
                     ? `${needsReview} bill${needsReview === 1 ? "" : "s"} needs review`
                     : validationWarningCount > 0
@@ -472,6 +477,8 @@ function DashboardPage() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   {validationErrorCount > 0
                     ? "Open UPN Preview to fix blockers before sending emails, marking delivered, or exporting PDFs."
+                    : awaitingBills
+                      ? "Add this month's bills, then calculate splits to prepare UPN packets."
                     : needsReview > 0
                     ? firstReviewBill
                       ? `${reviewLabel} - ${reviewNote || "Verify parser and OCR notes before sending UPN packets."}`
@@ -482,7 +489,15 @@ function DashboardPage() {
                       ? "Bills and splits are ready for UPN preview."
                       : "The next workflow step will appear here as the period progresses."}
                 </p>
-                {validationErrorCount > 0 ? (
+                {awaitingBills ? (
+                  <Link
+                    to="/bills"
+                    className="mt-3 inline-flex h-8 items-center gap-2 rounded-md border border-border bg-card px-3 text-xs font-semibold text-foreground"
+                  >
+                    Open bills
+                    <ArrowRight className="size-3.5" />
+                  </Link>
+                ) : validationErrorCount > 0 ? (
                   <Link
                     to="/upn"
                     className="mt-3 inline-flex h-8 items-center gap-2 rounded-md bg-danger px-3 text-xs font-semibold text-white"

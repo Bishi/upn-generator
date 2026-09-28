@@ -11,6 +11,7 @@
 
 ## Cases
 
+- [ ] Select an empty billing month and confirm there is no red validation blocker or `0 validation issues` chip; the page prompts for bill import and bulk UPN actions remain disabled.
 - [ ] Select a billing period and confirm each apartment card shows line items and total due.
 - [ ] Confirm the validation panel appears for the selected billing period and summarizes blocking errors and warnings without pushing content down unexpectedly.
 - [ ] Remove an apartment recipient for an apartment with a UPN packet and confirm Send Emails is disabled while Download All PDFs and Mark Delivered remain available.

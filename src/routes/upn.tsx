@@ -167,6 +167,9 @@ function actionDisabledTitle(
       ? "Checking UPN validation..."
       : "UPN validation could not be loaded. Refresh or reselect the period.";
   }
+  if (!canRun && validation.error_count === 0) {
+    return "Import bills before using UPN bulk actions.";
+  }
   if (!canRun) return `${label} is blocked by UPN validation issues.`;
   return undefined;
 }
@@ -995,6 +998,7 @@ function UpnPage() {
     (deliveryPacketCount > 0 && snapshot.selectedStatus.sent);
   const hasManualDelivery = (deliveryRollup?.manual_delivered_count ?? 0) > 0;
   const validation = snapshot.selectedPreSendValidation;
+  const hasBills = snapshot.bills.length > 0;
   const validationReady = !!validation;
   const canDownloadAll = validation?.can_download_all ?? false;
   const canMarkDelivered = validation?.can_mark_delivered ?? false;
@@ -1017,11 +1021,7 @@ function UpnPage() {
             : !canMarkDelivered
               ? "Resolve Mark Delivered validation blockers before closing."
               : undefined;
-  const validationBlocked =
-    validation != null &&
-    (!validation.can_download_all ||
-      !validation.can_mark_delivered ||
-      !validation.can_send_emails);
+  const validationBlocked = validation != null && validation.error_count > 0;
 
   return (
     <BillingPageShell
@@ -1265,14 +1265,16 @@ function UpnPage() {
           <BillingEmptyState
             loading={showUpnLoading}
             loadingLabel="Loading UPN data..."
-            title="No UPNs yet for this billing month"
-            detail="Calculate splits first, then return here to preview and send UPN forms."
+            title={hasBills ? "No UPNs yet for this billing month" : "No bills yet for this billing month"}
+            detail={hasBills
+              ? "Calculate splits first, then return here to preview and send UPN forms."
+              : "Import bills first, then calculate splits to prepare UPN forms."}
             action={
               <Link
-                to="/splits"
+                to={hasBills ? "/splits" : "/bills"}
                 className={buttonVariants({ variant: "outline" })}
               >
-                Go to Splits
+                {hasBills ? "Go to Splits" : "Go to Bills"}
               </Link>
             }
           />

@@ -29,6 +29,7 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - SMTP and IMAP passwords are stored in Windows Credential Manager under stable app targets and matched against the configured username before use; legacy DB password columns remain only for schema compatibility and are cleared after successful credential writes
 - `building` table always has exactly 1 row (`id=1`)
 - Billing periods use `billing_periods.status` (`draft`/`closed`) plus nullable `closed_at` for the explicit month close/reopen workflow; closed months are readable/exportable but block bill, split, inbox import, delivery, period deletion, and deletion of apartments with closed-month records until reopened
+- An empty billing period is a normal setup state: it has no `no_bills` validation error, but UPN bulk actions stay unavailable until bills are imported
 - Email batches register an in-memory per-period operation guard before validation; Close Month is rejected while a batch is active so external sends and their delivery audit events finish together
 - `smtp_config` table always has exactly 1 row (`id=1`); seeded defaults use Gmail SMTP host/port/TLS, `kamniska.racuni@gmail.com` username/from/allowlist, and blank password
 - SMTP email safety is stored on `smtp_config`; the recipient allowlist defaults enabled with `kamniska.racuni@gmail.com` as the seeded test recipient so bulk UPN sends remain limited until more recipients are listed or the allowlist is disabled

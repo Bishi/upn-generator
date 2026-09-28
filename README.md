@@ -153,7 +153,7 @@ Individual amounts can be manually adjusted by clicking a cell.
 Go to the **UPN** page and select the billing period.
 
 Each apartment card shows its line items and the total amount due.
-Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for unverified building identity, unreviewed import warnings, missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. A documented identity exception is eligible but is never relabeled as a successful match. Legacy `Not checked` identity on an already closed month is reported but does not block Download All PDFs; reopening that month restores the identity gate for bulk export.
+Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for unverified building identity, unreviewed import warnings, missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. An empty month is a normal setup state: it shows an import prompt rather than a validation error, while bulk UPN actions remain unavailable until bills are added. A documented identity exception is eligible but is never relabeled as a successful match. Legacy `Not checked` identity on an already closed month is reported but does not block Download All PDFs; reopening that month restores the identity gate for bulk export.
 
 | Action | Description |
 |--------|-------------|

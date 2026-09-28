@@ -33,6 +33,7 @@ Known caveats, environment details, or sample files used.
 
 | File | Covers |
 | --- | --- |
+| [dashboard.md](./dashboard.md) | Dashboard monthly progress and empty-month setup state |
 | [bills-import.md](./bills-import.md) | Bills page PDF/image/manual import, provider detection, debug log, month matching |
 | [inbox-import.md](./inbox-import.md) | Manual read-only IMAP scan, attachment preview, duplicate/allowlist handling |
 | [splits.md](./splits.md) | Split calculation, provider split basis, manual split edits |

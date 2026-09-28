@@ -733,16 +733,6 @@ pub fn validate_upn_pre_send_inner(
     let active_apartments = load_active_apartments(conn)?;
     let mut issues = Vec::new();
 
-    if bills.is_empty() {
-        issues.push(issue(
-            SEVERITY_ERROR,
-            "no_bills",
-            ENTITY_PERIOD,
-            "No bills are imported for this billing period.".to_string(),
-            "Billing period".to_string(),
-            all_actions(),
-        ));
-    }
     if active_apartments.is_empty() {
         issues.push(issue(
             SEVERITY_ERROR,
@@ -770,9 +760,13 @@ pub fn validate_upn_pre_send_inner(
         .iter()
         .filter(|issue| issue.severity == SEVERITY_WARNING)
         .count() as i64;
-    let can_send_emails = !validation_blocks_action_from_issues(&issues, ACTION_SEND_EMAILS);
-    let can_mark_delivered = !validation_blocks_action_from_issues(&issues, ACTION_MARK_DELIVERED);
-    let can_download_all = !validation_blocks_action_from_issues(&issues, ACTION_DOWNLOAD_ALL);
+    let has_bills = !bills.is_empty();
+    let can_send_emails =
+        has_bills && !validation_blocks_action_from_issues(&issues, ACTION_SEND_EMAILS);
+    let can_mark_delivered =
+        has_bills && !validation_blocks_action_from_issues(&issues, ACTION_MARK_DELIVERED);
+    let can_download_all =
+        has_bills && !validation_blocks_action_from_issues(&issues, ACTION_DOWNLOAD_ALL);
 
     Ok(UpnPreSendValidation {
         billing_period_id,
@@ -792,7 +786,12 @@ fn validation_blocks_action_from_issues(issues: &[UpnValidationIssue], action: &
 }
 
 pub fn validation_blocks_action(validation: &UpnPreSendValidation, action: &str) -> bool {
-    validation_blocks_action_from_issues(&validation.issues, action)
+    match action {
+        ACTION_SEND_EMAILS => !validation.can_send_emails,
+        ACTION_MARK_DELIVERED => !validation.can_mark_delivered,
+        ACTION_DOWNLOAD_ALL => !validation.can_download_all,
+        _ => validation_blocks_action_from_issues(&validation.issues, action),
+    }
 }
 
 fn action_label(action: &str) -> &str {
@@ -818,6 +817,12 @@ pub fn ensure_validation_allows(
                 issue.severity == SEVERITY_ERROR && issue.blocks.iter().any(|block| block == action)
             })
             .count();
+        if count == 0 {
+            return Err(format!(
+                "Import bills for this billing month before {}.",
+                action_label(action)
+            ));
+        }
         return Err(format!(
             "UPN validation failed for {}: {} blocking issue{}. Open UPN Preview for details.",
             action_label(action),
@@ -1022,6 +1027,30 @@ mod tests {
         assert!(validation.can_send_emails);
         assert!(validation.can_mark_delivered);
         assert!(validation.can_download_all);
+    }
+
+    #[test]
+    fn empty_month_has_no_validation_error_but_cannot_run_bulk_actions() {
+        let conn = setup_conn();
+        insert_apartment(&conn, 1, "Apt 1", "one@example.com", 1, 100.0, true);
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert_eq!(validation.error_count, 0);
+        assert_eq!(validation.warning_count, 0);
+        assert!(validation.issues.is_empty());
+        assert!(!validation.can_send_emails);
+        assert!(!validation.can_mark_delivered);
+        assert!(!validation.can_download_all);
+        for action in [
+            ACTION_SEND_EMAILS,
+            ACTION_MARK_DELIVERED,
+            ACTION_DOWNLOAD_ALL,
+        ] {
+            assert!(validation_blocks_action(&validation, action));
+            assert!(ensure_validation_allows(&conn, 1, action)
+                .unwrap_err()
+                .contains("Import bills"));
+        }
     }
 
     #[test]
