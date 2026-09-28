@@ -450,7 +450,7 @@ function ProviderDetail({
               >
                 <option value="unconfigured">Not configured (never verified)</option>
                 <option value="labeled_value">Labeled identifier</option>
-                <option value="building_address">Building address (weaker evidence)</option>
+                <option value="building_address">Building address (temporary fallback)</option>
               </select>
             </Field>
             {provider.identity_rule_type === "labeled_value" && (
@@ -489,7 +489,7 @@ function ProviderDetail({
             {provider.identity_rule_type === "building_address" && (
               <Field label="Building street and house number">
                 <Input value={provider.identity_value} onChange={(event) => onChange({ ...provider, identity_value: event.target.value })} />
-                <p className="mt-1 text-xs text-warning">Address matching is temporary, weaker evidence. Replace it with the agreed offer-number rule when available.</p>
+                <p className="mt-1 text-xs text-warning">Temporary, weaker check. Replace it with the offer number when available.</p>
               </Field>
             )}
 

@@ -1484,7 +1484,7 @@ fn verify_provider_identity(
             }
             .to_string(),
             explanation: if matched {
-                "Temporary weaker evidence: the configured building street and house number appear together in a relevant invoice segment.".to_string()
+                "Address matched".to_string()
             } else {
                 "The configured building street and house number were not found together in the invoice segment.".to_string()
             },
@@ -1537,10 +1537,10 @@ fn verify_provider_identity(
     IdentityVerification {
         status: status.to_string(),
         explanation: match status {
-            "matched" => format!(
-                "Configured {} identity rule matched this invoice segment.",
-                provider.identity_rule_operator
-            ),
+            "matched" if provider.identity_rule_operator == "any" => {
+                "At least one configured identifier matched.".to_string()
+            }
+            "matched" => "All configured identifiers matched.".to_string(),
             "mismatched" => {
                 "A configured identity label was found, but its value did not satisfy the rule."
                     .to_string()

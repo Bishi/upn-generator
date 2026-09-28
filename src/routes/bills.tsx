@@ -196,14 +196,14 @@ function BillRow({
                   ? "bg-success-soft text-success"
                   : "bg-warning-soft text-warning",
               )}
-              title={bill.identity_exception_note || "Building identity matched the configured rule."}
+              title={bill.identity_exception_note || "Invoice identity matched."}
             >
               {bill.identity_status === "matched" ? (
                 <CheckCircle2 className="size-3" />
               ) : (
                 <AlertTriangle className="size-3" />
               )}
-              {bill.identity_status === "matched" ? "Building verified" : "Exception"}
+              {bill.identity_status === "matched" ? "Verified" : "Exception"}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
@@ -745,28 +745,71 @@ function InboxIdentityEvidence({ identity }: { identity: IdentityVerification })
   );
 }
 
-function InboxBillIdentity({ bill }: { bill: InboxPreviewBillSummary }) {
+function InboxBillIdentity({
+  bill,
+  sourceAvailable,
+  onViewPage,
+}: {
+  bill: InboxPreviewBillSummary;
+  sourceAvailable: boolean;
+  onViewPage: () => void;
+}) {
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const matched = bill.identity.status === "matched";
-  const page = bill.source_page_start
-    ? ` · page ${bill.source_page_start}${bill.source_page_end !== bill.source_page_start ? `-${bill.source_page_end}` : ""}`
-    : "";
-  const label = matched ? "Building verified" : `Identity: ${bill.identity.status}`;
+  const pageLabel = bill.source_page_start
+    ? bill.source_page_end && bill.source_page_end !== bill.source_page_start
+      ? `Pages ${bill.source_page_start}–${bill.source_page_end}`
+      : `Page ${bill.source_page_start}`
+    : null;
+  const label = matched ? "Verified" : `Identity: ${bill.identity.status}`;
+  const pageControl = pageLabel ? (
+    <>
+      <span aria-hidden="true" className="text-muted-foreground">·</span>
+      {sourceAvailable ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 whitespace-nowrap font-medium text-foreground underline-offset-2 hover:text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`View source at ${pageLabel.toLowerCase()}`}
+          title={`Open ${pageLabel.toLowerCase()}`}
+          onClick={onViewPage}
+        >
+          <Eye className="size-3" />
+          View bill
+        </button>
+      ) : (
+        <span className="whitespace-nowrap text-muted-foreground">{pageLabel}</span>
+      )}
+    </>
+  ) : null;
 
   if (matched) {
     return (
-      <details className="mt-1 text-xs">
-        <summary className="cursor-pointer text-muted-foreground marker:text-muted-foreground">
-          <span className="font-semibold text-success">{label}{page}</span>
-          <span className="ml-2 underline underline-offset-2">Evidence</span>
-        </summary>
-        <InboxIdentityEvidence identity={bill.identity} />
-      </details>
+      <div className="mt-1 text-xs">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span className="font-semibold text-success">{label}</span>
+          {pageControl}
+          <span aria-hidden="true" className="text-muted-foreground">·</span>
+          <button
+            type="button"
+            className="inline-flex items-center gap-0.5 text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-expanded={evidenceOpen}
+            onClick={() => setEvidenceOpen((current) => !current)}
+          >
+            Evidence
+            <ChevronDown className={`size-3 transition-transform ${evidenceOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+        {evidenceOpen && <InboxIdentityEvidence identity={bill.identity} />}
+      </div>
     );
   }
 
   return (
     <>
-      <div className="mt-1 text-xs font-semibold text-warning">{label}{page}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+        <span className="font-semibold text-warning">{label}</span>
+        {pageControl}
+      </div>
       <InboxIdentityEvidence identity={bill.identity} />
     </>
   );
@@ -1166,19 +1209,19 @@ function InboxImportDrawer({
                             </div>
                           </td>
                         );
-                        const attachmentCell = (pageStart?: number | null) => (
+                        const attachmentCell = (showViewSource: boolean) => (
                           <td className="max-w-64 px-3 py-4 align-top">
                             <div className="truncate font-semibold">{candidate.attachment_filename}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.sender || "Unknown sender"}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.subject || "No subject"}</div>
-                            {candidate.source_available ? (
-                              <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => viewInboxSource(candidate, pageStart)}>
+                            {candidate.source_available && showViewSource ? (
+                              <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => viewInboxSource(candidate, null)}>
                                 <Eye className="size-3.5" />
                                 View source
                               </Button>
-                            ) : (
+                            ) : !candidate.source_available ? (
                               <div className="mt-2 text-xs text-muted-foreground" title={candidate.source_unavailable_reason ?? undefined}>Source unavailable</div>
-                            )}
+                            ) : null}
                           </td>
                         );
                         const statusCell = (
@@ -1191,7 +1234,7 @@ function InboxImportDrawer({
                           return (
                             <tr key={candidate.id} className={`border-b border-border align-top ${groupClass}`}>
                               {selectionCell("")}
-                              {attachmentCell(null)}
+                              {attachmentCell(true)}
                               <td className="px-3 py-4 align-top">
                                 <span className="text-xs text-muted-foreground">No importable bills</span>
                               </td>
@@ -1206,7 +1249,7 @@ function InboxImportDrawer({
                             {candidate.bills.map((bill, index) => (
                               <tr key={`${candidate.id}-bill-${index}`} className={`border-b border-border align-top ${groupClass}`}>
                                 {selectionCell(String(index + 1))}
-                                {attachmentCell(bill.source_page_start)}
+                                {attachmentCell(!bill.source_page_start)}
                                 <td className="px-3 py-4 align-top">
                                   <div className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</div>
                                   <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -1215,7 +1258,11 @@ function InboxImportDrawer({
                                   {bill.parse_note && (
                                     <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
                                   )}
-                                  <InboxBillIdentity bill={bill} />
+                                  <InboxBillIdentity
+                                    bill={bill}
+                                    sourceAvailable={candidate.source_available}
+                                    onViewPage={() => viewInboxSource(candidate, bill.source_page_start)}
+                                  />
                                   {selectedIds.has(candidate.id) && bill.identity.status !== "matched" && (
                                     <Input
                                       className="mt-2 h-8"
