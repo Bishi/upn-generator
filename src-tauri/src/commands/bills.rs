@@ -1231,24 +1231,6 @@ fn compact_identity_projection(text: &str) -> (String, Vec<usize>, Vec<char>) {
     (compact, positions, folded)
 }
 
-fn identity_value_pattern(expected: &str) -> Option<Regex> {
-    let normalized = normalize_identity_value(expected);
-    if normalized.is_empty() {
-        return None;
-    }
-    let value_shape = if normalized.contains('/') {
-        r"[A-Z0-9]+(?:[ \t]*/[ \t]*[A-Z0-9]+)+"
-    } else if normalized.contains('-') {
-        r"[A-Z0-9]+(?:[ \t]*-[ \t]*[A-Z0-9]+)+"
-    } else if normalized.chars().all(|ch| ch.is_ascii_digit()) {
-        r"[0-9]+(?:[ \t]+[0-9]+)*"
-    } else {
-        r"[A-Z0-9]+"
-    };
-    let pattern = format!(r"(?:^|[^A-Z0-9])(?P<value>{value_shape})(?:$|[^A-Z0-9])");
-    Regex::new(&pattern).ok()
-}
-
 fn normalize_identity_value(value: &str) -> String {
     value
         .chars()
@@ -1258,8 +1240,8 @@ fn normalize_identity_value(value: &str) -> String {
         .collect()
 }
 
-fn labeled_value_result(text: &str, label: &str, expected: &str) -> (bool, bool, String) {
-    let (compact_text, compact_positions, folded_text) = compact_identity_projection(text);
+fn identity_label_value_start(line: &str, label: &str) -> Option<usize> {
+    let (compact_text, compact_positions, _) = compact_identity_projection(line);
     let compact_label = compact_identity_text(label);
     let bookend_label = || {
         let tokens: Vec<String> = label
@@ -1278,33 +1260,84 @@ fn labeled_value_result(text: &str, label: &str, expected: &str) -> (bool, bool,
             .find(last)
             .map(|offset| start + offset + last.len())
     };
-    let Some(value_start) =
-        identity_label_end(&compact_text, &compact_label).or_else(bookend_label)
-    else {
-        return (false, false, String::new());
+    let value_start = identity_label_end(&compact_text, &compact_label).or_else(bookend_label)?;
+    Some(
+        value_start
+            .checked_sub(1)
+            .and_then(|index| compact_positions.get(index))
+            .map(|index| index + 1)
+            .unwrap_or(0),
+    )
+}
+
+fn complete_identity_value(value_text: &str, expected: &str) -> String {
+    let chars: Vec<char> = value_text.chars().map(fold_identity_char).collect();
+    let Some(start) = chars.iter().position(|ch| ch.is_ascii_alphanumeric()) else {
+        return String::new();
     };
-    let original_start = value_start
-        .checked_sub(1)
-        .and_then(|index| compact_positions.get(index))
-        .map(|index| index + 1)
-        .unwrap_or(0);
-    let original_end = (original_start + 600).min(folded_text.len());
-    let value_region: String = folded_text[original_start..original_end]
-        .iter()
-        .collect::<String>()
-        .to_ascii_uppercase();
-    let Some(shape_pattern) = identity_value_pattern(expected) else {
-        return (true, false, String::new());
-    };
-    let Some(candidate) = shape_pattern
-        .captures(&value_region)
-        .and_then(|captures| captures.name("value"))
-        .map(|value| value.as_str().trim().to_string())
-    else {
-        return (true, false, String::new());
-    };
-    let matched = normalize_identity_value(&candidate) == normalize_identity_value(expected);
-    (true, matched, normalize_identity_value(&candidate))
+    let expected_is_numeric = normalize_identity_value(expected)
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || matches!(ch, '/' | '-'));
+    let mut value = String::new();
+    let mut index = start;
+    while let Some(ch) = chars.get(index).copied() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-') {
+            value.push(ch);
+            index += 1;
+            continue;
+        }
+        if ch.is_whitespace() {
+            let next = chars[index + 1..]
+                .iter()
+                .copied()
+                .find(|next| !next.is_whitespace());
+            let can_join_numeric_piece = expected_is_numeric
+                && next.is_some_and(|next| next.is_ascii_digit())
+                && value
+                    .chars()
+                    .all(|current| current.is_ascii_digit() || matches!(current, '/' | '-'));
+            if can_join_numeric_piece {
+                index += 1;
+                continue;
+            }
+        }
+        break;
+    }
+    normalize_identity_value(&value)
+}
+
+fn labeled_value_result(text: &str, label: &str, expected: &str) -> (bool, bool, String) {
+    let lines: Vec<&str> = text.lines().collect();
+    let expected = normalize_identity_value(expected);
+    let mut label_found = false;
+    let mut first_candidate = String::new();
+    for (line_index, line) in lines.iter().enumerate() {
+        let Some(value_start) = identity_label_value_start(line, label) else {
+            continue;
+        };
+        label_found = true;
+        let line_chars: Vec<char> = line.chars().collect();
+        let mut candidate = complete_identity_value(
+            &line_chars[value_start.min(line_chars.len())..]
+                .iter()
+                .collect::<String>(),
+            &expected,
+        );
+        if candidate.is_empty() {
+            candidate = lines[line_index + 1..]
+                .iter()
+                .find(|next| !next.trim().is_empty())
+                .map(|next| complete_identity_value(next, &expected))
+                .unwrap_or_default();
+        }
+        if candidate == expected && !expected.is_empty() {
+            return (true, true, candidate);
+        }
+        if first_candidate.is_empty() && !candidate.is_empty() {
+            first_candidate = candidate;
+        }
+    }
+    (label_found, false, first_candidate)
 }
 
 fn address_result(text: &str, expected: &str) -> bool {
@@ -2159,6 +2192,14 @@ fn reconcile_page_candidates(page: &ExtractedPage) -> Vec<ExtractedBill> {
     candidates
 }
 
+fn page_links_to_payment_candidate(text: &str, candidate: &ExtractedBill) -> bool {
+    let compact_text = compact_identity_text(text);
+    let reference = compact_identity_text(&candidate.reference);
+    let invoice_number = compact_identity_text(&candidate.invoice_number);
+    (reference.len() >= 6 && compact_text.contains(&reference))
+        || (invoice_number.len() >= 5 && compact_text.contains(&invoice_number))
+}
+
 fn prepare_multi_bill_import_from_document(
     document: DocumentExtraction,
     filename: String,
@@ -2196,25 +2237,8 @@ fn prepare_multi_bill_import_from_document(
                 .find(|page| *page != *page_index)
                 .map(|page| page + 1)
                 .unwrap_or(0);
-            let exact_provider = providers
-                .iter()
-                .find(|provider| normalize_iban(&provider.creditor_iban) == candidate.iban_norm);
             (lower_bound..=*page_index)
-                .find(|page| {
-                    normalize_iban(&evidence_texts[*page]).contains(&candidate.iban_norm)
-                        || exact_provider.is_some_and(|provider| {
-                            provider.identity_rule_type == "labeled_value"
-                                && verify_provider_identity(
-                                    provider,
-                                    &evidence_texts[*page],
-                                    Some(document.pages[*page].page_number),
-                                    Some(document.pages[*page].page_number),
-                                    false,
-                                )
-                                .status
-                                    == "matched"
-                        })
-                })
+                .find(|page| page_links_to_payment_candidate(&evidence_texts[*page], candidate))
                 .unwrap_or(*page_index)
         })
         .collect();
@@ -3385,15 +3409,24 @@ SI12 6330017789210
             "",
             "",
         );
-        let result = verify_provider_identity(
-            &water,
-            "Št. odjemnega mesta: 5495/1094630\nDrug podatek: 5495/109463",
-            Some(1),
-            Some(1),
-            false,
-        );
-        assert_eq!(result.status, "mismatched");
-        assert_eq!(result.found_values, vec!["5495/1094630"]);
+        for (text, found) in [
+            (
+                "Št. odjemnega mesta: 5495/1094630\nDrug podatek: 5495/109463",
+                "5495/1094630",
+            ),
+            (
+                "Št. odjemnega mesta: 5495/109463-0\nDrug podatek: 5495/109463",
+                "5495/109463-0",
+            ),
+            (
+                "Št. odjemnega mesta: napačno\nDrug podatek: 5495/109463",
+                "NAPACNO",
+            ),
+        ] {
+            let result = verify_provider_identity(&water, text, Some(1), Some(1), false);
+            assert_eq!(result.status, "mismatched", "{text}");
+            assert_eq!(result.found_values, vec![found], "{text}");
+        }
     }
 
     #[test]
@@ -3540,6 +3573,51 @@ SI12 6330017789210
         assert_eq!(prepared.extracted.len(), 1);
         let candidate = &prepared.extracted[0];
         assert_eq!(candidate.source_page_end, Some(1));
+        assert_eq!(candidate.identity.as_ref().unwrap().status, "missing");
+    }
+
+    #[test]
+    fn preceding_unparsed_invoice_cannot_verify_later_candidate() {
+        let provider = identity_provider(
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        );
+        let document = DocumentExtraction {
+            pages: vec![
+                ExtractedPage {
+                    page_number: 1,
+                    native_text: "Drug neprepoznan račun\nPLIN Odjemno mesto: 01505116659\nSI56 0400 1004 8988 093\nSI12 999"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+                ExtractedPage {
+                    page_number: 2,
+                    native_text: "***10,00\nENRG Poznejši račun\nSI56 0400 1004 8988 093\nSI12 111"
+                        .to_string(),
+                    ocr_text: String::new(),
+                    diagnostics: Vec::new(),
+                },
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let prepared = prepare_multi_bill_import_from_document(
+            document,
+            "reverse-two-invoices.pdf".to_string(),
+            8,
+            2026,
+            &[provider],
+            true,
+        );
+
+        assert_eq!(prepared.extracted.len(), 1);
+        let candidate = &prepared.extracted[0];
+        assert_eq!(candidate.source_page_start, Some(2));
         assert_eq!(candidate.identity.as_ref().unwrap().status, "missing");
     }
 
