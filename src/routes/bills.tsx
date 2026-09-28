@@ -955,14 +955,11 @@ function InboxImportDrawer({
         exceptions,
       );
       setResults(imported);
-      const failed = imported.some((result) => result.status === "failed");
-      if (!failed) {
-        setSelectedIds(new Set());
-        setPreview({
-          ...preview,
-          candidates: preview.candidates.filter((candidate) => !selectedIds.has(candidate.id)),
-        });
-      }
+      setSelectedIds(new Set());
+      setPreview({
+        ...preview,
+        candidates: preview.candidates.filter((candidate) => !selectedIds.has(candidate.id)),
+      });
       await onImported(imported);
     } catch (e) {
       setError(`Failed to import selected inbox items: ${e}`);
@@ -973,6 +970,13 @@ function InboxImportDrawer({
 
   const setClampedScanDays = (next: number) => {
     setDaysToScan(clampInboxScanDays(next));
+  };
+
+  const continueReviewing = () => {
+    setViewer(null);
+    setError(null);
+    setResults([]);
+    setSelectedIds(new Set(defaultInboxPreviewSelection(preview?.candidates ?? [])));
   };
 
   const toggleAllReady = (checked: boolean) => {
@@ -1017,6 +1021,7 @@ function InboxImportDrawer({
     defaultSelectedIds.every((candidateId) => selectedIds.has(candidateId));
   const accountLabel = config ? `${config.username || "Inbox account"} / ${config.folder || "INBOX"}` : "Loading inbox settings";
   const selectedBillCount = preview?.candidates.reduce((sum, candidate) => sum + (selectedIds.has(candidate.id) ? candidate.importable_count : 0), 0) ?? 0;
+  const remainingCandidateCount = preview?.candidates.length ?? 0;
 
   return (
     <>
@@ -1359,11 +1364,15 @@ function InboxImportDrawer({
           )}
         </div>
 
-        <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4">
           {results.length > 0 ? (
             <>
-              <div className="text-sm text-muted-foreground">Import complete. You can close this panel.</div>
-              <div className="flex gap-2">
+              <div className="text-sm text-muted-foreground">
+                {remainingCandidateCount > 0
+                  ? `${remainingCandidateCount} attachment${remainingCandidateCount === 1 ? "" : "s"} remain in this preview.`
+                  : "Import complete. You can close this panel."}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
                 <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
                   Close
                 </Button>
@@ -1376,6 +1385,11 @@ function InboxImportDrawer({
                   {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                   Import again
                 </Button>
+                {remainingCandidateCount > 0 && (
+                  <Button onClick={continueReviewing} disabled={busy}>
+                    Continue reviewing
+                  </Button>
+                )}
               </div>
             </>
           ) : preview ? (

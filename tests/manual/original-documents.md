@@ -15,6 +15,7 @@
 - [ ] At 1280px or wider, open View bill and confirm the document fills all space left of the 760px inbox drawer, sits above the drawer backdrop, and leaves selections and exception notes usable; confirm the active bill row is highlighted.
 - [ ] While the companion viewer is open, click View bill on another row from the same PDF and confirm the viewer reloads at the new page and moves the row highlight.
 - [ ] With a bill open in the companion viewer, use Re-scan or complete an import and choose Import again; confirm the viewer closes before the old preview session is replaced and no stale document remains beside the new candidates.
+- [ ] After a partial inbox import, choose Continue reviewing and confirm the viewer closes while the remaining staged attachments stay available from the same preview session.
 - [ ] Below 1280px, confirm View bill uses the fullscreen viewer; at either width, Escape closes the viewer first and leaves the inbox drawer open, including after clicking inside the embedded PDF viewer. With the viewer still open, switch to another application and confirm Escape remains available there and does not close the UPN viewer.
 - [ ] Close and reopen the PDF viewer, switch between documents, and confirm no stale document/page remains visible; verify Blob URLs are revoked on close, replacement, unmount, and failed load.
 - [ ] Open a staged image, confirm fit behavior and bounded 25%-400% zoom, then close and reopen it.

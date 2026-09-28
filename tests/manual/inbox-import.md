@@ -28,7 +28,7 @@
 - [ ] Import selected ready candidates and confirm only selected bills are created.
 - [ ] Preview at least two attachments, import only one, then view and import the remaining attachment without rescanning; confirm its selections and exception notes remain available.
 - [ ] Confirm previewing does not mark email as read, move email, delete email, or persist raw extracted text.
-- [ ] Confirm imported attachment files are no longer accessible while unselected preview attachments remain available, then close the drawer and confirm the remaining temporary files are cleaned up.
+- [ ] Import one attachment from a multi-attachment preview, choose Continue reviewing, and confirm the results and viewer close without a mailbox rescan; confirm the imported attachment is gone while unselected staged attachments remain viewable and importable, then close the drawer and confirm their temporary files are cleaned up.
 - [ ] Confirm every parsed candidate shows its building-identity result and source-page range, including failed/unconfigured candidates instead of silently hiding them.
 - [ ] Confirm matched invoices show a compact verified status, with explanation and expected/observed values available through Evidence; failed identity details remain visible without expanding anything.
 - [ ] Select a failed identity candidate and confirm a required exception note is enforced before final import.
