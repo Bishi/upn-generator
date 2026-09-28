@@ -120,6 +120,10 @@ pub fn create_db_backup(db: State<DbState>, output_path: String) -> Result<Backu
 
 #[tauri::command]
 pub fn restore_db_backup(db: State<DbState>, input_path: String) -> Result<(), String> {
+    restore_db_backup_inner(&db, input_path)
+}
+
+fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), String> {
     let restore_path = Path::new(&input_path);
     if !restore_path.exists() {
         return Err("Selected backup file does not exist.".to_string());
@@ -416,4 +420,87 @@ fn ensure_required_tables_on_attached(conn: &Connection) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::config::PeriodOperationState;
+    use crate::db::migrations;
+    use std::sync::{Arc, Mutex};
+
+    fn initialized_connection() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        migrations::run_migrations(&conn).expect("migrations");
+        conn
+    }
+
+    fn backup_file(
+        status: &str,
+        closed_at: Option<&str>,
+        legacy_without_closed_at: bool,
+    ) -> tempfile::NamedTempFile {
+        let file = tempfile::NamedTempFile::new().expect("backup file");
+        let conn = Connection::open(file.path()).expect("backup database");
+        migrations::run_migrations(&conn).expect("backup migrations");
+        conn.execute(
+            "INSERT INTO billing_periods
+             (id, building_id, month, year, status, closed_at)
+             VALUES (1, 1, 6, 2026, ?1, ?2)",
+            rusqlite::params![status, closed_at],
+        )
+        .expect("backup period");
+        if legacy_without_closed_at {
+            conn.execute("ALTER TABLE billing_periods DROP COLUMN closed_at", [])
+                .expect("remove newer backup column");
+        }
+        drop(conn);
+        file
+    }
+
+    fn restore_backup(file: &tempfile::NamedTempFile) -> DbState {
+        let state = DbState(
+            Arc::new(Mutex::new(initialized_connection())),
+            Arc::new(PeriodOperationState::default()),
+        );
+        restore_db_backup_inner(&state, file.path().to_string_lossy().into_owned())
+            .expect("restore backup");
+        state
+    }
+
+    #[test]
+    fn restore_preserves_closed_status_and_timestamp() {
+        let file = backup_file("closed", Some("2026-06-30 12:00:00"), false);
+        let state = restore_backup(&file);
+        let conn = state.0.lock().expect("database lock");
+
+        let restored: (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, closed_at FROM billing_periods WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("restored period");
+
+        assert_eq!(restored.0, "closed");
+        assert_eq!(restored.1.as_deref(), Some("2026-06-30 12:00:00"));
+    }
+
+    #[test]
+    fn restore_accepts_legacy_backup_without_closed_at() {
+        let file = backup_file("closed", None, true);
+        let state = restore_backup(&file);
+        let conn = state.0.lock().expect("database lock");
+
+        let restored: (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, closed_at FROM billing_periods WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("restored period");
+
+        assert_eq!(restored.0, "closed");
+        assert_eq!(restored.1, None);
+    }
 }

@@ -1,12 +1,98 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::credentials::{self, MailCredentialKind};
 use crate::db::migrations;
 
-pub struct DbState(pub Arc<Mutex<Connection>>);
+#[derive(Default)]
+pub struct PeriodOperationState {
+    active_email_sends: Mutex<HashMap<i64, usize>>,
+}
+
+pub struct PeriodEmailSendGuard {
+    state: Arc<PeriodOperationState>,
+    billing_period_id: i64,
+}
+
+impl Drop for PeriodEmailSendGuard {
+    fn drop(&mut self) {
+        let mut active = self
+            .state
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = active.get_mut(&self.billing_period_id) {
+            *count -= 1;
+            if *count == 0 {
+                active.remove(&self.billing_period_id);
+            }
+        }
+    }
+}
+
+pub struct DbState(pub Arc<Mutex<Connection>>, pub Arc<PeriodOperationState>);
+
+impl DbState {
+    pub(crate) fn begin_period_email_send<F>(
+        &self,
+        billing_period_id: i64,
+        ensure_open: F,
+    ) -> Result<PeriodEmailSendGuard, String>
+    where
+        F: FnOnce(&Connection) -> Result<(), String>,
+    {
+        // Registration and close use the same operation-state -> database lock order.
+        let mut active = self
+            .1
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let conn = self.0.lock().map_err(|e| e.to_string())?;
+        ensure_open(&conn)?;
+        *active.entry(billing_period_id).or_insert(0) += 1;
+        Ok(PeriodEmailSendGuard {
+            state: Arc::clone(&self.1),
+            billing_period_id,
+        })
+    }
+
+    pub(crate) fn while_period_email_sends_idle<T, F>(
+        &self,
+        billing_period_id: i64,
+        action: F,
+    ) -> Result<T, String>
+    where
+        F: FnOnce(&Connection) -> Result<T, String>,
+    {
+        // Keep the state lock through the status transition so a new send cannot register midway.
+        let active = self
+            .1
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if active.get(&billing_period_id).copied().unwrap_or(0) > 0 {
+            return Err(
+                "Cannot close this billing month while an email send is in progress.".to_string(),
+            );
+        }
+        let conn = self.0.lock().map_err(|e| e.to_string())?;
+        action(&conn)
+    }
+
+    #[cfg(test)]
+    fn active_email_send_count(&self, billing_period_id: i64) -> usize {
+        self.1
+            .active_email_sends
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&billing_period_id)
+            .copied()
+            .unwrap_or(0)
+    }
+}
 
 // --- Building ---
 
@@ -408,4 +494,78 @@ pub fn reset_all_data(db: State<DbState>) -> Result<ResetAllDataResult, String> 
     Ok(ResetAllDataResult {
         credential_cleanup_warning,
     })
+}
+
+#[cfg(test)]
+mod period_operation_tests {
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    fn test_state() -> DbState {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "CREATE TABLE billing_periods (
+                id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL
+            );
+            INSERT INTO billing_periods (id, status) VALUES (1, 'draft');",
+        )
+        .expect("test schema");
+        DbState(
+            Arc::new(Mutex::new(conn)),
+            Arc::new(PeriodOperationState::default()),
+        )
+    }
+
+    fn register_send(state: &DbState) -> Result<PeriodEmailSendGuard, String> {
+        state.begin_period_email_send(1, |conn| {
+            let status: String = conn
+                .query_row("SELECT status FROM billing_periods WHERE id=1", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|error| error.to_string())?;
+            if status == "closed" {
+                return Err("closed".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn overlapping_email_send_guards_block_until_both_drop() {
+        let state = test_state();
+        let first = register_send(&state).expect("first guard");
+        let second = register_send(&state).expect("second guard");
+
+        assert_eq!(state.active_email_send_count(1), 2);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_err());
+        drop(first);
+        assert_eq!(state.active_email_send_count(1), 1);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_err());
+        drop(second);
+        assert_eq!(state.active_email_send_count(1), 0);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_ok());
+    }
+
+    #[test]
+    fn email_send_registration_failure_does_not_leak_counter() {
+        let state = test_state();
+        let result = state.begin_period_email_send(1, |_| Err("validation failed".to_string()));
+
+        assert!(result.is_err());
+        assert_eq!(state.active_email_send_count(1), 0);
+    }
+
+    #[test]
+    fn email_send_guard_deregisters_during_unwind() {
+        let state = test_state();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = register_send(&state).expect("guard");
+            panic!("simulated send panic");
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(state.active_email_send_count(1), 0);
+        assert!(state.while_period_email_sends_idle(1, |_| Ok(())).is_ok());
+    }
 }

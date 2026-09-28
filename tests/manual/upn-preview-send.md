@@ -29,6 +29,8 @@
 - [ ] Confirm Download All PDFs does not mark the month delivered or create delivery history.
 - [ ] Try closing a month before every current packet is delivered and confirm the action is blocked.
 - [ ] With every current apartment packet delivered and Mark Delivered validation passing, close the month and confirm the month picker shows it as closed.
+- [ ] Start an email batch for the month, attempt Close Month through another app window or direct command while the batch is active, and confirm closing is rejected with an in-progress message; retry after the batch completes and confirm closing succeeds when eligibility still passes.
+- [ ] Close a month, reload the app, and confirm the closed state and closure timestamp remain visible across Bills, Splits, UPN Preview, and the month picker.
 - [ ] In a closed month, confirm single/apartment previews and Download All PDFs still work, while Send Emails, Mark Delivered, and Unmark Delivered are disabled.
 - [ ] Reopen a closed month and confirm delivery actions become available again when validation allows them.
 - [ ] Click Mark Delivered, cancel the confirmation prompt, and confirm the month remains undelivered.

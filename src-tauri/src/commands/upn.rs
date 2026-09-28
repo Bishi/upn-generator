@@ -1846,9 +1846,13 @@ fn send_emails_impl(
 ) -> Result<Vec<EmailResult>, String> {
     let overall_start = Instant::now();
     let mut previous_phase = overall_start;
+    // Keep this guard alive until every external send has a matching audit event. Close Month
+    // uses the same synchronized counter and cannot pass while this batch is active.
+    let _send_guard = db.begin_period_email_send(billing_period_id, |conn| {
+        ensure_period_open(conn, billing_period_id)
+    })?;
     {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        ensure_period_open(&conn, billing_period_id)?;
         ensure_validation_allows(&conn, billing_period_id, ACTION_SEND_EMAILS)?;
     }
     log_send_email_phase(
@@ -2373,15 +2377,23 @@ pub fn close_billing_period(
     db: State<DbState>,
     billing_period_id: i64,
 ) -> Result<BillingPeriod, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let period = load_billing_period_by_id(&conn, billing_period_id)?;
+    db.while_period_email_sends_idle(billing_period_id, |conn| {
+        close_billing_period_inner(conn, billing_period_id)
+    })
+}
+
+fn close_billing_period_inner(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+) -> Result<BillingPeriod, String> {
+    let period = load_billing_period_by_id(conn, billing_period_id)?;
     if period.status == PERIOD_STATUS_CLOSED {
         return Ok(period);
     }
 
-    let packets = load_current_packet_infos(&conn, billing_period_id)?;
+    let packets = load_current_packet_infos(conn, billing_period_id)?;
     let events = query_vec(
-        &conn,
+        conn,
         "SELECT id, attempt_id, billing_period_id, apartment_id, delivery_type,
                 status, recipient, original_recipient, attachment_sha256,
                 error, created_at
@@ -2406,21 +2418,40 @@ pub fn close_billing_period(
         },
     )?;
     let rollup = build_delivery_rollup(billing_period_id, packets, &events);
-    if rollup.packet_count == 0 || !rollup.complete {
+    let validation = validate_upn_pre_send_inner(conn, billing_period_id)?;
+    ensure_month_close_eligible(
+        rollup.packet_count,
+        rollup.complete,
+        validation.can_mark_delivered,
+    )?;
+
+    persist_period_closed(conn, billing_period_id)
+}
+
+fn ensure_month_close_eligible(
+    packet_count: i64,
+    delivery_complete: bool,
+    validation_allows_mark_delivered: bool,
+) -> Result<(), String> {
+    if packet_count == 0 || !delivery_complete {
         return Err(
             "Cannot close this billing month until every current UPN packet is delivered."
                 .to_string(),
         );
     }
-
-    let validation = validate_upn_pre_send_inner(&conn, billing_period_id)?;
-    if !validation.can_mark_delivered {
+    if !validation_allows_mark_delivered {
         return Err(
             "Cannot close this billing month while Mark Delivered validation has blocking issues."
                 .to_string(),
         );
     }
+    Ok(())
+}
 
+fn persist_period_closed(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+) -> Result<BillingPeriod, String> {
     conn.execute(
         "UPDATE billing_periods
          SET status=?1, closed_at=datetime('now')
@@ -2428,7 +2459,7 @@ pub fn close_billing_period(
         params![PERIOD_STATUS_CLOSED, billing_period_id],
     )
     .map_err(|e| e.to_string())?;
-    load_billing_period_by_id(&conn, billing_period_id)
+    load_billing_period_by_id(conn, billing_period_id)
 }
 
 #[tauri::command]
@@ -2437,7 +2468,14 @@ pub fn reopen_billing_period(
     billing_period_id: i64,
 ) -> Result<BillingPeriod, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let period = load_billing_period_by_id(&conn, billing_period_id)?;
+    reopen_billing_period_inner(&conn, billing_period_id)
+}
+
+fn reopen_billing_period_inner(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+) -> Result<BillingPeriod, String> {
+    let period = load_billing_period_by_id(conn, billing_period_id)?;
     if period.status != PERIOD_STATUS_CLOSED {
         return Ok(period);
     }
@@ -2449,7 +2487,7 @@ pub fn reopen_billing_period(
         params![PERIOD_STATUS_DRAFT, billing_period_id],
     )
     .map_err(|e| e.to_string())?;
-    load_billing_period_by_id(&conn, billing_period_id)
+    load_billing_period_by_id(conn, billing_period_id)
 }
 
 #[tauri::command]
@@ -2729,6 +2767,30 @@ fn save_all_upns_zip_blocking(
 mod tests {
     use super::*;
 
+    fn period_state_conn(status: &str, closed_at: Option<&str>) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "CREATE TABLE billing_periods (
+                id INTEGER PRIMARY KEY,
+                building_id INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                closed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
+        )
+        .expect("period schema");
+        conn.execute(
+            "INSERT INTO billing_periods
+             (id, building_id, month, year, status, closed_at)
+             VALUES (1, 1, 6, 2026, ?1, ?2)",
+            rusqlite::params![status, closed_at],
+        )
+        .expect("period row");
+        conn
+    }
+
     fn test_event(
         id: i64,
         apartment_id: i64,
@@ -2884,6 +2946,46 @@ mod tests {
         assert_eq!(rollup.email_sent_count, 0);
         assert_eq!(rollup.manual_delivered_count, 0);
         assert!(!rollup.apartments[0].delivered);
+    }
+
+    #[test]
+    fn close_eligibility_requires_packets_delivery_and_validation() {
+        assert!(ensure_month_close_eligible(1, true, true).is_ok());
+        assert!(ensure_month_close_eligible(0, true, true)
+            .unwrap_err()
+            .contains("every current UPN packet"));
+        assert!(ensure_month_close_eligible(1, false, true)
+            .unwrap_err()
+            .contains("every current UPN packet"));
+        assert!(ensure_month_close_eligible(1, true, false)
+            .unwrap_err()
+            .contains("validation has blocking issues"));
+    }
+
+    #[test]
+    fn close_and_reopen_persist_status_and_timestamp() {
+        let conn = period_state_conn("draft", None);
+
+        let closed = persist_period_closed(&conn, 1).expect("close period");
+        assert_eq!(closed.status, PERIOD_STATUS_CLOSED);
+        assert!(closed
+            .closed_at
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()));
+
+        let reopened = reopen_billing_period_inner(&conn, 1).expect("reopen period");
+        assert_eq!(reopened.status, PERIOD_STATUS_DRAFT);
+        assert_eq!(reopened.closed_at, None);
+    }
+
+    #[test]
+    fn reopen_is_compatible_with_existing_draft_period_without_timestamp() {
+        let conn = period_state_conn("draft", None);
+
+        let period = reopen_billing_period_inner(&conn, 1).expect("existing draft period");
+
+        assert_eq!(period.status, PERIOD_STATUS_DRAFT);
+        assert_eq!(period.closed_at, None);
     }
 
     #[test]

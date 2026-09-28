@@ -11,7 +11,7 @@ use commands::bills::{
 use commands::config::{
     delete_apartment, delete_provider, get_apartments, get_app_settings, get_building,
     get_providers, get_smtp_config, reset_all_data, save_apartment, save_app_settings,
-    save_building, save_provider, save_smtp_config, DbState,
+    save_building, save_provider, save_smtp_config, DbState, PeriodOperationState,
 };
 use commands::inbox::{
     clear_inbox_preview_session, get_inbox_config, import_inbox_attachments,
@@ -56,7 +56,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(DbState(Arc::new(Mutex::new(conn))))
+        .manage(DbState(
+            Arc::new(Mutex::new(conn)),
+            Arc::new(PeriodOperationState::default()),
+        ))
         .manage(InboxPreviewState::default())
         .invoke_handler(tauri::generate_handler![
             // Backup

@@ -163,6 +163,8 @@ UPN Preview keeps delivery history for the selected month. After reload, apartme
 
 After every current apartment UPN packet is delivered and Mark Delivered validation has no blocking issues, use **Close Month** to mark the billing month done. Closed months remain readable: you can still inspect bills and splits, open UPN previews, and download the PDF ZIP. Editing bills, importing from local files or inbox, recalculating or overriding splits, sending emails, and changing manual delivery marks require **Reopen Month** first.
 
+If an email batch is already running, Close Month waits for the operator to retry instead of closing mid-send. This keeps every successfully sent email paired with its delivery-history record. Downloading or previewing PDFs never counts as delivery and never closes a month.
+
 ---
 
 ## Pages Overview
