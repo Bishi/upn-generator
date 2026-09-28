@@ -1377,20 +1377,45 @@ fn labeled_value_result(text: &str, label: &str, expected: &str) -> (bool, bool,
 
 fn address_result(text: &str, expected: &str) -> bool {
     let expected_compact = compact_identity_text(expected);
-    let street = expected_compact.trim_end_matches(|ch: char| ch.is_ascii_digit());
-    let house = expected_compact.trim_start_matches(|ch: char| !ch.is_ascii_digit());
+    let Some(house_start) = expected_compact.find(|ch: char| ch.is_ascii_digit()) else {
+        return false;
+    };
+    let (street, house) = expected_compact.split_at(house_start);
     if street.is_empty() || house.is_empty() {
         return false;
     }
-    let compact = compact_identity_text(text);
+    let folded: Vec<char> = text.chars().map(fold_identity_char).collect();
+    let mut compact = String::new();
+    let mut positions = Vec::new();
+    for (index, ch) in folded.iter().copied().enumerate() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-') {
+            compact.push(ch);
+            positions.push(index);
+        }
+    }
     ["", "ULICA", "CESTA"].iter().any(|middle| {
         let phrase = format!("{street}{middle}{house}");
         compact.match_indices(&phrase).any(|(offset, _)| {
-            compact[offset + phrase.len()..]
-                .chars()
-                .next()
-                .map(|next| !next.is_ascii_digit())
-                .unwrap_or(true)
+            let start = positions[offset];
+            let end = positions[offset + phrase.len() - 1] + 1;
+            let starts_at_boundary = start == 0 || !folded[start - 1].is_ascii_alphanumeric();
+            let ends_at_boundary = folded
+                .get(end)
+                .is_none_or(|next| !next.is_ascii_alphanumeric() && !matches!(next, '/' | '-'));
+            // A single letter after spacing or a dot is also a house-number suffix.
+            let separated_suffix = folded[end..]
+                .iter()
+                .copied()
+                .take_while(|ch| ch.is_whitespace() || *ch == '.')
+                .count();
+            let has_separated_suffix = separated_suffix > 0
+                && folded[end + separated_suffix..]
+                    .first()
+                    .is_some_and(|ch| ch.is_ascii_alphabetic())
+                && folded[end + separated_suffix + 1..]
+                    .first()
+                    .is_none_or(|ch| !ch.is_ascii_alphanumeric());
+            starts_at_boundary && ends_at_boundary && !has_separated_suffix
         })
     })
 }
@@ -3559,12 +3584,49 @@ SI12 6330017789210
                 "matched"
             );
         }
-        for text in ["Postavka 36, naslov Kamniška 40", "Kamniška cesta 360"] {
+        for text in [
+            "Postavka 36, naslov Kamniška 40",
+            "Kamniška cesta 360",
+            "Kamniška 36A",
+            "Kamniška 36 A",
+            "Kamniška 36.a",
+            "PredKamniška 36",
+        ] {
             assert_ne!(
                 verify_provider_identity(&provider, text, Some(1), Some(1), false).status,
                 "matched"
             );
         }
+        let suffixed_provider = identity_provider(
+            "building_address",
+            "all",
+            "Relevant building address",
+            "Kamniška 36A",
+            "",
+            "",
+        );
+        assert_eq!(
+            verify_provider_identity(
+                &suffixed_provider,
+                "Kamniška cesta 36 A, Ljubljana",
+                Some(1),
+                Some(1),
+                false
+            )
+            .status,
+            "matched"
+        );
+        assert_ne!(
+            verify_provider_identity(
+                &suffixed_provider,
+                "Kamniška cesta 36, Ljubljana",
+                Some(1),
+                Some(1),
+                false
+            )
+            .status,
+            "matched"
+        );
     }
 
     #[test]

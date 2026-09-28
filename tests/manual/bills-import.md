@@ -44,6 +44,7 @@
 - [ ] Deselect a candidate, confirm import, and verify only selected candidates are saved.
 - [ ] Select two distinct invoices for the same provider/month across one or more files and confirm neither is saved; exact duplicate content should be deduplicated.
 - [ ] Change a source file after preview and confirm final import is rejected without partial writes.
+- [ ] In the local review dialog, trigger missing exception note, provider/month conflict, and changed source file errors; confirm each error appears inside the open dialog and the current selections and notes remain available for correction.
 - [ ] Select a mismatched, missing, unreadable, or unconfigured candidate and confirm import requires a non-empty exception note; verify the saved row says Exception rather than Matched.
 - [ ] Edit payment content on an exception bill and confirm its identity returns to Not checked and splitting remains blocked until a new noted exception is approved.
 - [ ] Confirm the source file can be opened temporarily during review, but after import the app does not claim to retain an original or provide an in-app original viewer (Phase B pending).

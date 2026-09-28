@@ -1343,11 +1343,11 @@ function BillsPage() {
 
   const finalizeLocalImports = async () => {
     if (!localImportReview || !selected) return;
-    const billingPeriod = await ensureSelectedPeriod();
-    if (!billingPeriod) return;
     setImporting(true);
     setError(null);
     try {
+      const billingPeriod = await ensureSelectedPeriod();
+      if (!billingPeriod) return;
       const providerHashes = new Map<number, Set<string>>();
       for (const file of localImportReview) {
         for (const bill of file.preview.bills) {
@@ -1658,12 +1658,19 @@ function BillsPage() {
                   </section>
                 ))}
               </div>
-              <div className="sticky bottom-0 flex justify-end gap-3 border-t border-border bg-card px-5 py-4">
-                <Button variant="outline" disabled={importing} onClick={() => setLocalImportReview(null)}>Cancel</Button>
-                <Button disabled={importing} onClick={finalizeLocalImports}>
-                  {importing && <Loader2 className="size-4 animate-spin" />}
-                  Import selected
-                </Button>
+              <div className="sticky bottom-0 space-y-3 border-t border-border bg-card px-5 py-4">
+                {error && (
+                  <div role="alert" className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                    {error}
+                  </div>
+                )}
+                <div className="flex justify-end gap-3">
+                  <Button variant="outline" disabled={importing} onClick={() => setLocalImportReview(null)}>Cancel</Button>
+                  <Button disabled={importing} onClick={finalizeLocalImports}>
+                    {importing && <Loader2 className="size-4 animate-spin" />}
+                    Import selected
+                  </Button>
+                </div>
               </div>
             </div>
           </div>,
@@ -1685,7 +1692,7 @@ function BillsPage() {
         </div>
       )}
 
-      {workflowError && (
+      {workflowError && !localImportReview && (
         <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
           {workflowError}
         </div>

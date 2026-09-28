@@ -117,7 +117,7 @@ The app supports importing one or more combined PDFs or supported image files (`
 
 Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, avoids exact duplicate attachments and invoice content by hash, and deletes temporary attachment files after use. Unknown providers, failed identity checks, and existing or competing provider/month invoices remain visible as explicit review/conflict outcomes instead of being silently treated as the expected bill.
 
-Each seeded whole-building provider has an editable typed identity rule under **Settings -> Providers**. Local and inbox previews show `Matched`, `Mismatched`, `Missing`, `Unreadable`, or `Unconfigured` evidence with source pages. Only a match imports automatically. You may approve another result only with an explicit exception note; the saved bill remains marked as an exception, and editing its payment content invalidates that approval. Splitting and bulk UPN actions require either a match or a noted exception.
+Each seeded whole-building provider has an editable typed identity rule under **Settings -> Providers**. Local and inbox previews show `Matched`, `Mismatched`, `Missing`, `Unreadable`, or `Unconfigured` evidence with source pages. Only a match imports automatically. You may approve another result only with an explicit exception note; the saved bill remains marked as an exception, and editing its payment content invalidates that approval. Splitting and bulk UPN actions require either a match or a noted exception, except that a previously closed month with legacy `Not checked` bills remains eligible for PDF ZIP export.
 
 **Current Phase A limitation:** supplier originals are not retained after import and there is no in-app original-document viewer yet. Durable originals, backup/restore of those originals, and the in-app viewer remain requested Phase B work in the approved second PR.
 
@@ -153,7 +153,7 @@ Individual amounts can be manually adjusted by clicking a cell.
 Go to the **UPN** page and select the billing period.
 
 Each apartment card shows its line items and the total amount due.
-Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for unverified building identity, unreviewed import warnings, missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. A documented identity exception is eligible but is never relabeled as a successful match.
+Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for unverified building identity, unreviewed import warnings, missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. A documented identity exception is eligible but is never relabeled as a successful match. Legacy `Not checked` identity on an already closed month is reported but does not block Download All PDFs; reopening that month restores the identity gate for bulk export.
 
 | Action | Description |
 |--------|-------------|
