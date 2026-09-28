@@ -9,6 +9,8 @@
 
 ## Cases
 
+- [ ] Confirm reset restores the seeded electricity OR identity rule, gas/waste/water labeled identifiers, and the temporary weaker ZLM address rule, while the chimney provider remains explicitly Unconfigured.
+
 - [ ] Start factory reset and confirm the warning clearly describes destructive data loss.
 - [ ] Cancel factory reset and confirm data remains unchanged.
 - [ ] Confirm factory reset and verify building, apartments, providers, SMTP defaults, and inbox defaults are reseeded.

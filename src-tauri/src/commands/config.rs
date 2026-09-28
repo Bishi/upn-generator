@@ -310,6 +310,45 @@ pub struct Provider {
     pub invoice_number_pattern: String,
     pub purpose_text_template: String,
     pub split_basis: String,
+    pub identity_rule_type: String,
+    pub identity_rule_operator: String,
+    pub identity_label: String,
+    pub identity_value: String,
+    pub identity_alternate_label: String,
+    pub identity_alternate_value: String,
+}
+
+fn validate_identity_rule(provider: &Provider) -> Result<(), String> {
+    match provider.identity_rule_type.as_str() {
+        "unconfigured" => Ok(()),
+        "building_address" => {
+            if provider.identity_value.trim().is_empty() {
+                Err("Building-address verification requires an address value.".to_string())
+            } else {
+                Ok(())
+            }
+        }
+        "labeled_value" => {
+            if !matches!(provider.identity_rule_operator.as_str(), "all" | "any") {
+                return Err("Identity rule operator must be 'all' or 'any'.".to_string());
+            }
+            if provider.identity_label.trim().is_empty()
+                || provider.identity_value.trim().is_empty()
+            {
+                return Err("Labeled-value verification requires a label and value.".to_string());
+            }
+            let has_alt_label = !provider.identity_alternate_label.trim().is_empty();
+            let has_alt_value = !provider.identity_alternate_value.trim().is_empty();
+            if has_alt_label != has_alt_value {
+                return Err(
+                    "The alternate identity label and value must both be filled or both be empty."
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+        _ => Err("Unknown provider identity rule type.".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -320,7 +359,8 @@ pub fn get_providers(db: State<DbState>) -> Result<Vec<Provider>, String> {
             "SELECT id, name, service_type, creditor_name, creditor_address, creditor_city,
              creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern,
              reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template,
-             split_basis
+             split_basis, identity_rule_type, identity_rule_operator, identity_label,
+             identity_value, identity_alternate_label, identity_alternate_value
              FROM providers ORDER BY name",
         )
         .map_err(|e| e.to_string())?;
@@ -343,6 +383,12 @@ pub fn get_providers(db: State<DbState>) -> Result<Vec<Provider>, String> {
                 invoice_number_pattern: row.get(13)?,
                 purpose_text_template: row.get(14)?,
                 split_basis: row.get(15)?,
+                identity_rule_type: row.get(16)?,
+                identity_rule_operator: row.get(17)?,
+                identity_label: row.get(18)?,
+                identity_value: row.get(19)?,
+                identity_alternate_label: row.get(20)?,
+                identity_alternate_value: row.get(21)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -351,6 +397,7 @@ pub fn get_providers(db: State<DbState>) -> Result<Vec<Provider>, String> {
 
 #[tauri::command]
 pub fn save_provider(db: State<DbState>, provider: Provider) -> Result<Provider, String> {
+    validate_identity_rule(&provider)?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     match provider.id {
         Some(id) => {
@@ -358,13 +405,19 @@ pub fn save_provider(db: State<DbState>, provider: Provider) -> Result<Provider,
                 "UPDATE providers SET name=?1, service_type=?2, creditor_name=?3, creditor_address=?4,
                  creditor_city=?5, creditor_postal_code=?6, creditor_iban=?7, purpose_code=?8,
                  match_pattern=?9, amount_pattern=?10, reference_pattern=?11, due_date_pattern=?12,
-                 invoice_number_pattern=?13, purpose_text_template=?14, split_basis=?15 WHERE id=?16",
+                 invoice_number_pattern=?13, purpose_text_template=?14, split_basis=?15,
+                 identity_rule_type=?16, identity_rule_operator=?17, identity_label=?18,
+                 identity_value=?19, identity_alternate_label=?20, identity_alternate_value=?21
+                 WHERE id=?22",
                 rusqlite::params![
                     provider.name, provider.service_type, provider.creditor_name,
                     provider.creditor_address, provider.creditor_city, provider.creditor_postal_code,
                     provider.creditor_iban, provider.purpose_code, provider.match_pattern,
                     provider.amount_pattern, provider.reference_pattern, provider.due_date_pattern,
-                    provider.invoice_number_pattern, provider.purpose_text_template, provider.split_basis, id
+                    provider.invoice_number_pattern, provider.purpose_text_template, provider.split_basis,
+                    provider.identity_rule_type, provider.identity_rule_operator, provider.identity_label,
+                    provider.identity_value, provider.identity_alternate_label,
+                    provider.identity_alternate_value, id
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -375,14 +428,19 @@ pub fn save_provider(db: State<DbState>, provider: Provider) -> Result<Provider,
                 "INSERT INTO providers
                  (name, service_type, creditor_name, creditor_address, creditor_city,
                   creditor_postal_code, creditor_iban, purpose_code, match_pattern, amount_pattern,
-                  reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template, split_basis)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                  reference_pattern, due_date_pattern, invoice_number_pattern, purpose_text_template, split_basis,
+                  identity_rule_type, identity_rule_operator, identity_label, identity_value,
+                  identity_alternate_label, identity_alternate_value)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
                 rusqlite::params![
                     provider.name, provider.service_type, provider.creditor_name,
                     provider.creditor_address, provider.creditor_city, provider.creditor_postal_code,
                     provider.creditor_iban, provider.purpose_code, provider.match_pattern,
                     provider.amount_pattern, provider.reference_pattern, provider.due_date_pattern,
-                    provider.invoice_number_pattern, provider.purpose_text_template, provider.split_basis
+                    provider.invoice_number_pattern, provider.purpose_text_template, provider.split_basis,
+                    provider.identity_rule_type, provider.identity_rule_operator, provider.identity_label,
+                    provider.identity_value, provider.identity_alternate_label,
+                    provider.identity_alternate_value
                 ],
             )
             .map_err(|e| e.to_string())?;

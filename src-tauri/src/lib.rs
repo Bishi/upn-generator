@@ -4,9 +4,9 @@ mod db;
 
 use commands::backup::{create_db_backup, restore_db_backup};
 use commands::bills::{
-    create_billing_period, create_year_periods, delete_bill, delete_billing_period,
-    get_billing_periods, get_bills, import_bill, import_bills, mark_bill_reviewed,
-    mark_bill_unreviewed, save_bill,
+    approve_bill_identity_exception, create_billing_period, create_year_periods, delete_bill,
+    delete_billing_period, finalize_bill_import_batch, get_billing_periods, get_bills,
+    mark_bill_reviewed, mark_bill_unreviewed, preview_bill_import, save_bill,
 };
 use commands::config::{
     delete_apartment, delete_provider, get_apartments, get_app_settings, get_building,
@@ -92,10 +92,11 @@ pub fn run() {
             create_billing_period,
             create_year_periods,
             delete_billing_period,
-            import_bill,
-            import_bills,
+            preview_bill_import,
+            finalize_bill_import_batch,
             get_bills,
             save_bill,
+            approve_bill_identity_exception,
             mark_bill_reviewed,
             mark_bill_unreviewed,
             delete_bill,

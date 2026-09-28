@@ -1,6 +1,6 @@
 use chrono::{Duration as ChronoDuration, Local};
 use mailparse::{addrparse_header, DispositionType, MailAddr, MailHeaderMap, ParsedMail};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -15,10 +15,10 @@ use tempfile::{Builder as TempFileBuilder, TempDir};
 use crate::credentials::{self, MailCredentialKind};
 
 use super::bills::{
-    bill_content_hash, ensure_period_open, load_bill_import_context,
-    prepare_multi_bill_import_from_path, preview_prepared_bills, retain_expected_provider_bills,
-    retain_new_bill_hashes, save_prepared_multi_bill_import, PreparedBillImport,
-    PreparedBillPreviewSummary,
+    ensure_period_open, load_bill_import_context, prepare_multi_bill_import_from_path,
+    preview_prepared_bills, retain_new_bill_hashes,
+    save_prepared_multi_bill_import_with_exceptions, IdentityExceptionInput, IdentityVerification,
+    PreparedBillImport, PreparedBillPreviewSummary,
 };
 use super::config::DbState;
 
@@ -72,6 +72,10 @@ pub struct InboxPreviewBillSummary {
     pub purpose_text: String,
     pub parse_note: String,
     pub status: String,
+    pub identity: IdentityVerification,
+    pub content_hash: String,
+    pub source_page_start: Option<i32>,
+    pub source_page_end: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -167,6 +171,8 @@ struct InboxPreviewCandidateData {
     attachment_sha256: String,
     file_path: Option<PathBuf>,
     status: String,
+    bill_keys: Vec<(i64, String)>,
+    has_unmatched_bill: bool,
 }
 
 pub struct InboxPreviewState {
@@ -560,90 +566,6 @@ fn insert_import_record(
     Ok(conn.last_insert_rowid())
 }
 
-fn has_imported_hash(
-    conn: &rusqlite::Connection,
-    billing_period_id: i64,
-    attachment_sha256: &str,
-) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT 1 FROM inbox_imports
-         WHERE billing_period_id=?1 AND attachment_sha256=?2 AND status='imported'
-         LIMIT 1",
-        params![billing_period_id, attachment_sha256],
-        |_| Ok(()),
-    )
-    .optional()
-    .map_err(|e| e.to_string())
-    .map(|row| row.is_some())
-}
-
-fn missing_provider_ids(
-    conn: &rusqlite::Connection,
-    billing_period_id: i64,
-    context: &super::bills::BillImportContext,
-) -> Result<HashSet<i64>, String> {
-    let mut expected: HashSet<i64> = context
-        .providers
-        .iter()
-        .filter_map(|provider| provider.id)
-        .collect();
-    let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT provider_id FROM bills
-             WHERE billing_period_id=?1 AND provider_id IS NOT NULL",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![billing_period_id], |row| row.get::<_, i64>(0))
-        .map_err(|e| e.to_string())?;
-    for row in rows {
-        expected.remove(&row.map_err(|e| e.to_string())?);
-    }
-    Ok(expected)
-}
-
-fn existing_bill_hashes(
-    conn: &rusqlite::Connection,
-    billing_period_id: i64,
-) -> Result<HashSet<String>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT bill_hash FROM inbox_bill_hashes
-             WHERE billing_period_id=?1",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![billing_period_id], |row| row.get::<_, String>(0))
-        .map_err(|e| e.to_string())?;
-    let mut hashes = HashSet::new();
-    for row in rows {
-        hashes.insert(row.map_err(|e| e.to_string())?);
-    }
-    let mut stmt = conn
-        .prepare(
-            "SELECT provider_id, creditor_iban, amount_cents, reference, due_date, invoice_number
-             FROM bills
-             WHERE billing_period_id=?1",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![billing_period_id], |row| {
-            Ok(bill_content_hash(
-                row.get::<_, Option<i64>>(0)?,
-                &row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-                &row.get::<_, String>(3)?,
-                &row.get::<_, String>(4)?,
-                &row.get::<_, String>(5)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
-    for row in rows {
-        hashes.insert(row.map_err(|e| e.to_string())?);
-    }
-    Ok(hashes)
-}
-
 fn insert_bill_hashes(
     conn: &rusqlite::Connection,
     billing_period_id: i64,
@@ -661,6 +583,20 @@ fn insert_bill_hashes(
         .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn stored_bill_hashes(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+) -> Result<HashSet<String>, String> {
+    let mut statement = conn
+        .prepare("SELECT bill_hash FROM inbox_bill_hashes WHERE billing_period_id=?1")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([billing_period_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| error.to_string())
 }
 
 fn validate_attachment(attachment: &MailAttachment) -> Result<String, String> {
@@ -731,6 +667,10 @@ fn bill_summary_from_prepared(summary: PreparedBillPreviewSummary) -> InboxPrevi
         purpose_text: summary.purpose_text,
         parse_note: summary.parse_note,
         status: summary.status,
+        identity: summary.identity,
+        content_hash: summary.content_hash,
+        source_page_start: summary.source_page_start,
+        source_page_end: summary.source_page_end,
     }
 }
 
@@ -742,58 +682,25 @@ fn skipped_notice(status: &str, message: &str) -> InboxPreviewNotice {
 }
 
 fn analyze_staged_attachment(
-    conn: &rusqlite::Connection,
+    _conn: &rusqlite::Connection,
     billing_period_id: i64,
     context: &super::bills::BillImportContext,
-    message: &MessageContext,
-    safe_filename: &str,
-    attachment_sha256: &str,
-    staged_path: &str,
+    _message: &MessageContext,
+    _safe_filename: &str,
+    _attachment_sha256: &str,
+    prepared: Option<PreparedBillImport>,
 ) -> AttachmentAnalysis {
-    match has_imported_hash(conn, billing_period_id, attachment_sha256) {
-        Ok(true) => {
-            let reason =
-                "Attachment hash was already imported for this billing period.".to_string();
-            return AttachmentAnalysis {
-                status: "skipped_duplicate".to_string(),
-                reason: Some(reason),
-                error: None,
-                prepared: None,
-                kept_bill_hashes: Vec::new(),
-                bill_summaries: Vec::new(),
-                notices: Vec::new(),
-            };
-        }
-        Ok(false) => {}
-        Err(error) => {
-            return AttachmentAnalysis {
-                status: "failed".to_string(),
-                reason: None,
-                error: Some(error),
-                prepared: None,
-                kept_bill_hashes: Vec::new(),
-                bill_summaries: Vec::new(),
-                notices: Vec::new(),
-            };
-        }
-    }
-
-    let source_label = format!("email: {} / {}", message.sender, safe_filename);
-    let mut prepared =
-        match prepare_multi_bill_import_from_path(staged_path, source_label, context, false) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                return AttachmentAnalysis {
-                    status: "failed".to_string(),
-                    reason: None,
-                    error: Some(error),
-                    prepared: None,
-                    kept_bill_hashes: Vec::new(),
-                    bill_summaries: Vec::new(),
-                    notices: Vec::new(),
-                };
-            }
+    let Some(mut prepared) = prepared else {
+        return AttachmentAnalysis {
+            status: "failed".to_string(),
+            reason: None,
+            error: Some("Prepared invoice data is unavailable.".to_string()),
+            prepared: None,
+            kept_bill_hashes: Vec::new(),
+            bill_summaries: Vec::new(),
+            notices: Vec::new(),
         };
+    };
 
     let period_mismatch = match prepared.detected_source_period() {
         Some((source_month, source_year))
@@ -839,47 +746,14 @@ fn analyze_staged_attachment(
         };
     }
 
-    let missing_provider_ids = match missing_provider_ids(conn, billing_period_id, context) {
-        Ok(ids) => ids,
-        Err(error) => {
-            return AttachmentAnalysis {
-                status: "failed".to_string(),
-                reason: None,
-                error: Some(error),
-                prepared: None,
-                kept_bill_hashes: Vec::new(),
-                bill_summaries: Vec::new(),
-                notices: Vec::new(),
-            };
-        }
-    };
     let mut notices = Vec::new();
-    let filter_result =
-        retain_expected_provider_bills(&mut prepared, &context.providers, &missing_provider_ids);
-    if let (Some(status), Some(reason)) = (
-        filter_result.skipped_status,
-        filter_result.skipped_reason.as_deref(),
-    ) {
-        notices.push(skipped_notice(status, reason));
-    }
 
     if prepared.has_extracted_bills() {
-        let existing_hashes = match existing_bill_hashes(conn, billing_period_id) {
-            Ok(hashes) => hashes,
-            Err(error) => {
-                return AttachmentAnalysis {
-                    status: "failed".to_string(),
-                    reason: None,
-                    error: Some(error),
-                    prepared: None,
-                    kept_bill_hashes: Vec::new(),
-                    bill_summaries: Vec::new(),
-                    notices,
-                };
-            }
-        };
+        // Keep existing-period candidates visible so their current identity
+        // evidence can be reviewed before the explicit provider/month conflict.
+        // Only duplicate representations inside this attachment are collapsed.
         let hash_filter =
-            retain_new_bill_hashes(&mut prepared, &context.providers, &existing_hashes);
+            retain_new_bill_hashes(&mut prepared, &context.providers, &HashSet::new());
         if hash_filter.skipped_duplicate_count > 0 {
             let reason = if hash_filter.skipped_duplicate_count == 1 {
                 "Parsed bill content was already imported for this billing period.".to_string()
@@ -893,10 +767,31 @@ fn analyze_staged_attachment(
         }
 
         if prepared.has_extracted_bills() {
-            let bill_summaries = preview_prepared_bills(&prepared, &context.providers)
+            let bill_summaries: Vec<_> = preview_prepared_bills(&prepared, &context.providers)
                 .into_iter()
                 .map(bill_summary_from_prepared)
                 .collect();
+            for summary in &bill_summaries {
+                let Some(provider_id) = summary.provider_id else {
+                    continue;
+                };
+                let exists = _conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM bills WHERE billing_period_id=?1 AND provider_id=?2)",
+                        params![billing_period_id, provider_id],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .unwrap_or(false);
+                if exists {
+                    notices.push(skipped_notice(
+                        "provider_month_conflict",
+                        &format!(
+                            "{} already has a bill in this billing month. Review this candidate, then remove or correct the existing bill before importing.",
+                            summary.provider_name.as_deref().unwrap_or("This provider")
+                        ),
+                    ));
+                }
+            }
             return AttachmentAnalysis {
                 status: "ready".to_string(),
                 reason: None,
@@ -940,6 +835,7 @@ fn persist_analysis(
     safe_filename: &str,
     attachment_sha256: &str,
     analysis: AttachmentAnalysis,
+    identity_exceptions: &HashMap<String, IdentityExceptionInput>,
 ) -> Vec<InboxImportResult> {
     if let Err(error) = ensure_period_open(conn, billing_period_id) {
         return vec![failure_result(message, safe_filename, error)];
@@ -984,12 +880,13 @@ fn persist_analysis(
             )];
         }
     };
-    let saved = match save_prepared_multi_bill_import(
+    let saved = match save_prepared_multi_bill_import_with_exceptions(
         conn,
         billing_period_id,
         prepared,
         &context.providers,
         false,
+        identity_exceptions,
     ) {
         Ok(saved) => saved,
         Err(error) => {
@@ -1066,12 +963,19 @@ fn persist_analysis(
 fn import_staged_attachment(
     db: &State<DbState>,
     billing_period_id: i64,
-    context: &super::bills::BillImportContext,
+    _context: &super::bills::BillImportContext,
     message: &MessageContext,
     safe_filename: &str,
     attachment_sha256: &str,
     staged_path: &str,
+    identity_exceptions: &HashMap<String, IdentityExceptionInput>,
 ) -> Vec<InboxImportResult> {
+    let source_label = format!("email: {} / {}", message.sender, safe_filename);
+    let prepared =
+        match prepare_multi_bill_import_from_path(staged_path, source_label, _context, false) {
+            Ok(prepared) => prepared,
+            Err(error) => return vec![failure_result(message, safe_filename, error)],
+        };
     let conn = match db.0.lock() {
         Ok(conn) => conn,
         Err(e) => return vec![failure_result(message, safe_filename, e.to_string())],
@@ -1080,24 +984,29 @@ fn import_staged_attachment(
         Ok(tx) => tx,
         Err(e) => return vec![failure_result(message, safe_filename, e.to_string())],
     };
+    let context = match load_bill_import_context(&tx, billing_period_id) {
+        Ok(context) => context,
+        Err(error) => return vec![failure_result(message, safe_filename, error)],
+    };
     let analysis = analyze_staged_attachment(
         &tx,
         billing_period_id,
-        context,
+        &context,
         message,
         safe_filename,
         attachment_sha256,
-        staged_path,
+        Some(prepared),
     );
     let was_ready = analysis.status == "ready";
     let results = persist_analysis(
         &tx,
         billing_period_id,
-        context,
+        &context,
         message,
         safe_filename,
         attachment_sha256,
         analysis,
+        identity_exceptions,
     );
     if was_ready && results.iter().any(|result| result.status == "failed") {
         let error = results
@@ -1179,6 +1088,7 @@ fn import_attachment(
         &safe_filename,
         &hash,
         &temp_path,
+        &HashMap::new(),
     )
 }
 
@@ -1572,6 +1482,8 @@ fn preview_inbox_attachments_impl(
                                 attachment_sha256,
                                 file_path: None,
                                 status: "failed".to_string(),
+                                bill_keys: Vec::new(),
+                                has_unmatched_bill: false,
                             },
                         );
                         continue;
@@ -1603,23 +1515,42 @@ fn preview_inbox_attachments_impl(
                             attachment_sha256,
                             file_path: None,
                             status: "failed".to_string(),
+                            bill_keys: Vec::new(),
+                            has_unmatched_bill: false,
                         },
                     );
                     continue;
                 }
                 let stage_ms = stage_start.elapsed().as_millis();
                 let analysis_start = Instant::now();
-                let analysis = {
-                    let conn = db.0.lock().map_err(|e| e.to_string())?;
-                    analyze_staged_attachment(
-                        &conn,
-                        billing_period_id,
-                        &context,
-                        &message_context,
-                        &safe_filename,
-                        &attachment_sha256,
-                        &staged_path.to_string_lossy(),
-                    )
+                let source_label = format!("email: {} / {}", message_context.sender, safe_filename);
+                let analysis = match prepare_multi_bill_import_from_path(
+                    &staged_path.to_string_lossy(),
+                    source_label,
+                    &context,
+                    false,
+                ) {
+                    Ok(prepared) => {
+                        let conn = db.0.lock().map_err(|e| e.to_string())?;
+                        analyze_staged_attachment(
+                            &conn,
+                            billing_period_id,
+                            &context,
+                            &message_context,
+                            &safe_filename,
+                            &attachment_sha256,
+                            Some(prepared),
+                        )
+                    }
+                    Err(error) => AttachmentAnalysis {
+                        status: "failed".to_string(),
+                        reason: None,
+                        error: Some(error),
+                        prepared: None,
+                        kept_bill_hashes: Vec::new(),
+                        bill_summaries: Vec::new(),
+                        notices: Vec::new(),
+                    },
                 };
                 let analysis_ms = analysis_start.elapsed().as_millis();
                 let candidate = preview_candidate_from_analysis(
@@ -1637,6 +1568,18 @@ fn preview_inbox_attachments_impl(
                         attachment_sha256,
                         file_path: Some(staged_path),
                         status: candidate.status.clone(),
+                        bill_keys: candidate
+                            .bills
+                            .iter()
+                            .filter_map(|bill| {
+                                bill.provider_id
+                                    .map(|provider_id| (provider_id, bill.content_hash.clone()))
+                            })
+                            .collect(),
+                        has_unmatched_bill: candidate
+                            .bills
+                            .iter()
+                            .any(|bill| bill.provider_id.is_none()),
                     },
                 );
                 debug_log.push(format!(
@@ -1694,11 +1637,33 @@ fn preview_inbox_attachments_impl(
 }
 
 #[tauri::command]
-pub fn import_inbox_preview_selection(
+pub async fn import_inbox_preview_selection(
+    app: AppHandle,
+    session_id: String,
+    candidate_ids: Vec<String>,
+    exceptions: Vec<IdentityExceptionInput>,
+) -> Result<Vec<InboxImportResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<DbState>();
+        let preview_state = app.state::<InboxPreviewState>();
+        import_inbox_preview_selection_impl(
+            db,
+            preview_state,
+            session_id,
+            candidate_ids,
+            exceptions,
+        )
+    })
+    .await
+    .map_err(|error| format!("Inbox selection task failed: {error}"))?
+}
+
+fn import_inbox_preview_selection_impl(
     db: State<DbState>,
     preview_state: State<InboxPreviewState>,
     session_id: String,
     candidate_ids: Vec<String>,
+    exceptions: Vec<IdentityExceptionInput>,
 ) -> Result<Vec<InboxImportResult>, String> {
     sweep_preview_sessions(&preview_state)?;
     if candidate_ids.is_empty() {
@@ -1721,47 +1686,137 @@ pub fn import_inbox_preview_selection(
                     .map(|candidate| (id.clone(), candidate))
             })
             .collect::<Vec<_>>();
+        if selected.len() != candidate_ids.len() {
+            return Err(
+                "One or more inbox preview candidates expired. Refresh the preview.".to_string(),
+            );
+        }
         (session.billing_period_id, selected)
     };
 
-    let context = {
+    let (context, existing_exact_hashes) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         ensure_period_open(&conn, billing_period_id)?;
-        load_bill_import_context(&conn, billing_period_id)?
+        (
+            load_bill_import_context(&conn, billing_period_id)?,
+            stored_bill_hashes(&conn, billing_period_id)?,
+        )
     };
-    let mut results = Vec::new();
+    let exception_map: HashMap<String, IdentityExceptionInput> = exceptions
+        .into_iter()
+        .map(|exception| (exception.content_hash.clone(), exception))
+        .collect();
+    let mut provider_hashes: HashMap<i64, HashSet<String>> = HashMap::new();
     for (_, candidate) in &selected_candidates {
+        if candidate.has_unmatched_bill {
+            return Err(
+                "A selected invoice has no configured provider and cannot be imported, even by exception."
+                    .to_string(),
+            );
+        }
+        for (provider_id, content_hash) in &candidate.bill_keys {
+            provider_hashes
+                .entry(*provider_id)
+                .or_default()
+                .insert(content_hash.clone());
+        }
+    }
+
+    if provider_hashes.values().any(|hashes| hashes.len() > 1) {
+        return Err(
+            "Multiple distinct passing or excepted invoices target the same provider/month. Select neither until the conflict is resolved."
+                .to_string(),
+        );
+    }
+    let mut prepared_candidates = Vec::new();
+    let mut results = Vec::new();
+    let mut imported_candidate_ids = HashSet::new();
+    let mut selected_bill_hashes = existing_exact_hashes;
+    for (candidate_id, candidate) in &selected_candidates {
         if candidate.status != "ready" {
+            return Err("A selected inbox preview candidate is no longer importable.".to_string());
+        }
+        let path = candidate
+            .file_path
+            .as_ref()
+            .ok_or_else(|| "Preview candidate attachment is no longer available.".to_string())?;
+        let source_label = format!(
+            "email: {} / {}",
+            candidate.message.sender, candidate.attachment_filename
+        );
+        let mut prepared = prepare_multi_bill_import_from_path(
+            &path.to_string_lossy(),
+            source_label,
+            &context,
+            false,
+        )?;
+        let hash_result =
+            retain_new_bill_hashes(&mut prepared, &context.providers, &selected_bill_hashes);
+        selected_bill_hashes.extend(hash_result.kept_hashes);
+        if !prepared.has_extracted_bills() {
             results.push(skipped_result(
                 &candidate.message,
                 &candidate.attachment_filename,
-                &candidate.status,
-                "Preview candidate is not importable.",
+                "skipped_duplicate_bill",
+                "Every invoice in this selected attachment is an exact duplicate of an existing import or earlier selection.",
             ));
+            imported_candidate_ids.insert(candidate_id.clone());
             continue;
         }
-        let Some(path) = &candidate.file_path else {
-            results.push(failure_result(
-                &candidate.message,
-                &candidate.attachment_filename,
-                "Preview candidate attachment is no longer available.".to_string(),
-            ));
-            continue;
-        };
-        results.extend(import_staged_attachment(
-            &db,
+        prepared_candidates.push((candidate_id.clone(), candidate.clone(), prepared));
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    ensure_period_open(&tx, billing_period_id)?;
+    let current_context = load_bill_import_context(&tx, billing_period_id)?;
+    for (candidate_id, candidate, prepared) in prepared_candidates {
+        let analysis = analyze_staged_attachment(
+            &tx,
             billing_period_id,
-            &context,
+            &current_context,
             &candidate.message,
             &candidate.attachment_filename,
             &candidate.attachment_sha256,
-            &path.to_string_lossy(),
-        ));
+            Some(prepared),
+        );
+        let candidate_results = persist_analysis(
+            &tx,
+            billing_period_id,
+            &current_context,
+            &candidate.message,
+            &candidate.attachment_filename,
+            &candidate.attachment_sha256,
+            analysis,
+            &exception_map,
+        );
+        if !candidate_results
+            .iter()
+            .any(|result| result.status == "imported")
+        {
+            let error = candidate_results
+                .iter()
+                .find_map(|result| {
+                    result
+                        .error
+                        .clone()
+                        .or_else(|| result.skipped_reason.clone())
+                })
+                .unwrap_or_else(|| "Inbox batch finalization failed.".to_string());
+            let _ = tx.rollback();
+            return Err(error);
+        }
+        imported_candidate_ids.insert(candidate_id);
+        results.extend(candidate_results);
     }
+    tx.commit().map_err(|e| e.to_string())?;
 
     let mut sessions = preview_state.sessions.lock().map_err(|e| e.to_string())?;
     if let Some(session) = sessions.get_mut(&session_id) {
         for (id, candidate) in selected_candidates {
+            if !imported_candidate_ids.contains(&id) {
+                continue;
+            }
             if let Some(path) = candidate.file_path {
                 let _ = std::fs::remove_file(path);
             }
@@ -2008,6 +2063,18 @@ mod tests {
                 purpose_text: String::new(),
                 parse_note: String::new(),
                 status: "draft".to_string(),
+                identity: IdentityVerification {
+                    status: "matched".to_string(),
+                    explanation: "Matched".to_string(),
+                    expected_values: Vec::new(),
+                    found_values: Vec::new(),
+                    page_start: Some(1),
+                    page_end: Some(1),
+                    rule_snapshot: String::new(),
+                },
+                content_hash: "hash".to_string(),
+                source_page_start: Some(1),
+                source_page_end: Some(1),
             }],
             notices: vec![skipped_notice(
                 "skipped_unknown_provider",
@@ -2029,7 +2096,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_preview_analysis_writes_no_inbox_import_rows() {
+    fn preview_analysis_never_writes_inbox_import_rows() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "
@@ -2051,20 +2118,13 @@ mod tests {
         };
         let message = test_message();
 
-        let analysis = analyze_staged_attachment(
-            &conn,
-            10,
-            &context,
-            &message,
-            "bill.pdf",
-            "abc",
-            "unused.pdf",
-        );
+        let analysis =
+            analyze_staged_attachment(&conn, 10, &context, &message, "bill.pdf", "abc", None);
 
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM inbox_imports", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(analysis.status, "skipped_duplicate");
+        assert_eq!(analysis.status, "failed");
         assert_eq!(count, 1);
     }
 }

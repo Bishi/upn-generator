@@ -50,6 +50,8 @@
 - [ ] Send apartment emails with multiple comma-separated recipients and confirm per-recipient status is recorded.
 - [ ] Reload the UPN page and confirm delivery history is restored for sent, failed, blocked, or partial rows.
 - [ ] Change packet content after a prior send/manual confirmation and confirm the prior delivery is shown as no longer current until sent or manually marked delivered again.
+- [ ] Set a bill identity status to an unverified state and confirm Send Emails, Download All PDFs, and Mark Delivered are blocked by `building_identity_unverified`.
+- [ ] Approve a non-empty identity exception and confirm those actions are eligible again when no unrelated validation issue remains; the UI must not call the exception a match.
 
 ## Notes
 

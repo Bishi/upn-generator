@@ -34,6 +34,12 @@ const newProvider = (): Provider => ({
   invoice_number_pattern: "",
   purpose_text_template: "",
   split_basis: "m2_percentage",
+  identity_rule_type: "unconfigured",
+  identity_rule_operator: "all",
+  identity_label: "",
+  identity_value: "",
+  identity_alternate_label: "",
+  identity_alternate_value: "",
 });
 
 function splitBasisLabel(splitBasis: Provider["split_basis"]) {
@@ -81,7 +87,13 @@ function providersEqual(a: Provider | null, b: Provider | null) {
     a.due_date_pattern === b.due_date_pattern &&
     a.invoice_number_pattern === b.invoice_number_pattern &&
     a.purpose_text_template === b.purpose_text_template &&
-    a.split_basis === b.split_basis
+    a.split_basis === b.split_basis &&
+    a.identity_rule_type === b.identity_rule_type &&
+    a.identity_rule_operator === b.identity_rule_operator &&
+    a.identity_label === b.identity_label &&
+    a.identity_value === b.identity_value &&
+    a.identity_alternate_label === b.identity_alternate_label &&
+    a.identity_alternate_value === b.identity_alternate_value
   );
 }
 
@@ -421,6 +433,65 @@ function ProviderDetail({
                 </option>
               </select>
             </Field>
+
+            <div className="border-t border-border pt-4 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              Building identity verification
+            </div>
+            <Field label="Rule type">
+              <select
+                value={provider.identity_rule_type}
+                onChange={(event) =>
+                  onChange({
+                    ...provider,
+                    identity_rule_type: event.target.value as Provider["identity_rule_type"],
+                  })
+                }
+                className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-card focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="unconfigured">Not configured (never verified)</option>
+                <option value="labeled_value">Labeled identifier</option>
+                <option value="building_address">Building address (weaker evidence)</option>
+              </select>
+            </Field>
+            {provider.identity_rule_type === "labeled_value" && (
+              <>
+                <Field label="Rule semantics">
+                  <select
+                    value={provider.identity_rule_operator}
+                    onChange={(event) =>
+                      onChange({
+                        ...provider,
+                        identity_rule_operator: event.target.value as Provider["identity_rule_operator"],
+                      })
+                    }
+                    className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-card focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="all">All configured identifiers must match</option>
+                    <option value="any">Any configured identifier may match</option>
+                  </select>
+                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Identifier label">
+                    <Input value={provider.identity_label} onChange={(event) => onChange({ ...provider, identity_label: event.target.value })} />
+                  </Field>
+                  <Field label="Expected value">
+                    <Input className="font-mono" value={provider.identity_value} onChange={(event) => onChange({ ...provider, identity_value: event.target.value })} />
+                  </Field>
+                  <Field label="Alternate label">
+                    <Input value={provider.identity_alternate_label} onChange={(event) => onChange({ ...provider, identity_alternate_label: event.target.value })} />
+                  </Field>
+                  <Field label="Alternate value">
+                    <Input className="font-mono" value={provider.identity_alternate_value} onChange={(event) => onChange({ ...provider, identity_alternate_value: event.target.value })} />
+                  </Field>
+                </div>
+              </>
+            )}
+            {provider.identity_rule_type === "building_address" && (
+              <Field label="Building street and house number">
+                <Input value={provider.identity_value} onChange={(event) => onChange({ ...provider, identity_value: event.target.value })} />
+                <p className="mt-1 text-xs text-warning">Address matching is temporary, weaker evidence. Replace it with the agreed offer-number rule when available.</p>
+              </Field>
+            )}
 
             <div className="border-t border-border pt-4 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
               Creditor details

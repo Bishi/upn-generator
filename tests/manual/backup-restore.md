@@ -25,6 +25,9 @@
 - [ ] Restore a backup with the same SMTP/IMAP usernames and confirm matching Windows Credential Manager passwords can still be reused.
 - [ ] Restore a backup with different SMTP/IMAP usernames and confirm the app requires entering new passwords.
 - [ ] Confirm restore shows a clear success or failure message and does not leave the app half-updated after an error.
+- [ ] Configure a non-default provider identity rule, save matched evidence and a noted exception, then back up and restore; confirm rule, evidence, exception note/time, and page range survive.
+- [ ] Restore a pre-identity-verification backup and confirm restored providers are explicitly Unconfigured and restored bills are Not checked, without inheriting current rules or fabricated matches.
+- [ ] Confirm Phase A backups do not contain supplier original-document blobs because durable originals remain Phase B work.
 
 ## Notes
 

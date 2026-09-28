@@ -60,6 +60,8 @@ struct BillForValidation {
     parse_note: String,
     status: String,
     reviewed_at: Option<String>,
+    identity_status: String,
+    identity_exception_note: String,
 }
 
 #[derive(Debug, Clone)]
@@ -269,7 +271,8 @@ fn load_bills(conn: &Connection, billing_period_id: i64) -> Result<Vec<BillForVa
             "SELECT b.id, b.provider_id, p.name, b.source_filename, b.amount_cents,
                     b.creditor_iban, b.reference, b.due_date, b.purpose_code,
                     b.purpose_text, COALESCE(p.split_basis, 'm2_percentage'),
-                    b.parse_note, b.status, b.reviewed_at
+                    b.parse_note, b.status, b.reviewed_at, b.identity_status,
+                    b.identity_exception_note
              FROM bills b
              LEFT JOIN providers p ON b.provider_id = p.id
              WHERE b.billing_period_id = ?1
@@ -293,6 +296,8 @@ fn load_bills(conn: &Connection, billing_period_id: i64) -> Result<Vec<BillForVa
                 parse_note: row.get(11)?,
                 status: row.get(12)?,
                 reviewed_at: row.get(13)?,
+                identity_status: row.get(14)?,
+                identity_exception_note: row.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -435,6 +440,26 @@ fn validate_unreviewed_import_warnings(
                 "unreviewed_import_bill",
                 bill,
                 "Bill has import/parser warnings that have not been reviewed.".to_string(),
+                all_actions(),
+            ));
+        }
+    }
+}
+
+fn validate_building_identity(bills: &[BillForValidation], issues: &mut Vec<UpnValidationIssue>) {
+    for bill in bills {
+        if bill.identity_status != "matched"
+            && !(bill.identity_status == "exception"
+                && !bill.identity_exception_note.trim().is_empty())
+        {
+            issues.push(bill_issue(
+                SEVERITY_ERROR,
+                "building_identity_unverified",
+                bill,
+                format!(
+                    "Building identity is '{}'. Verify the invoice or approve a noted exception.",
+                    bill.identity_status
+                ),
                 all_actions(),
             ));
         }
@@ -721,6 +746,7 @@ pub fn validate_upn_pre_send_inner(
     }
 
     validate_unreviewed_import_warnings(&bills, &mut issues);
+    validate_building_identity(&bills, &mut issues);
     validate_payment_fields(&bills, &mut issues);
     validate_duplicate_providers(&bills, &mut issues);
     validate_split_inputs(&bills, &active_apartments, &mut issues);
@@ -871,7 +897,9 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'draft',
                 source_filename TEXT NOT NULL DEFAULT '',
                 reviewed_at TEXT,
-                review_note TEXT NOT NULL DEFAULT ''
+                review_note TEXT NOT NULL DEFAULT '',
+                identity_status TEXT NOT NULL DEFAULT 'matched',
+                identity_exception_note TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE bill_splits (
                 id INTEGER PRIMARY KEY,
@@ -1021,6 +1049,33 @@ mod tests {
         let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
 
         assert!(!validation_codes(&validation).contains(&"unreviewed_import_bill".to_string()));
+        assert!(validation.can_send_emails);
+        assert!(validation.can_mark_delivered);
+        assert!(validation.can_download_all);
+    }
+
+    #[test]
+    fn unverified_identity_blocks_actions_but_noted_exception_allows_them() {
+        let conn = setup_valid_period();
+        conn.execute("UPDATE bills SET identity_status='missing' WHERE id=1", [])
+            .unwrap();
+
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert!(validation_codes(&validation).contains(&"building_identity_unverified".to_string()));
+        assert!(!validation.can_send_emails);
+        assert!(!validation.can_mark_delivered);
+        assert!(!validation.can_download_all);
+
+        conn.execute(
+            "UPDATE bills SET identity_status='exception',
+             identity_exception_note='Checked against supplier portal' WHERE id=1",
+            [],
+        )
+        .unwrap();
+        let validation = validate_upn_pre_send_inner(&conn, 1).unwrap();
+        assert!(
+            !validation_codes(&validation).contains(&"building_identity_unverified".to_string())
+        );
         assert!(validation.can_send_emails);
         assert!(validation.can_mark_delivered);
         assert!(validation.can_download_all);

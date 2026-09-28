@@ -83,7 +83,7 @@ Enter your incoming IMAP mailbox settings so the app can manually import bill at
 | Folder | `INBOX` |
 | TLS | Enabled |
 
-Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. On the Bills page, **Import from Inbox** opens a preview step where you can override the scan window for that run, inspect parsed attachments, and import only selected ready candidates. A scan window of 0 means today only; higher values include today plus earlier calendar dates. Previewing does not create bills or inbox audit rows; imported attachments must still match the selected billing month and a configured provider that is still missing for that month.
+Use **Sender allowlist** to limit imports to known bill senders. The app reads the mailbox in read-only mode and does not mark messages as read, move messages, or delete mail. On the Bills page, **Import from Inbox** opens a preview step where you can override the scan window for that run, inspect every parsed candidate and its building-identity result, and import only selected candidates. A scan window of 0 means today only; higher values include today plus earlier calendar dates. Previewing does not create bills or inbox audit rows. Final import rechecks current provider rules and provider/month conflicts in one transaction.
 
 The default database stores the IMAP server, port, TLS setting, folder, scan window, `kamniska.racuni@gmail.com` as the username, and an empty sender allowlist. Enter the app password before importing from the inbox.
 
@@ -113,9 +113,13 @@ Use the month picker to choose the billing month. Years and months can be browse
 
 Select the billing month and click **Import Bills** to choose a local file, or click **Import from Inbox** to scan the configured mailbox for bill attachments. For example, bills titled `02.2026` belong in the February 2026 billing month, even when the provider charges for January usage.
 
-The app supports importing a single combined PDF or a supported image file (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`). PDFs can contain all bills together; image imports are OCR'd on Windows before the same provider-detection pipeline runs.
+The app supports importing one or more combined PDFs or supported image files (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`). Import first opens a candidate review dialog; nothing is saved until you confirm the selected invoices. PDFs are processed page by page and use bounded Windows OCR alongside native text extraction so image-only identity fields retain their invoice/page association. A multi-file confirmation is saved atomically.
 
-Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, skips attachments that do not clearly match the selected billing month, skips unknown providers, skips configured providers that already have a bill in that month, avoids duplicate attachments and duplicate parsed bill content by hash, and deletes its temporary attachment file when that attachment has finished importing.
+Inbox import supports the same PDF and image attachment types. It scans recent messages only, skips messages and attachments that are too large, validates attachment type before parsing, avoids exact duplicate attachments and invoice content by hash, and deletes temporary attachment files after use. Unknown providers, failed identity checks, and existing or competing provider/month invoices remain visible as explicit review/conflict outcomes instead of being silently treated as the expected bill.
+
+Each seeded whole-building provider has an editable typed identity rule under **Settings -> Providers**. Local and inbox previews show `Matched`, `Mismatched`, `Missing`, `Unreadable`, or `Unconfigured` evidence with source pages. Only a match imports automatically. You may approve another result only with an explicit exception note; the saved bill remains marked as an exception, and editing its payment content invalidates that approval. Splitting and bulk UPN actions require either a match or a noted exception.
+
+**Current Phase A limitation:** supplier originals are not retained after import and there is no in-app original-document viewer yet. Durable originals, backup/restore of those originals, and the in-app viewer remain requested Phase B work in the approved second PR.
 
 | Provider | Service | Detection method |
 |----------|---------|-----------------|
@@ -126,7 +130,7 @@ Inbox import supports the same PDF and image attachment types. It scans recent m
 
 After import, check the bills table: amount, reference, due date, and purpose should all be filled in correctly.
 
-If the parser or OCR detects a bill but flags missing or uncertain data, the Bills page shows it as needing review. Use **Mark reviewed** after checking/correcting the row; the original import note remains visible, but reviewed warning bills no longer block bulk UPN actions.
+If the parser or OCR detects a bill but flags missing or uncertain payment data, the Bills page shows it as needing review. Use **Mark reviewed** after checking/correcting the row; the original import note remains visible. This parser review is separate from building-identity verification and does not override it.
 
 Manual entry: if a bill was not detected, click **Add manually** and enter the details yourself.
 
@@ -149,7 +153,7 @@ Individual amounts can be manually adjusted by clicking a cell.
 Go to the **UPN** page and select the billing period.
 
 Each apartment card shows its line items and the total amount due.
-Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for unreviewed import warnings, missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. Reviewed import warnings remain visible on Bills but no longer stop delivery actions.
+Before a packet is sent, marked delivered, or downloaded in bulk, the app checks the selected period for unverified building identity, unreviewed import warnings, missing payment fields, duplicate provider bills, split mismatches, inactive-apartment splits, invalid recipient addresses, and email safety allowlist blockers. Blocking issues appear in the validation panel and disable the affected actions. A documented identity exception is eligible but is never relabeled as a successful match.
 
 | Action | Description |
 |--------|-------------|
@@ -187,7 +191,7 @@ Five tabs for configuring the application:
 
 - **Building** - Building address and contact details
 - **Apartments** - List of apartments with names, unit codes, occupants, m2 percentages, and comma-separated email recipients
-- **Providers** - Utility providers with IBANs, purpose text templates, and split basis rules (`People`, `m2`, or `Equal`)
+- **Providers** - Utility providers with IBANs, purpose text templates, split basis rules (`People`, `m2`, or `Equal`), and typed whole-building identity rules with explicit AND/OR behavior
 - **Delivery** - SMTP settings for sending emails and IMAP settings for manual read-only bill attachment import
 - **App** - Database-backed visual theme selector plus manual SQLite backup and restore
 
@@ -203,7 +207,7 @@ All data is stored locally in a SQLite database at:
 %APPDATA%\si.upn-generator\upn-generator.db
 ```
 
-Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, month close state, the selected appearance theme, inbox import history, and UPN email/manual delivery history, but intentionally exclude saved SMTP and inbox passwords. Mail passwords are stored in Windows Credential Manager and are matched to the configured username before use.
+Manual backups are saved wherever you choose as `.sqlite3` files. They contain app data, provider identity rules, saved bill verification evidence and exceptions, month close state, the selected appearance theme, inbox import history, and UPN email/manual delivery history, but intentionally exclude saved SMTP and inbox passwords. Pre-feature backups restore provider rules as unconfigured and old bills as not checked. Mail passwords are stored in Windows Credential Manager and are matched to the configured username before use.
 
 Nothing is sent to the cloud. Emails are sent directly via the SMTP server configured in Settings. Inbox imports connect directly to the IMAP server you configure, store only import metadata, and do not persist raw extracted text from inbox attachments.
 

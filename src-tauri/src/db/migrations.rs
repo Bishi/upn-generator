@@ -1,5 +1,15 @@
 use rusqlite::{params, Connection};
 
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    conn.prepare(&format!("PRAGMA table_info({table})"))
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map(|columns| columns.iter().any(|candidate| candidate == column))
+        .unwrap_or(false)
+}
+
 const DEFAULT_BUILDING_NAME: &str = "Skupnost stanovalcev Kamniska 36";
 const DEFAULT_BUILDING_ADDRESS: &str = "Kamniska ulica 36";
 const DEFAULT_BUILDING_CITY: &str = "Ljubljana";
@@ -246,6 +256,77 @@ fn ensure_provider_seed(conn: &Connection, provider: ProviderSeed<'static>) -> R
     Ok(())
 }
 
+fn seed_provider_identity_rules(conn: &Connection) -> Result<(), String> {
+    let rules = [
+        (
+            "SI56 0400 1004 8988 093",
+            "labeled_value",
+            "any",
+            "Številka kupca",
+            "C0367125",
+            "Številka merilnega mesta",
+            "3-82858",
+        ),
+        (
+            "SI56 0292 4025 3764 022",
+            "labeled_value",
+            "all",
+            "PLIN Odjemno mesto",
+            "01505116659",
+            "",
+            "",
+        ),
+        (
+            "SI56 0400 1004 9142 226",
+            "labeled_value",
+            "all",
+            "Šifra naročnika",
+            "0040113249",
+            "",
+            "",
+        ),
+        (
+            "SI56 2900 0000 3057 588",
+            "labeled_value",
+            "all",
+            "Št. odjemnega mesta",
+            "5495/109463",
+            "",
+            "",
+        ),
+        (
+            "SI56 0201 1025 7890 131",
+            "building_address",
+            "all",
+            "Relevant building address",
+            "Kamniška 36",
+            "",
+            "",
+        ),
+    ];
+
+    for (iban, rule_type, operator, label, value, alternate_label, alternate_value) in rules {
+        conn.execute(
+            "UPDATE providers
+             SET identity_rule_type=?1, identity_rule_operator=?2,
+                 identity_label=?3, identity_value=?4,
+                 identity_alternate_label=?5, identity_alternate_value=?6
+             WHERE creditor_iban=?7",
+            params![
+                rule_type,
+                operator,
+                label,
+                value,
+                alternate_label,
+                alternate_value,
+                iban
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
@@ -291,7 +372,13 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             due_date_pattern TEXT NOT NULL DEFAULT '',
             invoice_number_pattern TEXT NOT NULL DEFAULT '',
             purpose_text_template TEXT NOT NULL DEFAULT '',
-            split_basis TEXT NOT NULL DEFAULT 'm2_percentage'
+            split_basis TEXT NOT NULL DEFAULT 'm2_percentage',
+            identity_rule_type TEXT NOT NULL DEFAULT 'unconfigured',
+            identity_rule_operator TEXT NOT NULL DEFAULT 'all',
+            identity_label TEXT NOT NULL DEFAULT '',
+            identity_value TEXT NOT NULL DEFAULT '',
+            identity_alternate_label TEXT NOT NULL DEFAULT '',
+            identity_alternate_value TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS billing_periods (
@@ -321,7 +408,14 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             status TEXT NOT NULL DEFAULT 'draft',
             source_filename TEXT NOT NULL DEFAULT '',
             reviewed_at TEXT,
-            review_note TEXT NOT NULL DEFAULT ''
+            review_note TEXT NOT NULL DEFAULT '',
+            identity_status TEXT NOT NULL DEFAULT 'not_checked',
+            identity_rule_snapshot TEXT NOT NULL DEFAULT '',
+            identity_evidence TEXT NOT NULL DEFAULT '',
+            identity_exception_note TEXT NOT NULL DEFAULT '',
+            identity_exception_at TEXT,
+            source_page_start INTEGER,
+            source_page_end INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS bill_splits (
@@ -419,8 +513,33 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE apartments ADD COLUMN m2_percentage REAL NOT NULL DEFAULT 0",
         [],
     );
+    let providers_had_identity_rules = table_has_column(conn, "providers", "identity_rule_type");
     let _ = conn.execute(
         "ALTER TABLE providers ADD COLUMN split_basis TEXT NOT NULL DEFAULT 'm2_percentage'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE providers ADD COLUMN identity_rule_type TEXT NOT NULL DEFAULT 'unconfigured'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE providers ADD COLUMN identity_rule_operator TEXT NOT NULL DEFAULT 'all'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE providers ADD COLUMN identity_label TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE providers ADD COLUMN identity_value TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE providers ADD COLUMN identity_alternate_label TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE providers ADD COLUMN identity_alternate_value TEXT NOT NULL DEFAULT ''",
         [],
     );
     let _ = conn.execute(
@@ -460,6 +579,28 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE bills ADD COLUMN review_note TEXT NOT NULL DEFAULT ''",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN identity_status TEXT NOT NULL DEFAULT 'not_checked'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN identity_rule_snapshot TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN identity_evidence TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN identity_exception_note TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN identity_exception_at TEXT",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE bills ADD COLUMN source_page_start INTEGER", []);
+    let _ = conn.execute("ALTER TABLE bills ADD COLUMN source_page_end INTEGER", []);
     let _ = conn.execute("ALTER TABLE billing_periods ADD COLUMN closed_at TEXT", []);
 
     let _ = conn.execute(
@@ -528,6 +669,9 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             [],
         );
         ensure_provider_seed(conn, PROVIDER_SEEDS[5])?;
+        if !providers_had_identity_rules {
+            seed_provider_identity_rules(conn)?;
+        }
     }
 
     Ok(())
@@ -582,6 +726,7 @@ fn seed_defaults(conn: &Connection) -> Result<(), String> {
     for provider in PROVIDER_SEEDS {
         ensure_provider_seed(conn, provider)?;
     }
+    seed_provider_identity_rules(conn)?;
 
     for apartment in APARTMENT_SEEDS {
         conn.execute(

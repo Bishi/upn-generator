@@ -11,6 +11,9 @@ import type {
   InboxConfig,
   InboxImportResult,
   InboxPreviewSession,
+  IdentityExceptionInput,
+  LocalBillImportFinalizeRequest,
+  LocalBillImportPreview,
   Provider,
   ResetAllDataResult,
   SmtpConfig,
@@ -73,10 +76,16 @@ export const ipc = {
   // Bills
   getBills: (billingPeriodId: number) =>
     invoke<Bill[]>("get_bills", { billingPeriodId }),
-  importBill: (filePath: string, billingPeriodId: number) =>
-    invoke<Bill>("import_bill", { filePath, billingPeriodId }),
-  importBills: (filePath: string, billingPeriodId: number) =>
-    invoke<Bill[]>("import_bills", { filePath, billingPeriodId }),
+  previewBillImport: (filePath: string, billingPeriodId: number) =>
+    invoke<LocalBillImportPreview>("preview_bill_import", { filePath, billingPeriodId }),
+  finalizeBillImportBatch: (
+    billingPeriodId: number,
+    files: LocalBillImportFinalizeRequest[],
+  ) =>
+    invoke<Bill[]>("finalize_bill_import_batch", {
+      billingPeriodId,
+      files,
+    }),
   importInboxAttachments: (billingPeriodId: number) =>
     invoke<InboxImportResult[]>("import_inbox_attachments", { billingPeriodId }),
   previewInboxAttachments: (billingPeriodId: number, daysToScan: number) =>
@@ -84,10 +93,15 @@ export const ipc = {
       billingPeriodId,
       daysToScan,
     }),
-  importInboxPreviewSelection: (sessionId: string, candidateIds: string[]) =>
+  importInboxPreviewSelection: (
+    sessionId: string,
+    candidateIds: string[],
+    exceptions: IdentityExceptionInput[],
+  ) =>
     invoke<InboxImportResult[]>("import_inbox_preview_selection", {
       sessionId,
       candidateIds,
+      exceptions,
     }),
   clearInboxPreviewSession: (sessionId: string) =>
     invoke<void>("clear_inbox_preview_session", { sessionId }),
@@ -96,6 +110,8 @@ export const ipc = {
     invoke<Bill>("mark_bill_reviewed", { billId, reviewNote }),
   markBillUnreviewed: (billId: number) =>
     invoke<Bill>("mark_bill_unreviewed", { billId }),
+  approveBillIdentityException: (billId: number, note: string) =>
+    invoke<Bill>("approve_bill_identity_exception", { billId, note }),
   deleteBill: (id: number) => invoke<void>("delete_bill", { id }),
 
   // Splits

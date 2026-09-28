@@ -28,6 +28,10 @@
 - [ ] Import selected ready candidates and confirm only selected bills are created.
 - [ ] Confirm previewing does not mark email as read, move email, delete email, or persist raw extracted text.
 - [ ] Confirm temporary attachment files are cleaned up after import.
+- [ ] Confirm every parsed candidate shows its building-identity result and source-page range, including failed/unconfigured candidates instead of silently hiding them.
+- [ ] Select a failed identity candidate and confirm a required exception note is enforced before final import.
+- [ ] Select distinct same-provider/month candidates and confirm the entire selection rolls back with a conflict; exact duplicates remain deduplicated.
+- [ ] Create a preview, then change the provider identity rule or import another bill for that provider/month, and confirm finalization rechecks current state and saves nothing on failure.
 
 ## Notes
 

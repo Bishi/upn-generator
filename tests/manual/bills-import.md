@@ -35,6 +35,14 @@
 - [ ] Clear or invalidate a bill IBAN, reference, purpose code, purpose text, or due date and confirm UPN validation blocks delivery actions.
 - [ ] Delete a bill and confirm totals and downstream split warnings update.
 - [ ] Open `%APPDATA%\si.upn-generator\import_debug.log` and confirm it contains useful parser diagnostics for local imports.
+- [ ] Select one or more local files and confirm a review dialog appears before any bill row is saved, with provider, amount, identity result, and source-page range for each candidate.
+- [ ] In the August combined sample, confirm electricity, gas, waste, water, and ZLM candidates all show matched building identity; gas and waste must succeed through rendered-page OCR rather than payment-purpose digits alone.
+- [ ] Deselect a candidate, confirm import, and verify only selected candidates are saved.
+- [ ] Select two distinct invoices for the same provider/month across one or more files and confirm neither is saved; exact duplicate content should be deduplicated.
+- [ ] Change a source file after preview and confirm final import is rejected without partial writes.
+- [ ] Select a mismatched, missing, unreadable, or unconfigured candidate and confirm import requires a non-empty exception note; verify the saved row says Exception rather than Matched.
+- [ ] Edit payment content on an exception bill and confirm its identity returns to Not checked and splitting remains blocked until a new noted exception is approved.
+- [ ] Confirm the source file can be opened temporarily during review, but after import the app does not claim to retain an original or provide an in-app original viewer (Phase B pending).
 
 ## Notes
 
