@@ -32,6 +32,7 @@
 - [ ] Select a failed identity candidate and confirm a required exception note is enforced before final import.
 - [ ] Select distinct same-provider/month candidates and confirm the entire selection rolls back with a conflict; exact duplicates remain deduplicated.
 - [ ] Create a preview, then change the provider identity rule or import another bill for that provider/month, and confirm finalization rechecks current state and saves nothing on failure.
+- [ ] Make OCR recognize an additional invoice only during finalization; confirm the entire selected batch is rejected with a refresh-preview error and no newly recognized invoice is saved.
 
 ## Notes
 

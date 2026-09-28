@@ -1341,6 +1341,15 @@ function BillsPage() {
     );
   };
 
+  const openLocalImportSource = async (path: string) => {
+    setError(null);
+    try {
+      await openPath(path);
+    } catch (e) {
+      setError(`Failed to open source file: ${e}`);
+    }
+  };
+
   const finalizeLocalImports = async () => {
     if (!localImportReview || !selected) return;
     setImporting(true);
@@ -1597,7 +1606,7 @@ function BillsPage() {
                         <div className="font-semibold">{file.preview.source_filename}</div>
                         <div className="text-xs text-muted-foreground">{file.preview.bills.length} invoice candidate(s)</div>
                       </div>
-                      <Button type="button" variant="outline" size="sm" onClick={() => openPath(file.path)}>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void openLocalImportSource(file.path)}>
                         Open source
                       </Button>
                     </div>

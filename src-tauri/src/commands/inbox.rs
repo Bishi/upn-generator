@@ -175,6 +175,22 @@ struct InboxPreviewCandidateData {
     has_unmatched_bill: bool,
 }
 
+fn matches_preview_bill_keys(
+    candidate: &InboxPreviewCandidateData,
+    reparsed: &[PreparedBillPreviewSummary],
+) -> bool {
+    let preview_keys: HashSet<_> = candidate.bill_keys.iter().cloned().collect();
+    let reparsed_keys: HashSet<_> = reparsed
+        .iter()
+        .filter_map(|bill| {
+            bill.provider_id
+                .map(|provider_id| (provider_id, bill.content_hash.clone()))
+        })
+        .collect();
+    preview_keys == reparsed_keys
+        && candidate.has_unmatched_bill == reparsed.iter().any(|bill| bill.provider_id.is_none())
+}
+
 pub struct InboxPreviewState {
     sessions: Mutex<HashMap<String, InboxPreviewSessionData>>,
 }
@@ -1750,6 +1766,17 @@ fn import_inbox_preview_selection_impl(
             &context,
             false,
         )?;
+        // Preview removes duplicate representations within the attachment.
+        // Compare that same complete set before filtering previously imported
+        // or earlier selected bills, so newly recognized invoices cannot slip in.
+        retain_new_bill_hashes(&mut prepared, &context.providers, &HashSet::new());
+        let reparsed_bills = preview_prepared_bills(&prepared, &context.providers);
+        if !matches_preview_bill_keys(candidate, &reparsed_bills) {
+            return Err(
+                "Inbox invoice candidates changed after preview. Fetch inbox preview again."
+                    .to_string(),
+            );
+        }
         let hash_result =
             retain_new_bill_hashes(&mut prepared, &context.providers, &selected_bill_hashes);
         selected_bill_hashes.extend(hash_result.kept_hashes);
@@ -2041,6 +2068,67 @@ mod tests {
             subject: "Bill".to_string(),
             received_date: None,
         }
+    }
+
+    fn test_bill_summary(
+        provider_id: Option<i64>,
+        content_hash: &str,
+    ) -> PreparedBillPreviewSummary {
+        PreparedBillPreviewSummary {
+            provider_id,
+            provider_name: Some("Provider".to_string()),
+            creditor_name: "Provider".to_string(),
+            amount_cents: 1234,
+            reference: "SI12 123".to_string(),
+            due_date: "01.04.2026".to_string(),
+            invoice_number: String::new(),
+            purpose_text: String::new(),
+            parse_note: String::new(),
+            status: "draft".to_string(),
+            identity: IdentityVerification {
+                status: "matched".to_string(),
+                explanation: "Matched".to_string(),
+                expected_values: Vec::new(),
+                found_values: Vec::new(),
+                page_start: Some(1),
+                page_end: Some(1),
+                rule_snapshot: String::new(),
+            },
+            content_hash: content_hash.to_string(),
+            source_page_start: Some(1),
+            source_page_end: Some(1),
+        }
+    }
+
+    #[test]
+    fn inbox_finalization_rejects_changed_invoice_set() {
+        let candidate = InboxPreviewCandidateData {
+            message: test_message(),
+            attachment_filename: "bill.pdf".to_string(),
+            attachment_sha256: "attachment".to_string(),
+            file_path: None,
+            status: "ready".to_string(),
+            bill_keys: vec![(7, "first".to_string())],
+            has_unmatched_bill: false,
+        };
+        let first = test_bill_summary(Some(7), "first");
+        assert!(matches_preview_bill_keys(&candidate, &[first.clone()]));
+        assert!(!matches_preview_bill_keys(
+            &candidate,
+            &[
+                first.clone(),
+                test_bill_summary(Some(7), "newly-ocr-recognized")
+            ],
+        ));
+        assert!(!matches_preview_bill_keys(&candidate, &[]));
+        assert!(!matches_preview_bill_keys(
+            &candidate,
+            &[test_bill_summary(Some(7), "changed")],
+        ));
+        assert!(!matches_preview_bill_keys(
+            &candidate,
+            &[first, test_bill_summary(None, "unknown")],
+        ));
     }
 
     #[test]
