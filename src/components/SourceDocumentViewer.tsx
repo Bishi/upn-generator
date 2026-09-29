@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Minus, Plus, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
@@ -7,6 +7,16 @@ import { Button } from "@/components/ui/button";
 
 const TIFF_DECODE_TIMEOUT_MS = 10_000;
 const VIEWER_ESCAPE_SHORTCUT = "Escape";
+const WIDE_COMPANION_QUERY = "(min-width: 1280px)";
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "iframe",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
 
 const viewerEscapeHandlers = new Set<() => void>();
 let viewerEscapeRegistered = false;
@@ -183,6 +193,24 @@ export function SourceDocumentViewer({
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [wideCompanion, setWideCompanion] = useState(
+    () => layout === "inbox-companion" && window.matchMedia(WIDE_COMPANION_QUERY).matches,
+  );
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const modal = layout === "fullscreen" || !wideCompanion;
+
+  useEffect(() => {
+    if (layout !== "inbox-companion") {
+      setWideCompanion(false);
+      return;
+    }
+    const media = window.matchMedia(WIDE_COMPANION_QUERY);
+    const update = () => setWideCompanion(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [layout]);
 
   useEffect(() => {
     if (!open || !load) return;
@@ -239,6 +267,48 @@ export function SourceDocumentViewer({
     };
   }, [onClose, open]);
 
+  useEffect(() => {
+    if (!open || !modal) return;
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const focusViewer = () => (closeButtonRef.current ?? viewer).focus();
+    const focusFrame = window.requestAnimationFrame(focusViewer);
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Node && !viewer.contains(event.target)) focusViewer();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(viewer.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+        .filter((element) => element.getClientRects().length > 0);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        viewer.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !viewer.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("focusin", onFocusIn, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [modal, open]);
+
   if (!open) return null;
   const failLoad = (message: string) => {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -252,6 +322,11 @@ export function SourceDocumentViewer({
 
   return (
     <div
+      ref={viewerRef}
+      role="dialog"
+      aria-label="Original document viewer"
+      aria-modal={modal || undefined}
+      tabIndex={modal ? -1 : undefined}
       className={layout === "inbox-companion"
         ? "fixed inset-0 z-[60] flex flex-col bg-background/95 backdrop-blur-sm xl:right-[760px] xl:border-r xl:border-border xl:shadow-pop"
         : "fixed inset-0 z-[140] flex flex-col bg-background/95 backdrop-blur-sm"}
@@ -274,7 +349,7 @@ export function SourceDocumentViewer({
             </Button>
           </div>
         )}
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close original document">
+        <Button ref={closeButtonRef} variant="ghost" size="icon" onClick={onClose} aria-label="Close original document">
           <X className="size-5" />
         </Button>
       </div>
