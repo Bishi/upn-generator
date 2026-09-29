@@ -1,11 +1,16 @@
 # Status
 
-- Current version: `0.6.0`
-- Current tag: `v0.6.0`
-- Release status: prepared on `codex/month-close-reopen`
+- Current version: `0.7.0`
+- Current tag: `v0.7.0`
+- Release status: released from `main`
 
 ## Latest Included Changes
 
+- Retained exact imported PDF, image, and TIFF originals in deduplicated SQLite storage with backup, restore, deletion, and factory-reset handling
+- Added staged and stored original viewing with page-aware PDF navigation, bounded image zoom, safe TIFF decoding, and CMYK support
+- Added a responsive side-by-side invoice viewer for inbox review, with fullscreen fallback, focus containment, and safe Escape handling
+- Preserved remaining inbox candidates after partial imports, removed completed temporary files immediately, and added Continue reviewing without rescanning
+- Added source-page actions and active-row highlighting so multi-bill PDFs open at the bill being reviewed
 - Added persisted month close/reopen status with closure timestamps and consistent workflow status across Bills, Splits, UPN, and the month picker
 - Required complete current-packet delivery and backend validation before closing a month
 - Kept closed months viewable and PDF-exportable while blocking bill, import, split, delivery, period-deletion, and relevant apartment-deletion mutations until reopened
