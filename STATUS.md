@@ -1,7 +1,7 @@
 # Status
 
-- Current version: `0.7.0`
-- Current tag: `v0.7.0`
+- Current version: `0.6.1`
+- Current tag: `v0.6.1`
 - Release status: released from `main`
 
 ## Latest Included Changes
