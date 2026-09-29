@@ -1,9 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
+import { AlertTriangle, Calendar, Check, CheckCircle2, ChevronDown, Clock, Eye, FilePlus, Inbox, Loader2, Mail, Minus, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
@@ -35,6 +34,7 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { SourceDocumentViewer, type SourceDocumentLoadResult } from "@/components/SourceDocumentViewer";
 
 export const Route = createFileRoute("/bills")({
   component: BillsPage,
@@ -83,6 +83,7 @@ function BillRow({
   onMarkReviewed,
   onMarkUnreviewed,
   onApproveIdentityException,
+  onViewOriginal,
 }: {
   bill: Bill;
   readOnly: boolean;
@@ -91,6 +92,7 @@ function BillRow({
   onMarkReviewed: (id: number) => void;
   onMarkUnreviewed: (id: number) => void;
   onApproveIdentityException: (id: number, note: string) => void;
+  onViewOriginal: (bill: Bill) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Bill>(bill);
@@ -194,14 +196,14 @@ function BillRow({
                   ? "bg-success-soft text-success"
                   : "bg-warning-soft text-warning",
               )}
-              title={bill.identity_exception_note || "Building identity matched the configured rule."}
+              title={bill.identity_exception_note || "Invoice identity matched."}
             >
               {bill.identity_status === "matched" ? (
                 <CheckCircle2 className="size-3" />
               ) : (
                 <AlertTriangle className="size-3" />
               )}
-              {bill.identity_status === "matched" ? "Building verified" : "Exception"}
+              {bill.identity_status === "matched" ? "Verified" : "Exception"}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2 py-1 text-xs font-semibold text-warning">
@@ -215,6 +217,20 @@ function BillRow({
         </td>
         <td className={billingTableCellClass}>
           <div className="flex justify-end gap-1">
+            {bill.id && bill.source_document_id ? (
+              <button
+                onClick={() => onViewOriginal(bill)}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="View original"
+                title="View original"
+              >
+                <Eye className="size-3.5" />
+              </button>
+            ) : (
+              <span className="px-1 text-[10px] text-muted-foreground" title="No retained source is linked to this bill">
+                Original unavailable
+              </span>
+            )}
             <button
               onClick={() => {
                 if (!readOnly) setEditing(true);
@@ -729,28 +745,71 @@ function InboxIdentityEvidence({ identity }: { identity: IdentityVerification })
   );
 }
 
-function InboxBillIdentity({ bill }: { bill: InboxPreviewBillSummary }) {
+function InboxBillIdentity({
+  bill,
+  sourceAvailable,
+  onViewPage,
+}: {
+  bill: InboxPreviewBillSummary;
+  sourceAvailable: boolean;
+  onViewPage: () => void;
+}) {
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const matched = bill.identity.status === "matched";
-  const page = bill.source_page_start
-    ? ` · page ${bill.source_page_start}${bill.source_page_end !== bill.source_page_start ? `-${bill.source_page_end}` : ""}`
-    : "";
-  const label = matched ? "Building verified" : `Identity: ${bill.identity.status}`;
+  const pageLabel = bill.source_page_start
+    ? bill.source_page_end && bill.source_page_end !== bill.source_page_start
+      ? `Pages ${bill.source_page_start}–${bill.source_page_end}`
+      : `Page ${bill.source_page_start}`
+    : null;
+  const label = matched ? "Verified" : `Identity: ${bill.identity.status}`;
+  const pageControl = pageLabel ? (
+    <>
+      <span aria-hidden="true" className="text-muted-foreground">·</span>
+      {sourceAvailable ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 whitespace-nowrap font-medium text-foreground underline-offset-2 hover:text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`View source at ${pageLabel.toLowerCase()}`}
+          title={`Open ${pageLabel.toLowerCase()}`}
+          onClick={onViewPage}
+        >
+          <Eye className="size-3" />
+          View bill
+        </button>
+      ) : (
+        <span className="whitespace-nowrap text-muted-foreground">{pageLabel}</span>
+      )}
+    </>
+  ) : null;
 
   if (matched) {
     return (
-      <details className="mt-1 text-xs">
-        <summary className="cursor-pointer text-muted-foreground marker:text-muted-foreground">
-          <span className="font-semibold text-success">{label}{page}</span>
-          <span className="ml-2 underline underline-offset-2">Evidence</span>
-        </summary>
-        <InboxIdentityEvidence identity={bill.identity} />
-      </details>
+      <div className="mt-1 text-xs">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span className="font-semibold text-success">{label}</span>
+          {pageControl}
+          <span aria-hidden="true" className="text-muted-foreground">·</span>
+          <button
+            type="button"
+            className="inline-flex items-center gap-0.5 text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-expanded={evidenceOpen}
+            onClick={() => setEvidenceOpen((current) => !current)}
+          >
+            Evidence
+            <ChevronDown className={`size-3 transition-transform ${evidenceOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+        {evidenceOpen && <InboxIdentityEvidence identity={bill.identity} />}
+      </div>
     );
   }
 
   return (
     <>
-      <div className="mt-1 text-xs font-semibold text-warning">{label}{page}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+        <span className="font-semibold text-warning">{label}</span>
+        {pageControl}
+      </div>
       <InboxIdentityEvidence identity={bill.identity} />
     </>
   );
@@ -783,6 +842,11 @@ function InboxImportDrawer({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{
+    load: () => Promise<SourceDocumentLoadResult>;
+    startPage: number | null;
+    billKey: string | null;
+  } | null>(null);
   const busy = loadingPreview || importing;
 
   useEffect(() => {
@@ -824,20 +888,22 @@ function InboxImportDrawer({
     }
     setPreview(null);
     setSelectedIds(new Set());
+    setViewer(null);
     onClose();
   }, [busy, onClose, preview?.session_id]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || viewer !== null) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) void closeDrawer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, busy, closeDrawer]);
+  }, [open, busy, closeDrawer, viewer]);
 
   const fetchPreview = async () => {
     if (!canEnsurePeriod || readOnly) return;
+    setViewer(null);
     setError(null);
     setResults([]);
     setLoadingPreview(true);
@@ -889,14 +955,11 @@ function InboxImportDrawer({
         exceptions,
       );
       setResults(imported);
-      const failed = imported.some((result) => result.status === "failed");
-      if (!failed) {
-        setSelectedIds(new Set());
-        setPreview({
-          ...preview,
-          candidates: preview.candidates.filter((candidate) => !selectedIds.has(candidate.id)),
-        });
-      }
+      setSelectedIds(new Set());
+      setPreview({
+        ...preview,
+        candidates: preview.candidates.filter((candidate) => !selectedIds.has(candidate.id)),
+      });
       await onImported(imported);
     } catch (e) {
       setError(`Failed to import selected inbox items: ${e}`);
@@ -909,9 +972,37 @@ function InboxImportDrawer({
     setDaysToScan(clampInboxScanDays(next));
   };
 
+  const continueReviewing = () => {
+    setViewer(null);
+    setError(null);
+    setResults([]);
+    setSelectedIds(new Set(defaultInboxPreviewSelection(preview?.candidates ?? [])));
+  };
+
   const toggleAllReady = (checked: boolean) => {
     if (!preview) return;
     setSelectedIds(checked ? new Set(defaultInboxPreviewSelection(preview.candidates)) : new Set());
+  };
+
+  const viewInboxSource = (
+    candidate: InboxPreviewCandidate,
+    pageStart?: number | null,
+    billKey: string | null = null,
+  ) => {
+    if (!preview || !candidate.source_available) return;
+    const sessionId = preview.session_id;
+    const candidateId = candidate.id;
+    setViewer({
+      startPage: pageStart ?? null,
+      billKey,
+      load: async () => {
+        const [info, bytes] = await Promise.all([
+          ipc.getInboxPreviewSourceInfo(sessionId, candidateId),
+          ipc.readInboxPreviewSource(sessionId, candidateId),
+        ]);
+        return { info, bytes };
+      },
+    });
   };
 
   if (!open) return null;
@@ -930,8 +1021,10 @@ function InboxImportDrawer({
     defaultSelectedIds.every((candidateId) => selectedIds.has(candidateId));
   const accountLabel = config ? `${config.username || "Inbox account"} / ${config.folder || "INBOX"}` : "Loading inbox settings";
   const selectedBillCount = preview?.candidates.reduce((sum, candidate) => sum + (selectedIds.has(candidate.id) ? candidate.importable_count : 0), 0) ?? 0;
+  const remainingCandidateCount = preview?.candidates.length ?? 0;
 
   return (
+    <>
     <div className="fixed inset-0 z-50">
       <button
         type="button"
@@ -1076,7 +1169,7 @@ function InboxImportDrawer({
                       <BillingTableHeaderCell>Attachment</BillingTableHeaderCell>
                       <BillingTableHeaderCell>Bill</BillingTableHeaderCell>
                       <BillingTableHeaderCell className="w-28 text-right">Amount</BillingTableHeaderCell>
-                      <BillingTableHeaderCell className="w-40 px-6 text-right">Status</BillingTableHeaderCell>
+                      <BillingTableHeaderCell className="w-24 px-3 text-right">Status</BillingTableHeaderCell>
                     </BillingTableHeaderRow>
                   </thead>
                   <tbody>
@@ -1128,15 +1221,23 @@ function InboxImportDrawer({
                             </div>
                           </td>
                         );
-                        const attachmentCell = (
+                        const attachmentCell = (showViewSource: boolean) => (
                           <td className="max-w-64 px-3 py-4 align-top">
                             <div className="truncate font-semibold">{candidate.attachment_filename}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.sender || "Unknown sender"}</div>
                             <div className="truncate text-xs text-muted-foreground">{candidate.subject || "No subject"}</div>
+                            {candidate.source_available && showViewSource ? (
+                              <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => viewInboxSource(candidate, null)}>
+                                <Eye className="size-3.5" />
+                                View source
+                              </Button>
+                            ) : !candidate.source_available ? (
+                              <div className="mt-2 text-xs text-muted-foreground" title={candidate.source_unavailable_reason ?? undefined}>Source unavailable</div>
+                            ) : null}
                           </td>
                         );
                         const statusCell = (
-                          <td className="w-40 px-6 py-4 text-right align-top">
+                          <td className="w-24 px-3 py-4 text-right align-top">
                             <InboxStatusChip candidate={candidate} />
                           </td>
                         );
@@ -1145,7 +1246,7 @@ function InboxImportDrawer({
                           return (
                             <tr key={candidate.id} className={`border-b border-border align-top ${groupClass}`}>
                               {selectionCell("")}
-                              {attachmentCell}
+                              {attachmentCell(true)}
                               <td className="px-3 py-4 align-top">
                                 <span className="text-xs text-muted-foreground">No importable bills</span>
                               </td>
@@ -1158,9 +1259,13 @@ function InboxImportDrawer({
                         return (
                           <Fragment key={candidate.id}>
                             {candidate.bills.map((bill, index) => (
-                              <tr key={`${candidate.id}-bill-${index}`} className={`border-b border-border align-top ${groupClass}`}>
+                              <tr
+                                key={`${candidate.id}-bill-${index}`}
+                                className={`border-b border-border align-top transition-colors ${viewer?.billKey === bill.content_hash ? "bg-accent-soft" : groupClass}`}
+                                aria-current={viewer?.billKey === bill.content_hash ? "true" : undefined}
+                              >
                                 {selectionCell(String(index + 1))}
-                                {attachmentCell}
+                                {attachmentCell(!bill.source_page_start)}
                                 <td className="px-3 py-4 align-top">
                                   <div className="font-semibold">{bill.provider_name ?? (bill.creditor_name || "Unmatched bill")}</div>
                                   <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -1169,7 +1274,11 @@ function InboxImportDrawer({
                                   {bill.parse_note && (
                                     <div className="mt-1 text-xs text-warning">{bill.parse_note}</div>
                                   )}
-                                  <InboxBillIdentity bill={bill} />
+                                  <InboxBillIdentity
+                                    bill={bill}
+                                    sourceAvailable={candidate.source_available}
+                                    onViewPage={() => viewInboxSource(candidate, bill.source_page_start, bill.content_hash)}
+                                  />
                                   {selectedIds.has(candidate.id) && bill.identity.status !== "matched" && (
                                     <Input
                                       className="mt-2 h-8"
@@ -1255,11 +1364,15 @@ function InboxImportDrawer({
           )}
         </div>
 
-        <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4">
           {results.length > 0 ? (
             <>
-              <div className="text-sm text-muted-foreground">Import complete. You can close this panel.</div>
-              <div className="flex gap-2">
+              <div className="text-sm text-muted-foreground">
+                {remainingCandidateCount > 0
+                  ? `${remainingCandidateCount} attachment${remainingCandidateCount === 1 ? "" : "s"} remain in this preview.`
+                  : "Import complete. You can close this panel."}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
                 <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
                   Close
                 </Button>
@@ -1272,6 +1385,11 @@ function InboxImportDrawer({
                   {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
                   Import again
                 </Button>
+                {remainingCandidateCount > 0 && (
+                  <Button onClick={continueReviewing} disabled={busy}>
+                    Continue reviewing
+                  </Button>
+                )}
               </div>
             </>
           ) : preview ? (
@@ -1304,6 +1422,14 @@ function InboxImportDrawer({
         </footer>
       </aside>
     </div>
+    <SourceDocumentViewer
+      open={viewer !== null}
+      load={viewer?.load ?? null}
+      startPage={viewer?.startPage}
+      layout="inbox-companion"
+      onClose={() => setViewer(null)}
+    />
+    </>
   );
 }
 
@@ -1315,6 +1441,10 @@ function BillsPage() {
   const [inboxDrawerOpen, setInboxDrawerOpen] = useState(false);
   const [inboxResults, setInboxResults] = useState<InboxImportResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [storedViewer, setStoredViewer] = useState<{
+    load: () => Promise<SourceDocumentLoadResult>;
+    startPage: number | null;
+  } | null>(null);
   const [localImportReview, setLocalImportReview] = useState<Array<{
     path: string;
     preview: LocalBillImportPreview;
@@ -1322,6 +1452,20 @@ function BillsPage() {
     exceptionNotes: Record<string, string>;
   }> | null>(null);
   const isClosed = selected?.status === "closed";
+
+  const viewStoredOriginal = (bill: Bill) => {
+    if (!bill.id || !bill.source_document_id) return;
+    const billId = bill.id;
+    setStoredViewer({
+      startPage: bill.source_page_start,
+      load: async () => {
+        const info = await ipc.getBillSourceDocumentInfo(billId);
+        if (!info) throw new Error("No retained source is linked to this bill.");
+        const bytes = await ipc.readBillSourceDocument(billId);
+        return { info, bytes };
+      },
+    });
+  };
 
   const importFiles = async () => {
     if (!selected) return;
@@ -1382,13 +1526,24 @@ function BillsPage() {
     );
   };
 
-  const openLocalImportSource = async (path: string) => {
-    setError(null);
-    try {
-      await openPath(path);
-    } catch (e) {
-      setError(`Failed to open source file: ${e}`);
-    }
+  const viewLocalImportSource = (preview: LocalBillImportPreview, pageStart?: number | null) => {
+    const sourceHandle = preview.source_handle;
+    setStoredViewer({
+      startPage: pageStart ?? null,
+      load: async () => {
+        const [info, bytes] = await Promise.all([
+          ipc.getLocalPreviewSourceInfo(sourceHandle),
+          ipc.readLocalPreviewSource(sourceHandle),
+        ]);
+        return { info, bytes };
+      },
+    });
+  };
+
+  const closeLocalImportReview = async () => {
+    const handles = localImportReview?.map((file) => file.preview.source_handle) ?? [];
+    await Promise.allSettled(handles.map((handle) => ipc.clearLocalPreviewSource(handle)));
+    setLocalImportReview(null);
   };
 
   const finalizeLocalImports = async () => {
@@ -1432,15 +1587,14 @@ function BillsPage() {
           throw new Error("Every selected unverified invoice requires an exception note.");
         }
         files.push({
-          file_path: file.path,
-          expected_file_sha256: file.preview.file_sha256,
+          source_handle: file.preview.source_handle,
           selected_content_hashes: selectedHashes,
           exceptions,
         });
         selectedHashes.forEach((hash) => finalizedHashes.add(hash));
       }
       await ipc.finalizeBillImportBatch(billingPeriod.id, files);
-      setLocalImportReview(null);
+      await closeLocalImportReview();
       await snapshot.refresh({ core: false, periods: true, selected: true, statuses: true });
     } catch (e) {
       setError(`Failed to import reviewed invoices: ${e}`);
@@ -1493,6 +1647,7 @@ function BillsPage() {
         identity_exception_at: null,
         source_page_start: null,
         source_page_end: null,
+        source_document_id: null,
         provider_name: null,
       };
       await ipc.saveBill(blank);
@@ -1635,7 +1790,7 @@ function BillsPage() {
                   <h2 className="font-head text-xl font-semibold">Review building identity</h2>
                   <p className="text-sm text-muted-foreground">Only matched invoices progress automatically. A selected exception requires a note.</p>
                 </div>
-                <Button variant="ghost" size="icon" disabled={importing} onClick={() => setLocalImportReview(null)} aria-label="Close import review">
+                <Button variant="ghost" size="icon" disabled={importing} onClick={() => void closeLocalImportReview()} aria-label="Close import review">
                   <X className="size-4" />
                 </Button>
               </div>
@@ -1647,8 +1802,8 @@ function BillsPage() {
                         <div className="font-semibold">{file.preview.source_filename}</div>
                         <div className="text-xs text-muted-foreground">{file.preview.bills.length} invoice candidate(s)</div>
                       </div>
-                      <Button type="button" variant="outline" size="sm" onClick={() => void openLocalImportSource(file.path)}>
-                        Open source
+                      <Button type="button" variant="outline" size="sm" onClick={() => viewLocalImportSource(file.preview, file.preview.bills[0]?.source_page_start)}>
+                        View source
                       </Button>
                     </div>
                     {file.preview.bills.map((bill) => {
@@ -1675,6 +1830,10 @@ function BillsPage() {
                                   {bill.identity.status === "matched" ? "Verified" : bill.identity.status}
                                 </span>
                                 <span className="text-xs text-muted-foreground">{pageLabel}</span>
+                                <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => viewLocalImportSource(file.preview, bill.source_page_start)}>
+                                  <Eye className="size-3.5" />
+                                  View page
+                                </Button>
                                 <span className="ml-auto font-mono text-sm">{formatEur(bill.amount_cents)} €</span>
                               </span>
                               <span className="mt-1 block text-sm text-muted-foreground">{bill.identity.explanation}</span>
@@ -1715,7 +1874,7 @@ function BillsPage() {
                   </div>
                 )}
                 <div className="flex justify-end gap-3">
-                  <Button variant="outline" disabled={importing} onClick={() => setLocalImportReview(null)}>Cancel</Button>
+                  <Button variant="outline" disabled={importing} onClick={() => void closeLocalImportReview()}>Cancel</Button>
                   <Button disabled={importing} onClick={finalizeLocalImports}>
                     {importing && <Loader2 className="size-4 animate-spin" />}
                     Import selected
@@ -1888,6 +2047,7 @@ function BillsPage() {
                   onMarkReviewed={markBillReviewed}
                   onMarkUnreviewed={markBillUnreviewed}
                   onApproveIdentityException={approveBillIdentityException}
+                  onViewOriginal={viewStoredOriginal}
                 />
               ))}
             </tbody>
@@ -1909,6 +2069,12 @@ function BillsPage() {
           </BillingTable>
         </BillingTableFrame>
       )}
+      <SourceDocumentViewer
+        open={storedViewer !== null}
+        load={storedViewer?.load ?? null}
+        startPage={storedViewer?.startPage}
+        onClose={() => setStoredViewer(null)}
+      />
 
       {selected && showBillsTable && (
         <div className="flex justify-end">

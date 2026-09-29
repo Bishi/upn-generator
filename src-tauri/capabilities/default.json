@@ -6,20 +6,10 @@
   "permissions": [
     "core:default",
     "opener:default",
-    {
-      "identifier": "opener:allow-open-path",
-      "allow": [
-        { "path": "**/*.[pP][dD][fF]" },
-        { "path": "**/*.[jJ][pP][gG]" },
-        { "path": "**/*.[jJ][pP][eE][gG]" },
-        { "path": "**/*.[pP][nN][gG]" },
-        { "path": "**/*.[bB][mM][pP]" },
-        { "path": "**/*.[tT][iI][fF]" },
-        { "path": "**/*.[tT][iI][fF][fF]" }
-      ]
-    },
     "dialog:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
   ]
 }

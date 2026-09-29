@@ -4,13 +4,12 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
-use tempfile::{Builder as TempFileBuilder, TempDir};
+use tauri::{ipc::Response, AppHandle, Manager, State};
+use tempfile::TempDir;
 
 use crate::credentials::{self, MailCredentialKind};
 
@@ -21,6 +20,9 @@ use super::bills::{
     PreparedBillImport, PreparedBillPreviewSummary,
 };
 use super::config::DbState;
+use super::documents::{
+    link_bills_to_document, media_type_for_path, persist_source_document, SourceDocumentInfo,
+};
 
 const MAX_DAYS_TO_SCAN: i32 = 90;
 const MAX_FOLDER_LEN: usize = 128;
@@ -93,6 +95,8 @@ pub struct InboxPreviewCandidate {
     pub error: Option<String>,
     pub bills: Vec<InboxPreviewBillSummary>,
     pub notices: Vec<InboxPreviewNotice>,
+    pub source_available: bool,
+    pub source_unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -471,10 +475,6 @@ fn collect_attachment_scan(mail: &ParsedMail<'_>) -> AttachmentScan {
         }
     }
     scan
-}
-
-fn collect_attachments(mail: &ParsedMail<'_>) -> Vec<MailAttachment> {
-    collect_attachment_scan(mail).attachments
 }
 
 fn load_credentials(
@@ -976,138 +976,6 @@ fn persist_analysis(
     results
 }
 
-fn import_staged_attachment(
-    db: &State<DbState>,
-    billing_period_id: i64,
-    _context: &super::bills::BillImportContext,
-    message: &MessageContext,
-    safe_filename: &str,
-    attachment_sha256: &str,
-    staged_path: &str,
-    identity_exceptions: &HashMap<String, IdentityExceptionInput>,
-) -> Vec<InboxImportResult> {
-    let source_label = format!("email: {} / {}", message.sender, safe_filename);
-    let prepared =
-        match prepare_multi_bill_import_from_path(staged_path, source_label, _context, false) {
-            Ok(prepared) => prepared,
-            Err(error) => return vec![failure_result(message, safe_filename, error)],
-        };
-    let conn = match db.0.lock() {
-        Ok(conn) => conn,
-        Err(e) => return vec![failure_result(message, safe_filename, e.to_string())],
-    };
-    let tx = match conn.unchecked_transaction() {
-        Ok(tx) => tx,
-        Err(e) => return vec![failure_result(message, safe_filename, e.to_string())],
-    };
-    let context = match load_bill_import_context(&tx, billing_period_id) {
-        Ok(context) => context,
-        Err(error) => return vec![failure_result(message, safe_filename, error)],
-    };
-    let analysis = analyze_staged_attachment(
-        &tx,
-        billing_period_id,
-        &context,
-        message,
-        safe_filename,
-        attachment_sha256,
-        Some(prepared),
-    );
-    let was_ready = analysis.status == "ready";
-    let results = persist_analysis(
-        &tx,
-        billing_period_id,
-        &context,
-        message,
-        safe_filename,
-        attachment_sha256,
-        analysis,
-        identity_exceptions,
-    );
-    if was_ready && results.iter().any(|result| result.status == "failed") {
-        let error = results
-            .iter()
-            .find(|result| result.status == "failed")
-            .and_then(|result| result.error.clone())
-            .unwrap_or_else(|| "Inbox import failed.".to_string());
-        let _ = tx.rollback();
-        drop(conn);
-        if let Ok(conn) = db.0.lock() {
-            if ensure_period_open(&conn, billing_period_id).is_ok() {
-                let _ = insert_import_record(
-                    &conn,
-                    billing_period_id,
-                    message,
-                    safe_filename,
-                    attachment_sha256,
-                    &[],
-                    "failed",
-                    &error,
-                );
-            }
-        }
-        return results;
-    }
-    if let Err(error) = tx.commit() {
-        return vec![failure_result(message, safe_filename, error.to_string())];
-    }
-    results
-}
-
-fn import_attachment(
-    db: &State<DbState>,
-    billing_period_id: i64,
-    context: &super::bills::BillImportContext,
-    message: &MessageContext,
-    attachment: MailAttachment,
-) -> Vec<InboxImportResult> {
-    let safe_filename = sanitize_filename(&attachment.filename);
-    let ext = match validate_attachment(&attachment) {
-        Ok(ext) => ext,
-        Err(error) => {
-            let hash = sha256_hex(&attachment.bytes);
-            if let Ok(conn) = db.0.lock() {
-                if ensure_period_open(&conn, billing_period_id).is_ok() {
-                    let _ = insert_import_record(
-                        &conn,
-                        billing_period_id,
-                        message,
-                        &safe_filename,
-                        &hash,
-                        &[],
-                        "failed",
-                        &error,
-                    );
-                }
-            }
-            return vec![failure_result(message, &safe_filename, error)];
-        }
-    };
-    let hash = sha256_hex(&attachment.bytes);
-    let mut temp_file = match TempFileBuilder::new()
-        .prefix("upn-mail-")
-        .suffix(&format!(".{}", ext))
-        .tempfile()
-    {
-        Ok(file) => file,
-        Err(e) => return vec![failure_result(message, &safe_filename, e.to_string())],
-    };
-    if let Err(e) = temp_file.write_all(&attachment.bytes) {
-        return vec![failure_result(message, &safe_filename, e.to_string())];
-    }
-    let temp_path = temp_file.path().to_string_lossy().to_string();
-    import_staged_attachment(
-        db,
-        billing_period_id,
-        context,
-        message,
-        &safe_filename,
-        &hash,
-        &temp_path,
-        &HashMap::new(),
-    )
-}
-
 fn sweep_preview_sessions(state: &State<InboxPreviewState>) -> Result<(), String> {
     let now = Instant::now();
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -1140,6 +1008,8 @@ fn preview_candidate_from_analysis(
         error: analysis.error,
         bills: analysis.bill_summaries,
         notices: analysis.notices,
+        source_available: true,
+        source_unavailable_reason: None,
     }
 }
 
@@ -1164,6 +1034,8 @@ fn preview_failure_candidate(
         error: Some(error),
         bills: Vec::new(),
         notices: Vec::new(),
+        source_available: false,
+        source_unavailable_reason: Some("This attachment could not be staged safely.".to_string()),
     }
 }
 
@@ -1746,7 +1618,6 @@ fn import_inbox_preview_selection_impl(
     }
     let mut prepared_candidates = Vec::new();
     let mut results = Vec::new();
-    let mut imported_candidate_ids = HashSet::new();
     let mut selected_bill_hashes = existing_exact_hashes;
     for (candidate_id, candidate) in &selected_candidates {
         if candidate.status != "ready" {
@@ -1787,7 +1658,6 @@ fn import_inbox_preview_selection_impl(
                 "skipped_duplicate_bill",
                 "Every invoice in this selected attachment is an exact duplicate of an existing import or earlier selection.",
             ));
-            imported_candidate_ids.insert(candidate_id.clone());
             continue;
         }
         prepared_candidates.push((candidate_id.clone(), candidate.clone(), prepared));
@@ -1797,7 +1667,7 @@ fn import_inbox_preview_selection_impl(
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     ensure_period_open(&tx, billing_period_id)?;
     let current_context = load_bill_import_context(&tx, billing_period_id)?;
-    for (candidate_id, candidate, prepared) in prepared_candidates {
+    for (_candidate_id, candidate, prepared) in prepared_candidates {
         let analysis = analyze_staged_attachment(
             &tx,
             billing_period_id,
@@ -1833,31 +1703,59 @@ fn import_inbox_preview_selection_impl(
             let _ = tx.rollback();
             return Err(error);
         }
-        imported_candidate_ids.insert(candidate_id);
+        let source_path = candidate
+            .file_path
+            .as_ref()
+            .ok_or_else(|| "Preview candidate attachment is no longer available.".to_string())?;
+        let source_bytes = std::fs::read(source_path).map_err(|error| error.to_string())?;
+        if sha256_hex(&source_bytes) != candidate.attachment_sha256 {
+            let _ = tx.rollback();
+            return Err("The staged inbox attachment changed during finalization.".to_string());
+        }
+        let media_type = media_type_for_path(source_path)?;
+        let document_id = persist_source_document(
+            &tx,
+            &candidate.attachment_filename,
+            &media_type,
+            &source_bytes,
+            &candidate.attachment_sha256,
+        )?;
+        let bill_ids = candidate_results
+            .iter()
+            .filter(|result| result.status == "imported")
+            .flat_map(|result| result.bill_ids.iter().copied())
+            .collect::<Vec<_>>();
+        link_bills_to_document(&tx, &bill_ids, document_id)?;
         results.extend(candidate_results);
     }
     tx.commit().map_err(|e| e.to_string())?;
 
     let mut sessions = preview_state.sessions.lock().map_err(|e| e.to_string())?;
-    if let Some(session) = sessions.get_mut(&session_id) {
-        for (id, candidate) in selected_candidates {
-            if !imported_candidate_ids.contains(&id) {
-                continue;
-            }
+    let remove_session = if let Some(session) = sessions.get_mut(&session_id) {
+        let empty = remove_selected_candidates(&mut session.candidates, &candidate_ids);
+        session.last_accessed = Instant::now();
+        empty
+    } else {
+        false
+    };
+    if remove_session {
+        sessions.remove(&session_id);
+    }
+    Ok(results)
+}
+
+fn remove_selected_candidates(
+    candidates: &mut HashMap<String, InboxPreviewCandidateData>,
+    selected_ids: &[String],
+) -> bool {
+    for candidate_id in selected_ids {
+        if let Some(candidate) = candidates.remove(candidate_id) {
             if let Some(path) = candidate.file_path {
                 let _ = std::fs::remove_file(path);
             }
-            session.candidates.remove(&id);
-        }
-        let has_importable = session
-            .candidates
-            .values()
-            .any(|candidate| candidate.status == "ready");
-        if !has_importable {
-            sessions.remove(&session_id);
         }
     }
-    Ok(results)
+    candidates.is_empty()
 }
 
 #[tauri::command]
@@ -1874,119 +1772,72 @@ pub fn clear_inbox_preview_session(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn import_inbox_attachments(
-    app: AppHandle,
-    billing_period_id: i64,
-) -> Result<Vec<InboxImportResult>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let db = app.state::<DbState>();
-        import_inbox_attachments_impl(db, billing_period_id)
-    })
-    .await
-    .map_err(|e| format!("Inbox import task failed: {e}"))?
+fn resolve_inbox_preview_source(
+    preview_state: &InboxPreviewState,
+    session_id: &str,
+    candidate_id: &str,
+) -> Result<(PathBuf, String, String, String), String> {
+    let (path, original_name, expected_sha256) = {
+        let mut sessions = preview_state.sessions.lock().map_err(|e| e.to_string())?;
+        let now = Instant::now();
+        sessions.retain(|_, session| {
+            now.duration_since(session.last_accessed) <= PREVIEW_SESSION_TTL
+                && now.duration_since(session.created_at) <= PREVIEW_SESSION_TTL * 2
+        });
+        let session = sessions.get_mut(session_id).ok_or_else(|| {
+            "Inbox preview session expired. Fetch inbox preview again.".to_string()
+        })?;
+        session.last_accessed = now;
+        let candidate = session
+            .candidates
+            .get(candidate_id)
+            .ok_or_else(|| "Inbox preview attachment is no longer available.".to_string())?;
+        let path = candidate.file_path.clone().ok_or_else(|| {
+            "This inbox attachment was not staged safely and cannot be viewed.".to_string()
+        })?;
+        (
+            path,
+            candidate.attachment_filename.clone(),
+            candidate.attachment_sha256.clone(),
+        )
+    };
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("The staged inbox attachment is unavailable: {error}"))?;
+    if sha256_hex(&bytes) != expected_sha256 {
+        return Err("The staged inbox attachment changed unexpectedly.".to_string());
+    }
+    let media_type = media_type_for_path(&path)?;
+    Ok((path, original_name, media_type, expected_sha256))
 }
 
-fn import_inbox_attachments_impl(
-    db: State<'_, DbState>,
-    billing_period_id: i64,
-) -> Result<Vec<InboxImportResult>, String> {
-    let credentials = load_credentials(&db, true)?;
-    validate_config(&credentials.config, true, &credentials.password)?;
-    let context = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        ensure_period_open(&conn, billing_period_id)?;
-        load_bill_import_context(&conn, billing_period_id)?
-    };
-    let allowlist = parse_allowlist(&credentials.config.sender_allowlist);
-    let since = (Local::now().date_naive()
-        - ChronoDuration::days(credentials.config.days_to_scan as i64))
-    .format("%d-%b-%Y")
-    .to_string();
+#[tauri::command]
+pub fn get_inbox_preview_source_info(
+    preview_state: State<InboxPreviewState>,
+    session_id: String,
+    candidate_id: String,
+) -> Result<SourceDocumentInfo, String> {
+    let (path, original_name, media_type, _) =
+        resolve_inbox_preview_source(&preview_state, &session_id, &candidate_id)?;
+    let byte_size = std::fs::metadata(path).map_err(|e| e.to_string())?.len() as i64;
+    Ok(SourceDocumentInfo {
+        original_name,
+        media_type,
+        byte_size,
+        page_start: None,
+        page_end: None,
+    })
+}
 
-    let mut session = connect_tls(&credentials.config, &credentials.password)?;
-    let mut results = Vec::new();
-    let scan_result = (|| -> Result<(), String> {
-        let mailbox = session
-            .examine(credentials.config.folder.as_str())
-            .map_err(|e| e.to_string())?;
-        let uid_validity = mailbox.uid_validity;
-        let ids = session
-            .search(format!("SINCE {}", since))
-            .map_err(|e| e.to_string())?;
-        let mut ids: Vec<u32> = ids.into_iter().collect();
-        ids.sort_unstable();
-
-        for id in ids {
-            let id_str = id.to_string();
-            let metadata = session
-                .fetch(&id_str, "(UID RFC822.SIZE INTERNALDATE)")
-                .map_err(|e| e.to_string())?;
-            let Some(meta) = metadata.iter().next() else {
-                continue;
-            };
-            let message_uid = meta.uid;
-            let received_date = meta.internal_date().map(|date| date.to_rfc3339());
-            if meta.size.unwrap_or(0) > MAX_MESSAGE_BYTES {
-                let message = MessageContext {
-                    folder: credentials.config.folder.clone(),
-                    uid_validity,
-                    message_uid,
-                    message_id: String::new(),
-                    sender: String::new(),
-                    subject: "Message skipped before fetch".to_string(),
-                    received_date,
-                };
-                results.push(failure_result(
-                    &message,
-                    "(message)",
-                    "Message is larger than 30 MB.".to_string(),
-                ));
-                continue;
-            }
-
-            let messages = session
-                .fetch(&id_str, "(UID BODY.PEEK[])")
-                .map_err(|e| e.to_string())?;
-            let Some(message) = messages.iter().next() else {
-                continue;
-            };
-            let Some(body) = message.body() else {
-                continue;
-            };
-            let parsed = mailparse::parse_mail(body).map_err(|e| e.to_string())?;
-            let sender = parsed_sender(&parsed);
-            if !allowlist.is_empty() && !allowlist.contains(&sender) {
-                continue;
-            }
-            let message_context = MessageContext {
-                folder: credentials.config.folder.clone(),
-                uid_validity,
-                message_uid: message.uid.or(message_uid),
-                message_id: header_value(&parsed, "Message-ID"),
-                sender,
-                subject: truncate_chars(&header_value(&parsed, "Subject"), MAX_SUBJECT_LEN),
-                received_date,
-            };
-            for attachment in collect_attachments(&parsed) {
-                results.extend(import_attachment(
-                    &db,
-                    billing_period_id,
-                    &context,
-                    &message_context,
-                    attachment,
-                ));
-            }
-        }
-        Ok(())
-    })();
-    let logout_result = session.logout().map_err(|e| e.to_string());
-    if let Err(error) = scan_result {
-        let _ = logout_result;
-        return Err(error);
-    }
-    logout_result?;
-    Ok(results)
+#[tauri::command]
+pub fn read_inbox_preview_source(
+    preview_state: State<InboxPreviewState>,
+    session_id: String,
+    candidate_id: String,
+) -> Result<Response, String> {
+    let (path, _, _, _) = resolve_inbox_preview_source(&preview_state, &session_id, &candidate_id)?;
+    Ok(Response::new(
+        std::fs::read(path).map_err(|e| e.to_string())?,
+    ))
 }
 
 #[cfg(test)]
@@ -2018,6 +1869,35 @@ mod tests {
         let mut bad = config;
         bad.folder = "INBOX\r\nBAD".to_string();
         assert!(validate_config(&bad, true, "secret").is_err());
+    }
+
+    #[test]
+    fn partial_import_keeps_unselected_preview_candidates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let imported_path = temp_dir.path().join("imported.pdf");
+        let remaining_path = temp_dir.path().join("remaining.pdf");
+        std::fs::write(&imported_path, b"imported").unwrap();
+        std::fs::write(&remaining_path, b"remaining").unwrap();
+        let candidate = |path: PathBuf| InboxPreviewCandidateData {
+            message: test_message(),
+            attachment_filename: path.file_name().unwrap().to_string_lossy().into_owned(),
+            attachment_sha256: "attachment".to_string(),
+            file_path: Some(path),
+            status: "ready".to_string(),
+            bill_keys: Vec::new(),
+            has_unmatched_bill: false,
+        };
+        let mut candidates = HashMap::from([
+            ("imported".to_string(), candidate(imported_path.clone())),
+            ("remaining".to_string(), candidate(remaining_path.clone())),
+        ]);
+
+        let empty = remove_selected_candidates(&mut candidates, &["imported".to_string()]);
+
+        assert!(!empty);
+        assert!(!imported_path.exists());
+        assert!(remaining_path.exists());
+        assert!(candidates.contains_key("remaining"));
     }
 
     #[test]

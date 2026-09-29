@@ -131,6 +131,7 @@ export interface Bill {
   identity_exception_at: string | null;
   source_page_start: number | null;
   source_page_end: number | null;
+  source_document_id: number | null;
   provider_name: string | null;
 }
 
@@ -163,7 +164,7 @@ export interface PreparedBillPreviewSummary {
 
 export interface LocalBillImportPreview {
   source_filename: string;
-  file_sha256: string;
+  source_handle: string;
   bills: PreparedBillPreviewSummary[];
 }
 
@@ -175,10 +176,17 @@ export interface IdentityExceptionInput {
 }
 
 export interface LocalBillImportFinalizeRequest {
-  file_path: string;
-  expected_file_sha256: string;
+  source_handle: string;
   selected_content_hashes: string[];
   exceptions: IdentityExceptionInput[];
+}
+
+export interface SourceDocumentInfo {
+  original_name: string;
+  media_type: string;
+  byte_size: number;
+  page_start: number | null;
+  page_end: number | null;
 }
 
 // Splits
@@ -382,6 +390,8 @@ export interface InboxPreviewCandidate {
   error: string | null;
   bills: InboxPreviewBillSummary[];
   notices: InboxPreviewNotice[];
+  source_available: boolean;
+  source_unavailable_reason: string | null;
 }
 
 export interface InboxPreviewScanSummary {

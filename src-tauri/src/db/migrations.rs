@@ -392,6 +392,16 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             UNIQUE(building_id, month, year)
         );
 
+        CREATE TABLE IF NOT EXISTS source_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_name TEXT NOT NULL,
+            media_type TEXT NOT NULL,
+            byte_size INTEGER NOT NULL,
+            content_sha256 TEXT NOT NULL UNIQUE,
+            content BLOB NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS bills (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             billing_period_id INTEGER NOT NULL REFERENCES billing_periods(id),
@@ -415,7 +425,8 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
             identity_exception_note TEXT NOT NULL DEFAULT '',
             identity_exception_at TEXT,
             source_page_start INTEGER,
-            source_page_end INTEGER
+            source_page_end INTEGER,
+            source_document_id INTEGER REFERENCES source_documents(id)
         );
 
         CREATE TABLE IF NOT EXISTS bill_splits (
@@ -601,6 +612,10 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     );
     let _ = conn.execute("ALTER TABLE bills ADD COLUMN source_page_start INTEGER", []);
     let _ = conn.execute("ALTER TABLE bills ADD COLUMN source_page_end INTEGER", []);
+    let _ = conn.execute(
+        "ALTER TABLE bills ADD COLUMN source_document_id INTEGER REFERENCES source_documents(id)",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE billing_periods ADD COLUMN closed_at TEXT", []);
 
     let _ = conn.execute(
@@ -684,6 +699,7 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
         DELETE FROM inbox_bill_hashes;
         DELETE FROM upn_delivery_events;
         DELETE FROM bills;
+        DELETE FROM source_documents;
         DELETE FROM billing_periods;
         DELETE FROM inbox_imports;
         DELETE FROM apartments;

@@ -17,6 +17,7 @@ import type {
   Provider,
   ResetAllDataResult,
   SmtpConfig,
+  SourceDocumentInfo,
   SplitRow,
   UpnDeliveryEvent,
   UpnDeliveryRollup,
@@ -86,8 +87,6 @@ export const ipc = {
       billingPeriodId,
       files,
     }),
-  importInboxAttachments: (billingPeriodId: number) =>
-    invoke<InboxImportResult[]>("import_inbox_attachments", { billingPeriodId }),
   previewInboxAttachments: (billingPeriodId: number, daysToScan: number) =>
     invoke<InboxPreviewSession>("preview_inbox_attachments", {
       billingPeriodId,
@@ -105,6 +104,20 @@ export const ipc = {
     }),
   clearInboxPreviewSession: (sessionId: string) =>
     invoke<void>("clear_inbox_preview_session", { sessionId }),
+  getInboxPreviewSourceInfo: (sessionId: string, candidateId: string) =>
+    invoke<SourceDocumentInfo>("get_inbox_preview_source_info", { sessionId, candidateId }),
+  readInboxPreviewSource: (sessionId: string, candidateId: string) =>
+    invoke<ArrayBuffer>("read_inbox_preview_source", { sessionId, candidateId }),
+  getLocalPreviewSourceInfo: (sourceHandle: string) =>
+    invoke<SourceDocumentInfo>("get_local_preview_source_info", { sourceHandle }),
+  readLocalPreviewSource: (sourceHandle: string) =>
+    invoke<ArrayBuffer>("read_local_preview_source", { sourceHandle }),
+  clearLocalPreviewSource: (sourceHandle: string) =>
+    invoke<void>("clear_local_preview_source", { sourceHandle }),
+  getBillSourceDocumentInfo: (billId: number) =>
+    invoke<SourceDocumentInfo | null>("get_bill_source_document_info", { billId }),
+  readBillSourceDocument: (billId: number) =>
+    invoke<ArrayBuffer>("read_bill_source_document", { billId }),
   saveBill: (bill: Bill) => invoke<Bill>("save_bill", { bill }),
   markBillReviewed: (billId: number, reviewNote: string) =>
     invoke<Bill>("mark_bill_reviewed", { billId, reviewNote }),

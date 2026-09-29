@@ -47,8 +47,8 @@
 - [ ] In the local review dialog, trigger missing exception note, provider/month conflict, and changed source file errors; confirm each error appears inside the open dialog and the current selections and notes remain available for correction.
 - [ ] Select a mismatched, missing, unreadable, or unconfigured candidate and confirm import requires a non-empty exception note; verify the saved row says Exception rather than Matched.
 - [ ] Edit payment content on an exception bill and confirm its identity returns to Not checked and splitting remains blocked until a new noted exception is approved.
-- [ ] Confirm the source file can be opened temporarily during review, but after import the app does not claim to retain an original or provide an in-app original viewer (Phase B pending).
-- [ ] In local import review, click Open source for a PDF and an image selected from outside the app directory; confirm each opens in the default app. Remove or rename a selected file, click Open source again, and confirm the failure appears inside the dialog.
+- [ ] In local import review, click View source/View page for a PDF and image selected outside the app directory; confirm each opens inside the app without exposing or reopening the caller-supplied path.
+- [ ] Remove, rename, or change a selected local source after preview; confirm staged viewing/finalization rejects it, clears the handle, and requires a fresh preview without deleting the user's file.
 
 ## Notes
 
