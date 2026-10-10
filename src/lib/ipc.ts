@@ -87,10 +87,13 @@ export const ipc = {
       billingPeriodId,
       files,
     }),
-  previewInboxAttachments: (billingPeriodId: number, daysToScan: number) =>
+  beginInboxPreview: () => invoke<string>("begin_inbox_preview"),
+  cancelInboxPreview: (requestId: string) => invoke<void>("cancel_inbox_preview", { requestId }),
+  previewInboxAttachments: (billingPeriodId: number, daysToScan: number, requestId: string) =>
     invoke<InboxPreviewSession>("preview_inbox_attachments", {
       billingPeriodId,
       daysToScan,
+      requestId,
     }),
   importInboxPreviewSelection: (
     sessionId: string,

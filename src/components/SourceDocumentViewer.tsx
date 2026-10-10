@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 const TIFF_DECODE_TIMEOUT_MS = 10_000;
 const VIEWER_ESCAPE_SHORTCUT = "Escape";
-const WIDE_COMPANION_QUERY = "(min-width: 1280px)";
+const WIDE_COMPANION_QUERY = "(min-width: 1536px)";
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "iframe",
@@ -328,7 +328,7 @@ export function SourceDocumentViewer({
       aria-modal={modal || undefined}
       tabIndex={modal ? -1 : undefined}
       className={layout === "inbox-companion"
-        ? "fixed inset-0 z-[60] flex flex-col bg-background/95 backdrop-blur-sm xl:right-[760px] xl:border-r xl:border-border xl:shadow-pop"
+        ? "fixed inset-0 z-[60] flex flex-col bg-background/95 backdrop-blur-sm 2xl:right-[900px] 2xl:border-r 2xl:border-border 2xl:shadow-pop"
         : "fixed inset-0 z-[140] flex flex-col bg-background/95 backdrop-blur-sm"}
     >
       <div className="flex min-h-16 items-center gap-3 border-b border-border bg-card px-4 py-3">

@@ -1,36 +1,23 @@
 # Status
 
-- Current version: `0.6.1`
-- Current tag: `v0.6.1`
+- Current version: `0.6.2`
+- Current tag: `v0.6.2`
 - Release status: released from `main`
 
 ## Latest Included Changes
 
-- Retained exact imported PDF, image, and TIFF originals in deduplicated SQLite storage with backup, restore, deletion, and factory-reset handling
-- Added staged and stored original viewing with page-aware PDF navigation, bounded image zoom, safe TIFF decoding, and CMYK support
-- Added a responsive side-by-side invoice viewer for inbox review, with fullscreen fallback, focus containment, and safe Escape handling
-- Preserved remaining inbox candidates after partial imports, removed completed temporary files immediately, and added Continue reviewing without rescanning
-- Added source-page actions and active-row highlighting so multi-bill PDFs open at the bill being reviewed
-- Added persisted month close/reopen status with closure timestamps and consistent workflow status across Bills, Splits, UPN, and the month picker
-- Required complete current-packet delivery and backend validation before closing a month
-- Kept closed months viewable and PDF-exportable while blocking bill, import, split, delivery, period-deletion, and relevant apartment-deletion mutations until reopened
-- Prevented month closing while email delivery batches are active
-- Preserved close state through current and legacy backup restores
-- Consolidated Bills, Splits, and UPN preview table chrome for more consistent row, header, footer, and empty-state styling
-- Stopped tracking local `docs/` notes and `file-examples/` bill samples; both folders are now ignored for local reference use
-- Moved the Splits total column to the end and simplified the Splits header labels/dividers
-- Added custom horizontal table scrollbars so wide tables preserve rounded table chrome
-- Added today-only inbox scan support with `0` as a valid scan window, while preserving calendar-date IMAP `SINCE` semantics for positive values
-- Documented and added manual QA coverage for inbox scan-window calendar-date behavior
-- Stored SMTP and IMAP passwords in Windows Credential Manager instead of SQLite
-- Kept mail password fields write-only while showing saved-password state
-- Cleared legacy database password columns after successful credential writes
-- Preserved password-free SQLite backups and username-matched credential reuse after restore
-- Fixed backup restore failures caused by foreign-key delete order and improved restore error display in the Data Backup card
-- Moved mail and inbox network commands off the UI thread and added SMTP timeout/timing diagnostics
-- Fixed blocked email safety attempts so they can be recorded without requiring an SMTP password
-- Added current-packet delivery rollups with manual Mark/Unmark Delivered confirmation while keeping PDF downloads as export-only actions
-- Added backend-owned UPN pre-send validation gates for blocking incorrect sends/delivery state
-- Added settings dirty-form discard confirmations and guarded settings tab switching
-- Restyled the UPN validation issue panel with grouped details and a calmer collapsed summary
-- Surfaced factory-reset warnings when saved Windows mail credentials cannot be deleted
+- Accepted valid PDF attachments sent with generic binary MIME types after verifying the filename and file signature
+- Recognized additional service-period formats, including date ranges, two-digit years, and month/year hints, while preserving boundaries between extracted fields
+- Improved gas identity verification with higher-resolution OCR, preserved line boundaries, and better label matching while keeping identifier values exact
+- Skipped tiny inline email graphics and distinguished documents without invoice fields from invoices with an unknown billing period
+- Made inbox rejection explanations available through a compact Why? link and widened the review drawer
+- Added cancellable Fetch Preview scans with immediate network cancellation and cleanup of cancelled results
+- Kept the Fetch Preview button stationary when Cancel scan appears
+- Made immediate retries wait cancellably for pending PDF OCR, preventing resource contention from becoming an invoice diagnostic
+- Released the OCR slot correctly when document path resolution fails before the worker starts
+
+## Verification
+
+- Frontend production build and Rust cargo check passed
+- 109 Rust tests passed, plus all three private invoice regression tests
+- Affected inbox manual QA cases are documented and remain unchecked pending desktop verification

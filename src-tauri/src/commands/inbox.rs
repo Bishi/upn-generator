@@ -4,9 +4,10 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{ipc::Response, AppHandle, Manager, State};
 use tempfile::TempDir;
@@ -14,8 +15,8 @@ use tempfile::TempDir;
 use crate::credentials::{self, MailCredentialKind};
 
 use super::bills::{
-    ensure_period_open, load_bill_import_context, prepare_multi_bill_import_from_path,
-    preview_prepared_bills, retain_new_bill_hashes,
+    ensure_period_open, load_bill_import_context, prepare_inbox_preview_from_path,
+    prepare_multi_bill_import_from_path, preview_prepared_bills, retain_new_bill_hashes,
     save_prepared_multi_bill_import_with_exceptions, IdentityExceptionInput, IdentityVerification,
     PreparedBillImport, PreparedBillPreviewSummary,
 };
@@ -197,13 +198,124 @@ fn matches_preview_bill_keys(
 
 pub struct InboxPreviewState {
     sessions: Mutex<HashMap<String, InboxPreviewSessionData>>,
+    scans: Mutex<HashMap<String, InboxScanRegistration>>,
+}
+
+#[derive(Default)]
+struct InboxScanControl {
+    cancelled: AtomicBool,
+    socket: Mutex<Option<TcpStream>>,
+}
+
+impl InboxScanControl {
+    fn check(&self) -> Result<(), String> {
+        if self.cancelled.load(Ordering::Acquire) {
+            Err("Inbox preview cancelled.".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Ok(socket) = self.socket.lock() {
+            if let Some(socket) = socket.as_ref() {
+                let _ = socket.shutdown(Shutdown::Both);
+            }
+        }
+    }
+
+    fn attach_socket(&self, socket: &TcpStream) -> Result<(), String> {
+        let mut active = self.socket.lock().map_err(|e| e.to_string())?;
+        self.check()?;
+        *active = Some(socket.try_clone().map_err(|e| e.to_string())?);
+        Ok(())
+    }
+}
+
+struct InboxScanRegistration {
+    created_at: Instant,
+    started: bool,
+    control: Arc<InboxScanControl>,
+}
+
+struct InboxScanGuard<'a> {
+    state: &'a InboxPreviewState,
+    request_id: String,
+}
+
+impl Drop for InboxScanGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut scans) = self.state.scans.lock() {
+            scans.remove(&self.request_id);
+        }
+    }
 }
 
 impl Default for InboxPreviewState {
     fn default() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            scans: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl InboxPreviewState {
+    fn begin_scan(&self) -> Result<String, String> {
+        let request_id = preview_token("session");
+        let mut scans = self.scans.lock().map_err(|e| e.to_string())?;
+        scans.retain(|_, scan| scan.started || scan.created_at.elapsed() < PREVIEW_SESSION_TTL);
+        scans.insert(
+            request_id.clone(),
+            InboxScanRegistration {
+                created_at: Instant::now(),
+                started: false,
+                control: Arc::new(InboxScanControl::default()),
+            },
+        );
+        Ok(request_id)
+    }
+
+    fn start_scan(&self, request_id: &str) -> Result<Arc<InboxScanControl>, String> {
+        let mut scans = self.scans.lock().map_err(|e| e.to_string())?;
+        let scan = scans
+            .get_mut(request_id)
+            .ok_or("Inbox preview cancelled or expired.")?;
+        if scan.started {
+            return Err("Inbox preview is already running.".to_string());
+        }
+        scan.started = true;
+        Ok(Arc::clone(&scan.control))
+    }
+
+    fn cancel_scan(&self, request_id: &str) -> Result<(), String> {
+        let mut scans = self.scans.lock().map_err(|e| e.to_string())?;
+        if let Some(scan) = scans.remove(request_id) {
+            scan.control.cancel();
+        }
+        self.sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .remove(request_id);
+        Ok(())
+    }
+
+    fn publish_preview(
+        &self,
+        session_id: String,
+        session: InboxPreviewSessionData,
+        control: &InboxScanControl,
+    ) -> Result<(), String> {
+        // Publication and cancellation use the same lock order, so a cancelled
+        // scan cannot leave a usable session behind.
+        let _scans = self.scans.lock().map_err(|e| e.to_string())?;
+        control.check()?;
+        self.sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(session_id, session);
+        Ok(())
     }
 }
 
@@ -337,6 +449,11 @@ fn mime_matches_extension(mime_type: &str, ext: &str) -> bool {
     if mime.trim().is_empty() {
         return false;
     }
+    // Some invoice senders label all binary attachments generically. The
+    // supported extension and magic bytes are still checked independently.
+    if mime == "application/octet-stream" {
+        return supported_extension(&format!("attachment.{ext}")).is_some();
+    }
     match ext {
         "pdf" => mime == "application/pdf",
         "jpg" | "jpeg" => mime == "image/jpeg",
@@ -467,6 +584,15 @@ fn collect_attachment_scan(mail: &ParsedMail<'_>) -> AttachmentScan {
             continue;
         }
         if let Ok(bytes) = part.get_body_raw() {
+            // Tiny CID images in forwarded HTML are email decoration. Keep
+            // normal image attachments and larger inline scans importable.
+            if matches!(disposition.disposition, DispositionType::Inline)
+                && part.ctype.mimetype.starts_with("image/")
+                && part.headers.get_first_value("Content-ID").is_some()
+                && bytes.len() < 4096
+            {
+                continue;
+            }
             scan.attachments.push(MailAttachment {
                 filename,
                 mime_type: part.ctype.mimetype.clone(),
@@ -542,6 +668,53 @@ fn connect_tls(
     .map_err(|e| e.to_string())?;
     client
         .login(config.username.as_str(), password)
+        .map_err(|e| e.0.to_string())
+}
+
+fn connect_preview_tls(
+    config: &InboxConfig,
+    password: &str,
+    control: &InboxScanControl,
+) -> Result<imap::Session<native_tls::TlsStream<TcpStream>>, String> {
+    validate_config(config, true, password)?;
+    if !config.use_tls {
+        return Err("Plain IMAP is disabled. Enable TLS for inbox imports.".to_string());
+    }
+    control.check()?;
+    let addresses = (config.host.as_str(), config.port as u16)
+        .to_socket_addrs()
+        .map_err(|e| e.to_string())?;
+    let mut connected = None;
+    let mut last_error = "No IMAP server addresses were found.".to_string();
+    for address in addresses {
+        control.check()?;
+        match TcpStream::connect_timeout(&address, StdDuration::from_secs(10)) {
+            Ok(socket) => {
+                connected = Some(socket);
+                break;
+            }
+            Err(error) => last_error = error.to_string(),
+        }
+    }
+    let socket = connected.ok_or(last_error)?;
+    socket
+        .set_read_timeout(Some(StdDuration::from_secs(30)))
+        .map_err(|e| e.to_string())?;
+    socket
+        .set_write_timeout(Some(StdDuration::from_secs(30)))
+        .map_err(|e| e.to_string())?;
+    control.attach_socket(&socket)?;
+    let tls = native_tls::TlsConnector::builder()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let stream = tls
+        .connect(&config.host, socket)
+        .map_err(|e| e.to_string())?;
+    let mut client = imap::Client::new(stream);
+    client.read_greeting().map_err(|e| e.to_string())?;
+    control.check()?;
+    client
+        .login(&config.username, password)
         .map_err(|e| e.0.to_string())
 }
 
@@ -717,6 +890,18 @@ fn analyze_staged_attachment(
             notices: Vec::new(),
         };
     };
+
+    if !prepared.has_extracted_bills() {
+        return AttachmentAnalysis {
+            status: "empty".to_string(),
+            reason: Some("No invoice payment fields were found in this attachment.".to_string()),
+            error: None,
+            prepared: None,
+            kept_bill_hashes: Vec::new(),
+            bill_summaries: Vec::new(),
+            notices: Vec::new(),
+        };
+    }
 
     let period_mismatch = match prepared.detected_source_period() {
         Some((source_month, source_year))
@@ -1119,15 +1304,45 @@ fn test_inbox_connection_impl(config: InboxConfig, password: String) -> Result<(
 }
 
 #[tauri::command]
+pub fn begin_inbox_preview(preview_state: State<InboxPreviewState>) -> Result<String, String> {
+    preview_state.begin_scan()
+}
+
+#[tauri::command]
+pub fn cancel_inbox_preview(
+    preview_state: State<InboxPreviewState>,
+    request_id: String,
+) -> Result<(), String> {
+    // Also cover cancellation racing with a successfully published response.
+    preview_state.cancel_scan(&request_id)
+}
+
+#[tauri::command]
 pub async fn preview_inbox_attachments(
     app: AppHandle,
     billing_period_id: i64,
     days_to_scan: i32,
+    request_id: String,
 ) -> Result<InboxPreviewSession, String> {
+    let control = {
+        let state = app.state::<InboxPreviewState>();
+        state.start_scan(&request_id)?
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<DbState>();
         let preview_state = app.state::<InboxPreviewState>();
-        preview_inbox_attachments_impl(db, preview_state, billing_period_id, days_to_scan)
+        let _guard = InboxScanGuard {
+            state: &preview_state,
+            request_id: request_id.clone(),
+        };
+        preview_inbox_attachments_impl(
+            db,
+            &preview_state,
+            billing_period_id,
+            days_to_scan,
+            request_id,
+            &control,
+        )
     })
     .await
     .map_err(|e| format!("Inbox preview task failed: {e}"))?
@@ -1135,10 +1350,13 @@ pub async fn preview_inbox_attachments(
 
 fn preview_inbox_attachments_impl(
     db: State<'_, DbState>,
-    preview_state: State<'_, InboxPreviewState>,
+    preview_state: &State<'_, InboxPreviewState>,
     billing_period_id: i64,
     days_to_scan: i32,
+    session_id: String,
+    control: &InboxScanControl,
 ) -> Result<InboxPreviewSession, String> {
+    control.check()?;
     let overall_start = Instant::now();
     let mut debug_log = vec![
         format!(
@@ -1149,7 +1367,7 @@ fn preview_inbox_attachments_impl(
         format!("days_to_scan={days_to_scan}"),
     ];
 
-    sweep_preview_sessions(&preview_state)?;
+    sweep_preview_sessions(preview_state)?;
     if !(0..=MAX_DAYS_TO_SCAN).contains(&days_to_scan) {
         return Err(format!(
             "Days to scan must be between 0 and {}.",
@@ -1172,7 +1390,6 @@ fn preview_inbox_attachments_impl(
     debug_log.push(format!("allowlist_count={}", allowlist.len()));
     debug_log.push(format!("since={since}"));
 
-    let session_id = preview_token("session");
     let temp_dir = tempfile::Builder::new()
         .prefix("upn-inbox-preview-")
         .tempdir()
@@ -1192,22 +1409,24 @@ fn preview_inbox_attachments_impl(
     let mut scan_summary = InboxPreviewScanSummary::default();
 
     let connect_start = Instant::now();
-    let mut imap_session = match connect_tls(&credentials.config, &credentials.password) {
-        Ok(session) => {
-            debug_log.push(format!(
-                "connect_ms={}",
-                connect_start.elapsed().as_millis()
-            ));
-            session
-        }
-        Err(error) => {
-            debug_log.push(format!("connect_error={error}"));
-            debug_log.push(format!("total_ms={}", overall_start.elapsed().as_millis()));
-            write_inbox_preview_debug_log(&debug_log);
-            return Err(error);
-        }
-    };
+    let mut imap_session =
+        match connect_preview_tls(&credentials.config, &credentials.password, control) {
+            Ok(session) => {
+                debug_log.push(format!(
+                    "connect_ms={}",
+                    connect_start.elapsed().as_millis()
+                ));
+                session
+            }
+            Err(error) => {
+                debug_log.push(format!("connect_error={error}"));
+                debug_log.push(format!("total_ms={}", overall_start.elapsed().as_millis()));
+                write_inbox_preview_debug_log(&debug_log);
+                return Err(error);
+            }
+        };
     let scan_result = (|| -> Result<(), String> {
+        control.check()?;
         let examine_start = Instant::now();
         let mailbox = imap_session
             .examine(credentials.config.folder.as_str())
@@ -1217,6 +1436,7 @@ fn preview_inbox_attachments_impl(
             examine_start.elapsed().as_millis()
         ));
         let uid_validity = mailbox.uid_validity;
+        control.check()?;
         let search_start = Instant::now();
         let ids = imap_session
             .search(format!("SINCE {}", since))
@@ -1231,6 +1451,7 @@ fn preview_inbox_attachments_impl(
         ));
 
         for id in ids {
+            control.check()?;
             let message_start = Instant::now();
             let id_str = id.to_string();
             let metadata_start = Instant::now();
@@ -1274,6 +1495,7 @@ fn preview_inbox_attachments_impl(
             }
 
             let fetch_start = Instant::now();
+            control.check()?;
             let messages = imap_session
                 .fetch(&id_str, "(UID BODY.PEEK[])")
                 .map_err(|e| e.to_string())?;
@@ -1349,6 +1571,7 @@ fn preview_inbox_attachments_impl(
                 unsupported_count
             ));
             for attachment in attachment_scan.attachments {
+                control.check()?;
                 let safe_filename = sanitize_filename(&attachment.filename);
                 let attachment_sha256 = sha256_hex(&attachment.bytes);
                 let candidate_id = preview_token("candidate");
@@ -1410,13 +1633,14 @@ fn preview_inbox_attachments_impl(
                     continue;
                 }
                 let stage_ms = stage_start.elapsed().as_millis();
+                control.check()?;
                 let analysis_start = Instant::now();
                 let source_label = format!("email: {} / {}", message_context.sender, safe_filename);
-                let analysis = match prepare_multi_bill_import_from_path(
+                let analysis = match prepare_inbox_preview_from_path(
                     &staged_path.to_string_lossy(),
                     source_label,
                     &context,
-                    false,
+                    &control.cancelled,
                 ) {
                     Ok(prepared) => {
                         let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -1441,6 +1665,7 @@ fn preview_inbox_attachments_impl(
                     },
                 };
                 let analysis_ms = analysis_start.elapsed().as_millis();
+                control.check()?;
                 let candidate = preview_candidate_from_analysis(
                     candidate_id.clone(),
                     &message_context,
@@ -1487,7 +1712,11 @@ fn preview_inbox_attachments_impl(
         }
         Ok(())
     })();
-    let logout_result = imap_session.logout().map_err(|e| e.to_string());
+    let logout_result = if control.check().is_ok() {
+        imap_session.logout().map_err(|e| e.to_string())
+    } else {
+        Ok(())
+    };
     if let Err(error) = scan_result {
         let _ = logout_result;
         debug_log.push(format!("scan_error={error}"));
@@ -1503,11 +1732,7 @@ fn preview_inbox_attachments_impl(
         scan_summary,
         preview_candidates,
     );
-    preview_state
-        .sessions
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(session_id, session_data);
+    preview_state.publish_preview(session_id, session_data, control)?;
     debug_log.push(format!(
         "summary matched={} fetched={} skipped_sender={} skipped_oversize={} without_supported={} supported_attachments={} unsupported_attachments={} candidates={}",
         response.scan_summary.messages_matched,
@@ -1844,6 +2069,155 @@ pub fn read_inbox_preview_source(
 mod tests {
     use super::*;
 
+    fn empty_preview_data() -> InboxPreviewSessionData {
+        InboxPreviewSessionData {
+            billing_period_id: 1,
+            days_to_scan: 45,
+            username: "test@example.com".to_string(),
+            folder: "INBOX".to_string(),
+            sender_allowlist: String::new(),
+            created_at: Instant::now(),
+            last_accessed: Instant::now(),
+            temp_dir: tempfile::tempdir().unwrap(),
+            candidates: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn cancellation_before_start_is_idempotent_and_does_not_cancel_another_scan() {
+        let state = InboxPreviewState::default();
+        let cancelled = state.begin_scan().unwrap();
+        let other = state.begin_scan().unwrap();
+        state.cancel_scan(&cancelled).unwrap();
+        state.cancel_scan(&cancelled).unwrap();
+        assert!(state.start_scan(&cancelled).is_err());
+        assert!(state.start_scan(&other).unwrap().check().is_ok());
+        assert!(
+            state.start_scan(&other).is_err(),
+            "duplicate workers must be rejected"
+        );
+    }
+
+    #[test]
+    fn cancelled_scan_discards_late_preview_and_removes_staged_files() {
+        let state = InboxPreviewState::default();
+        let request = state.begin_scan().unwrap();
+        let control = state.start_scan(&request).unwrap();
+        let session = empty_preview_data();
+        let folder = session.temp_dir.path().to_path_buf();
+        std::fs::write(folder.join("invoice.pdf"), b"private staged bytes").unwrap();
+        state.cancel_scan(&request).unwrap();
+        assert!(control.check().is_err());
+        assert!(state.publish_preview(request, session, &control).is_err());
+        assert!(!folder.exists());
+        assert!(state.sessions.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancellation_after_publication_removes_only_the_matching_session() {
+        let state = InboxPreviewState::default();
+        let request = state.begin_scan().unwrap();
+        let control = state.start_scan(&request).unwrap();
+        let session = empty_preview_data();
+        let folder = session.temp_dir.path().to_path_buf();
+        state
+            .publish_preview(request.clone(), session, &control)
+            .unwrap();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("other".to_string(), empty_preview_data());
+        state.cancel_scan(&request).unwrap();
+        assert!(!folder.exists());
+        assert!(state.sessions.lock().unwrap().contains_key("other"));
+    }
+
+    #[test]
+    fn scan_guard_removes_registration_on_error_or_unwind() {
+        let state = InboxPreviewState::default();
+        let request = state.begin_scan().unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = InboxScanGuard {
+                state: &state,
+                request_id: request.clone(),
+            };
+            panic!("synthetic scan failure");
+        }));
+        assert!(state.scans.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancellation_shuts_down_the_active_socket_and_rejects_late_connection() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_server, _) = listener.accept().unwrap();
+        client
+            .set_read_timeout(Some(StdDuration::from_secs(1)))
+            .unwrap();
+        let control = InboxScanControl::default();
+        control.attach_socket(&client).unwrap();
+        control.cancel();
+        let result = client.read(&mut [0; 1]);
+        assert!(matches!(result, Ok(0)) || result.is_err());
+        assert!(control.attach_socket(&client).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires private PDFs in UPN_DEBUG_PDF_DIR and Windows OCR"]
+    fn local_separate_email_invoice_analysis() {
+        let folder = std::env::var("UPN_DEBUG_PDF_DIR").expect("UPN_DEBUG_PDF_DIR");
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrations::run_migrations(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO billing_periods (building_id, month, year) VALUES (1, 10, 2026)",
+            [],
+        )
+        .unwrap();
+        let period_id = conn.last_insert_rowid();
+        let context = load_bill_import_context(&conn, period_id).unwrap();
+        for name in [
+            "2026-2707-racun.pdf",
+            "21896488_9140310.pdf",
+            "racun-303-2-17868929.pdf",
+            "IR18690996.pdf",
+            "Racun-26-636646.pdf",
+        ] {
+            let path = std::path::Path::new(&folder).join(name);
+            let prepared = prepare_inbox_preview_from_path(
+                &path.to_string_lossy(),
+                name.to_string(),
+                &context,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let analysis = analyze_staged_attachment(
+                &conn,
+                period_id,
+                &context,
+                &test_message(),
+                name,
+                "sample",
+                Some(prepared),
+            );
+            assert_eq!(
+                analysis.status, "ready",
+                "{name}: {:?} {:?}",
+                analysis.reason, analysis.error
+            );
+            assert_eq!(analysis.bill_summaries.len(), 1, "{name}");
+            assert_eq!(
+                analysis.bill_summaries[0].identity.status, "matched",
+                "{name}"
+            );
+        }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM bills", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "preview must not persist bills");
+    }
+
     #[test]
     fn validates_config_bounds() {
         let config = InboxConfig {
@@ -1905,6 +2279,36 @@ mod tests {
         assert!(magic_matches_extension(b"%PDF-1.7", "pdf"));
         assert!(magic_matches_extension(&[0xFF, 0xD8, 0xFF, 0xAA], "jpg"));
         assert!(!magic_matches_extension(b"not a pdf", "pdf"));
+    }
+
+    #[test]
+    fn generic_binary_mime_still_requires_supported_extension_and_signature() {
+        let mut attachment = MailAttachment {
+            filename: "invoice.pdf".to_string(),
+            mime_type: "application/octet-stream".to_string(),
+            bytes: b"%PDF-1.4".to_vec(),
+        };
+        assert_eq!(validate_attachment(&attachment).unwrap(), "pdf");
+        attachment.bytes = b"not a PDF".to_vec();
+        assert!(validate_attachment(&attachment)
+            .unwrap_err()
+            .contains("content"));
+        attachment.bytes = b"%PDF-1.4".to_vec();
+        attachment.mime_type = "text/plain".to_string();
+        assert!(validate_attachment(&attachment)
+            .unwrap_err()
+            .contains("MIME"));
+        attachment.mime_type = "application/octet-stream".to_string();
+        attachment.filename = "invoice.exe".to_string();
+        assert!(validate_attachment(&attachment).is_err());
+    }
+
+    #[test]
+    fn skips_tiny_inline_cid_images_but_keeps_image_attachments() {
+        let mail = mailparse::parse_mail(b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: image/jpeg; name=logo.jpg\r\nContent-Disposition: inline; filename=logo.jpg\r\nContent-ID: <logo>\r\n\r\nsmall image\r\n--b\r\nContent-Type: image/jpeg; name=invoice.jpg\r\nContent-Disposition: attachment; filename=invoice.jpg\r\n\r\ninvoice image\r\n--b--\r\n").unwrap();
+        let scan = collect_attachment_scan(&mail);
+        assert_eq!(scan.attachments.len(), 1);
+        assert_eq!(scan.attachments[0].filename, "invoice.jpg");
     }
 
     #[test]

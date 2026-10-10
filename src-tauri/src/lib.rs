@@ -18,9 +18,10 @@ use commands::documents::{
     read_bill_source_document, read_local_preview_source, LocalPreviewState,
 };
 use commands::inbox::{
-    clear_inbox_preview_session, get_inbox_config, get_inbox_preview_source_info,
-    import_inbox_preview_selection, preview_inbox_attachments, read_inbox_preview_source,
-    save_inbox_config, save_inbox_password, test_inbox_connection, InboxPreviewState,
+    begin_inbox_preview, cancel_inbox_preview, clear_inbox_preview_session, get_inbox_config,
+    get_inbox_preview_source_info, import_inbox_preview_selection, preview_inbox_attachments,
+    read_inbox_preview_source, save_inbox_config, save_inbox_password, test_inbox_connection,
+    InboxPreviewState,
 };
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
@@ -86,6 +87,8 @@ pub fn run() {
             save_inbox_config,
             save_inbox_password,
             test_inbox_connection,
+            begin_inbox_preview,
+            cancel_inbox_preview,
             preview_inbox_attachments,
             import_inbox_preview_selection,
             clear_inbox_preview_session,

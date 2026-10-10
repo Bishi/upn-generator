@@ -17,6 +17,8 @@
 - [ ] Change the picker year, close the picker without selecting a month, and confirm reopening starts on the current year.
 - [ ] Cancel a local bill import for a newly selected empty month and confirm no billing period row is created.
 - [ ] Import a combined PDF and confirm one row is created per detected configured provider.
+- [ ] Preview a service date range followed by another numeric field on the next line; confirm the correct service month is detected for both normal and OCR-spaced dates.
+- [ ] Preview the five provider-original PDFs separately and together; confirm each invoice has matched identity, correct payment data, and the same service month as its combined-PDF equivalent. Check the small-print gas identifier and OCR-damaged waste customer label in particular.
 - [ ] Import or preview a combined PDF where one detected bill is missing a due date, and confirm that bill is marked for review on Bills instead of appearing as a clean auto-match.
 - [ ] Click Mark reviewed on an imported warning bill and confirm it changes to a reviewed state while the import note remains visible.
 - [ ] Click Unreview on a reviewed warning bill and confirm it returns to the unresolved review state.

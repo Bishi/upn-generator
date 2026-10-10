@@ -840,6 +840,7 @@ function InboxImportDrawer({
   const [results, setResults] = useState<InboxImportResult[]>([]);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const activeScan = useRef<{ requestId: string | null; cancelled: boolean } | null>(null);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{
@@ -848,6 +849,29 @@ function InboxImportDrawer({
     billKey: string | null;
   } | null>(null);
   const busy = loadingPreview || importing;
+
+  const cancelPreview = useCallback(async () => {
+    const scan = activeScan.current;
+    if (!scan) return;
+    scan.cancelled = true;
+    activeScan.current = null;
+    setLoadingPreview(false);
+    if (scan.requestId) {
+      try {
+        await ipc.cancelInboxPreview(scan.requestId);
+      } catch (e) {
+        if (!activeScan.current) setError(`Failed to cancel inbox preview: ${e}`);
+      }
+    }
+  }, []);
+
+  useEffect(() => () => {
+    const scan = activeScan.current;
+    if (!scan) return;
+    scan.cancelled = true;
+    activeScan.current = null;
+    if (scan.requestId) void ipc.cancelInboxPreview(scan.requestId).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -877,8 +901,14 @@ function InboxImportDrawer({
   }, [open]);
 
   const closeDrawer = useCallback(async () => {
-    if (busy) return;
+    if (importing) return;
+    const cancellation = cancelPreview();
     const sessionId = preview?.session_id;
+    setPreview(null);
+    setSelectedIds(new Set());
+    setViewer(null);
+    onClose();
+    await cancellation;
     if (sessionId) {
       try {
         await ipc.clearInboxPreviewSession(sessionId);
@@ -886,47 +916,63 @@ function InboxImportDrawer({
         // Cleanup is best-effort; sessions also expire in Rust state.
       }
     }
-    setPreview(null);
-    setSelectedIds(new Set());
-    setViewer(null);
-    onClose();
-  }, [busy, onClose, preview?.session_id]);
+  }, [importing, cancelPreview, onClose, preview?.session_id]);
 
   useEffect(() => {
     if (!open || viewer !== null) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) void closeDrawer();
+      if (event.key === "Escape" && !importing) void closeDrawer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, busy, closeDrawer, viewer]);
+  }, [open, importing, closeDrawer, viewer]);
 
   const fetchPreview = async () => {
-    if (!canEnsurePeriod || readOnly) return;
+    if (!canEnsurePeriod || readOnly || activeScan.current || importing) return;
+    const scan = { requestId: null as string | null, cancelled: false };
+    activeScan.current = scan;
     setViewer(null);
     setError(null);
     setResults([]);
     setLoadingPreview(true);
     try {
       const billingPeriod = await ensureBillingPeriod();
-      if (!billingPeriod) return;
-      if (preview?.session_id) {
-        await ipc.clearInboxPreviewSession(preview.session_id);
-      }
+      if (!billingPeriod || scan.cancelled) return;
       setPreview(null);
       setSelectedIds(new Set());
       setInboxExceptionNotes({});
+      if (preview?.session_id) {
+        await ipc.clearInboxPreviewSession(preview.session_id);
+      }
+      if (scan.cancelled) return;
       const clampedDays = clampInboxScanDays(daysToScan);
       setDaysToScan(clampedDays);
-      const nextPreview = await ipc.previewInboxAttachments(billingPeriod.id, clampedDays);
+      scan.requestId = await ipc.beginInboxPreview();
+      if (scan.cancelled) {
+        await ipc.cancelInboxPreview(scan.requestId);
+        return;
+      }
+      const nextPreview = await ipc.previewInboxAttachments(billingPeriod.id, clampedDays, scan.requestId);
+      if (scan.cancelled || activeScan.current !== scan) {
+        await ipc.clearInboxPreviewSession(nextPreview.session_id);
+        return;
+      }
       setPreview(nextPreview);
       setSelectedIds(new Set(defaultInboxPreviewSelection(nextPreview.candidates)));
     } catch (e) {
+      if (scan.cancelled || activeScan.current !== scan) return;
+      if (scan.requestId) {
+        await ipc.cancelInboxPreview(scan.requestId).catch(() => {});
+      }
+      if (scan.cancelled || activeScan.current !== scan) return;
       setError(`Failed to preview inbox: ${e}`);
       setPreview(null);
       setSelectedIds(new Set());
     } finally {
-      setLoadingPreview(false);
+      if (activeScan.current === scan) {
+        activeScan.current = null;
+        setLoadingPreview(false);
+      }
     }
   };
 
@@ -1030,14 +1076,14 @@ function InboxImportDrawer({
         type="button"
         className="absolute inset-0 bg-overlay animate-drawer-scrim-in"
         aria-label="Close inbox import"
-        disabled={busy}
+        disabled={importing}
         onClick={() => void closeDrawer()}
       />
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-4xl flex-col border-l border-border bg-card shadow-pop animate-drawer-slide-in sm:w-[760px]">
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-full flex-col border-l border-border bg-card shadow-pop animate-drawer-slide-in sm:w-[900px]">
         <header className="border-b border-border px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <h2 className="font-head text-lg font-semibold">Import from Inbox</h2>
-            <Button variant="ghost" size="icon" onClick={() => void closeDrawer()} disabled={busy} aria-label="Close">
+            <Button variant="ghost" size="icon" onClick={() => void closeDrawer()} disabled={importing} aria-label="Close">
               <X className="size-4" />
             </Button>
           </div>
@@ -1112,7 +1158,13 @@ function InboxImportDrawer({
                 {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />}
                 Fetch preview
               </Button>
-              <span className="text-xs text-muted-foreground">This may take a few seconds.</span>
+              <div className="flex h-9 shrink-0 items-center justify-center">
+                {loadingPreview ? (
+                  <Button variant="outline" onClick={() => void cancelPreview()}>Cancel scan</Button>
+                ) : (
+                  <span className="text-xs text-muted-foreground">This may take a few seconds.</span>
+                )}
+              </div>
             </div>
           )}
 
@@ -1249,6 +1301,14 @@ function InboxImportDrawer({
                               {attachmentCell(true)}
                               <td className="px-3 py-4 align-top">
                                 <span className="text-xs text-muted-foreground">No importable bills</span>
+                                {(candidate.error ?? candidate.skipped_reason) && (
+                                  <details className="mt-1 text-xs text-muted-foreground">
+                                    <summary className="w-fit cursor-pointer rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                      Why?
+                                    </summary>
+                                    <p className="mt-2 max-w-sm break-words">{candidate.error ?? candidate.skipped_reason}</p>
+                                  </details>
+                                )}
                               </td>
                               <td className="px-3 py-4 text-right align-top text-xs text-muted-foreground">-</td>
                               {statusCell}
@@ -1373,7 +1433,7 @@ function InboxImportDrawer({
                   : "Import complete. You can close this panel."}
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
+                <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
                   Close
                 </Button>
                 <Button
@@ -1398,7 +1458,7 @@ function InboxImportDrawer({
                 <span className="font-semibold text-foreground">{selectedBillCount}</span> selected
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
+                <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
                   Close
                 </Button>
                 <Button
@@ -1414,7 +1474,7 @@ function InboxImportDrawer({
           ) : (
             <>
               <div />
-              <Button variant="outline" onClick={() => void closeDrawer()} disabled={busy}>
+              <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
                 Close
               </Button>
             </>

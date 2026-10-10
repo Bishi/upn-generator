@@ -7,7 +7,7 @@ use std::panic::{catch_unwind, UnwindSafe};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
 
 use super::config::{DbState, Provider};
@@ -143,13 +143,41 @@ struct DocumentExtraction {
 #[cfg(target_os = "windows")]
 static PDF_OCR_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-#[cfg(target_os = "windows")]
-struct PdfOcrWorkerGuard;
+struct PdfOcrWorkerGuard<'a> {
+    active: &'a AtomicBool,
+}
 
-#[cfg(target_os = "windows")]
-impl Drop for PdfOcrWorkerGuard {
+impl Drop for PdfOcrWorkerGuard<'_> {
     fn drop(&mut self) {
-        PDF_OCR_ACTIVE.store(false, Ordering::Release);
+        self.active.store(false, Ordering::Release);
+    }
+}
+
+fn acquire_pdf_ocr_slot<'a>(
+    active: &'a AtomicBool,
+    cancelled: Option<&AtomicBool>,
+) -> Result<PdfOcrWorkerGuard<'a>, String> {
+    let waiting_since = Instant::now();
+    loop {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err("Inbox preview cancelled.".to_string());
+        }
+        if active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Ok(PdfOcrWorkerGuard { active });
+        }
+        if cancelled.is_none() {
+            return Err("Another PDF rendering/OCR operation is still running.".to_string());
+        }
+        if waiting_since.elapsed() >= Duration::from_secs(75) {
+            return Err(
+                "Timed out waiting for the previous PDF rendering/OCR operation to finish."
+                    .to_string(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -168,10 +196,15 @@ where
 }
 
 #[cfg(target_os = "windows")]
-fn ocr_pdf_pages(file_path: &str, page_limit: usize) -> Result<Vec<String>, String> {
-    PDF_OCR_ACTIVE
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .map_err(|_| "Another PDF rendering/OCR operation is still running.".to_string())?;
+fn ocr_pdf_pages(
+    file_path: &str,
+    page_limit: usize,
+    guard: Option<PdfOcrWorkerGuard<'static>>,
+) -> Result<Vec<String>, String> {
+    let guard = match guard {
+        Some(guard) => guard,
+        None => acquire_pdf_ocr_slot(&PDF_OCR_ACTIVE, None)?,
+    };
     let canonical_path = std::fs::canonicalize(file_path)
         .map_err(|e| format!("Could not resolve PDF path: {e}"))?
         .to_string_lossy()
@@ -188,7 +221,7 @@ fn ocr_pdf_pages(file_path: &str, page_limit: usize) -> Result<Vec<String>, Stri
     };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _worker_guard = PdfOcrWorkerGuard;
+        let _worker_guard = guard;
         let result = (|| -> Result<Vec<String>, String> {
             let file = StorageFile::GetFileFromPathAsync(&path.into())
                 .map_err(|e| format!("Could not open PDF for rendering: {e}"))?
@@ -210,10 +243,10 @@ fn ocr_pdf_pages(file_path: &str, page_limit: usize) -> Result<Vec<String>, Stri
             for index in 0..page_count {
                 let page = document.GetPage(index as u32).map_err(|e| e.to_string())?;
                 let size = page.Size().map_err(|e| e.to_string())?;
-                let width = 1800u32;
+                let width = 2400u32;
                 let height = ((size.Height / size.Width) * width as f32)
                     .round()
-                    .clamp(1.0, 2600.0) as u32;
+                    .clamp(1.0, 3600.0) as u32;
                 let options = PdfPageRenderOptions::new().map_err(|e| e.to_string())?;
                 options
                     .SetDestinationWidth(width)
@@ -246,14 +279,14 @@ fn ocr_pdf_pages(file_path: &str, page_limit: usize) -> Result<Vec<String>, Stri
                     .map_err(|e| e.to_string())?
                     .get()
                     .map_err(|e| e.to_string())?;
-                texts.push(
-                    recognized
-                        .Text()
-                        .map_err(|e| e.to_string())?
-                        .to_string_lossy()
-                        .trim()
-                        .to_string(),
-                );
+                // Text() joins unrelated lines with spaces, which can append a
+                // date or another numeric field to a customer identifier.
+                let lines = recognized.Lines().map_err(|e| e.to_string())?;
+                let mut page_lines = Vec::new();
+                for line in lines {
+                    page_lines.push(line.Text().map_err(|e| e.to_string())?.to_string_lossy());
+                }
+                texts.push(page_lines.join("\n"));
                 let _ = page.Close();
             }
             Ok(texts)
@@ -272,11 +305,18 @@ fn ocr_pdf_pages(file_path: &str, page_limit: usize) -> Result<Vec<String>, Stri
 }
 
 #[cfg(not(target_os = "windows"))]
-fn ocr_pdf_pages(_file_path: &str, _page_limit: usize) -> Result<Vec<String>, String> {
+fn ocr_pdf_pages(
+    _file_path: &str,
+    _page_limit: usize,
+    _guard: Option<PdfOcrWorkerGuard<'static>>,
+) -> Result<Vec<String>, String> {
     Err("PDF page rendering/OCR is only supported on Windows builds.".to_string())
 }
 
-fn extract_pdf_document(file_path: &str) -> Result<DocumentExtraction, String> {
+fn extract_pdf_document(
+    file_path: &str,
+    cancelled: Option<&AtomicBool>,
+) -> Result<DocumentExtraction, String> {
     const MAX_PDF_BYTES: u64 = 25 * 1024 * 1024;
     const MAX_PDF_PAGES: usize = 30;
     let metadata = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
@@ -286,7 +326,19 @@ fn extract_pdf_document(file_path: &str) -> Result<DocumentExtraction, String> {
     let pdf_bytes = std::fs::read(file_path).map_err(|e| e.to_string())?;
     let native_result =
         contain_extractor_unwind(|| pdf_extract::extract_text_from_mem_by_pages(&pdf_bytes));
-    let ocr_result = ocr_pdf_pages(file_path, MAX_PDF_PAGES);
+    // Inbox retries wait for an earlier cancelled worker to release OCR.
+    // Queue cancellation/timeouts abort the attachment instead of becoming
+    // misleading identity diagnostics in an otherwise readable document.
+    #[cfg(target_os = "windows")]
+    let worker_guard = cancelled
+        .map(|flag| acquire_pdf_ocr_slot(&PDF_OCR_ACTIVE, Some(flag)))
+        .transpose()?;
+    #[cfg(not(target_os = "windows"))]
+    let worker_guard = None;
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err("Inbox preview cancelled.".to_string());
+    }
+    let ocr_result = ocr_pdf_pages(file_path, MAX_PDF_PAGES, worker_guard);
     let mut diagnostics = Vec::new();
     let native_pages = match native_result {
         Ok(pages) => pages,
@@ -520,12 +572,42 @@ fn first_date_in_text(text: &str) -> String {
 }
 
 fn find_source_period_month_year(text: &str) -> Option<(i32, i32)> {
-    let compact = text.replace(' ', "");
-    let range_re = Regex::new(r"(\d{2})\.(\d{2})\.(\d{4})[-–](\d{2})\.(\d{2})\.(\d{4})").ok()?;
-    if let Some(caps) = range_re.captures(&compact) {
-        let month = caps.get(2)?.as_str().parse::<i32>().ok()?;
-        let year = caps.get(3)?.as_str().parse::<i32>().ok()?;
-        return Some((month, year));
+    // Allow OCR spacing inside dates without merging the end year with the
+    // next field. Internal digit spacing is horizontal; complete dates and
+    // the range separator may be on separate lines.
+    let date = r"(\d[^\S\r\n]*\d)[^\S\r\n]*\.[^\S\r\n]*(\d[^\S\r\n]*\d)[^\S\r\n]*\.[^\S\r\n]*(\d(?:[^\S\r\n]*\d){3}|\d[^\S\r\n]*\d)";
+    let range_re = Regex::new(&format!(r"{date}\s*(?:[-–]|do)\s*{date}(?:$|[^\d])")).ok()?;
+    if let Some(caps) = range_re.captures(text) {
+        let digits = |index| {
+            caps.get(index).map(|value| {
+                value
+                    .as_str()
+                    .chars()
+                    .filter(char::is_ascii_digit)
+                    .collect::<String>()
+            })
+        };
+        let month = digits(2)?.parse::<i32>().ok()?;
+        let mut year = digits(3)?.parse::<i32>().ok()?;
+        if year < 100 {
+            year += 2000;
+        }
+        if (1..=12).contains(&month) {
+            return Some((month, year));
+        }
+    }
+
+    // Service-purpose text on native VOKA invoices. Do not infer a service
+    // month from arbitrary dates, invoice numbers or email metadata.
+    let purpose_period_re =
+        Regex::new(r"(?i)(?:ravnanje\s+z\s+odpadki|komunalne\s+stor\.)\s+(\d{2})/(\d{4})\b")
+            .ok()?;
+    if let Some(caps) = purpose_period_re.captures(text) {
+        let month = caps.get(1)?.as_str().parse::<i32>().ok()?;
+        let year = caps.get(2)?.as_str().parse::<i32>().ok()?;
+        if (1..=12).contains(&month) {
+            return Some((month, year));
+        }
     }
 
     let month_word_re = Regex::new(
@@ -1123,6 +1205,13 @@ pub(crate) fn ensure_period_bills_identity_eligible(
 }
 
 fn extract_document_from_file(file_path: &str) -> Result<DocumentExtraction, String> {
+    extract_document_from_file_with_cancellation(file_path, None)
+}
+
+fn extract_document_from_file_with_cancellation(
+    file_path: &str,
+    cancelled: Option<&AtomicBool>,
+) -> Result<DocumentExtraction, String> {
     let path = Path::new(file_path);
     let extension = path
         .extension()
@@ -1130,7 +1219,7 @@ fn extract_document_from_file(file_path: &str) -> Result<DocumentExtraction, Str
         .map(|ext| ext.to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "pdf" => extract_pdf_document(file_path),
+        "pdf" => extract_pdf_document(file_path, cancelled),
         _ if is_supported_image_file(path) => {
             let text = extract_text_from_image(file_path)?;
             Ok(DocumentExtraction {
@@ -1205,15 +1294,22 @@ fn identity_label_end(text: &str, label: &str) -> Option<usize> {
     let tolerance = (label.len() / 5).clamp(1, 3);
     let min_len = label.len().saturating_sub(tolerance);
     let max_len = label.len() + tolerance;
+    let mut best: Option<((usize, usize, usize), usize)> = None;
     for start in 0..text.len() {
         for length in min_len..=max_len {
             let end = start + length;
-            if end <= text.len() && edit_distance(&text[start..end], label) <= tolerance {
-                return Some(end);
+            if end <= text.len() {
+                let distance = edit_distance(&text[start..end], label);
+                let score = (distance, length.abs_diff(label.len()), start);
+                if distance <= tolerance
+                    && best.as_ref().is_none_or(|(current, _)| score < *current)
+                {
+                    best = Some((score, end));
+                }
             }
         }
     }
-    None
+    best.map(|(_, end)| end)
 }
 
 fn provider_rule_snapshot(provider: &Provider) -> String {
@@ -2135,6 +2231,23 @@ pub(crate) fn prepare_multi_bill_import_from_path(
         context.year,
         &context.providers,
         include_raw_text_in_log,
+    ))
+}
+
+pub(crate) fn prepare_inbox_preview_from_path(
+    file_path: &str,
+    source_filename: String,
+    context: &BillImportContext,
+    cancelled: &AtomicBool,
+) -> Result<PreparedBillImport, String> {
+    let document = extract_document_from_file_with_cancellation(file_path, Some(cancelled))?;
+    Ok(prepare_multi_bill_import_from_document(
+        document,
+        source_filename,
+        context.month,
+        context.year,
+        &context.providers,
+        false,
     ))
 }
 
@@ -3917,6 +4030,191 @@ SI12 6330017789210
             Ok(Vec::new())
         });
         assert!(result.unwrap_err().contains("panicked"));
+    }
+
+    #[test]
+    fn inbox_ocr_retry_waits_until_the_previous_worker_releases_its_slot() {
+        let active = AtomicBool::new(false);
+        let cancelled = AtomicBool::new(false);
+        let previous_worker = acquire_pdf_ocr_slot(&active, None).unwrap();
+        std::thread::scope(|scope| {
+            let active = &active;
+            let cancelled = &cancelled;
+            let (started_tx, started_rx) = mpsc::channel();
+            let (result_tx, result_rx) = mpsc::channel();
+            scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                let result = acquire_pdf_ocr_slot(&active, Some(&cancelled)).map(|guard| {
+                    assert!(active.load(Ordering::Acquire));
+                    drop(guard);
+                });
+                result_tx.send(result).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(matches!(
+                result_rx.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            drop(previous_worker);
+            assert!(result_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .is_ok());
+        });
+        assert!(!active.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn waiting_inbox_ocr_retry_can_be_cancelled_without_releasing_another_workers_slot() {
+        let active = AtomicBool::new(false);
+        let cancelled = AtomicBool::new(false);
+        let previous_worker = acquire_pdf_ocr_slot(&active, None).unwrap();
+        std::thread::scope(|scope| {
+            let active = &active;
+            let cancelled = &cancelled;
+            let (started_tx, started_rx) = mpsc::channel();
+            let (result_tx, result_rx) = mpsc::channel();
+            scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                let result = acquire_pdf_ocr_slot(&active, Some(&cancelled)).map(|_| ());
+                result_tx.send(result).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(matches!(
+                result_rx.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            cancelled.store(true, Ordering::Release);
+            assert!(result_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap_err()
+                .contains("cancelled"));
+            assert!(active.load(Ordering::Acquire));
+        });
+        drop(previous_worker);
+        assert!(!active.load(Ordering::Acquire));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn pdf_ocr_path_resolution_failure_releases_the_slot_before_worker_start() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("missing.pdf");
+        let error = ocr_pdf_pages(&path.to_string_lossy(), 30, None).unwrap_err();
+        assert!(error.contains("resolve PDF path"));
+        assert!(!PDF_OCR_ACTIVE.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn source_period_preserves_boundary_before_next_numeric_field() {
+        for text in [
+            "01.09.2026-30.09.2026\n15.10.2026",
+            "01.09.2026-30.09.2026\r\n15.10.2026",
+            "01.09.2026-30.09.2026 15.10.2026",
+            "od 01.09.26 do 30.09.26\n15.10.2026",
+            "0 1 .0 9 .2 0 2 6 - 3 0 .0 9 .2 0 2 6\n15.10.2026",
+        ] {
+            assert_eq!(
+                find_source_period_month_year(text),
+                Some((9, 2026)),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            find_source_period_month_year("01.09.2026-30.09.202615"),
+            None
+        );
+    }
+
+    #[test]
+    fn source_period_accepts_individual_invoice_formats() {
+        for text in [
+            "Obračunsko obdobje: od 01.09.2026 do 30.09.2026",
+            "Skupaj storitve za obdobje od 01.09.26 do 30.09.26",
+            "Opravljeno: 0 1 .0 9 .2 0 2 6 - 3 0 .0 9 .2 0 2 6\nZapade: 15.10.2026",
+            "KOMUNALNE STOR. 09/2026 0020000037",
+            "Ravnanje z odpadki 09/2026",
+            "SEPTEMBER 2026",
+        ] {
+            assert_eq!(
+                find_source_period_month_year(text),
+                Some((9, 2026)),
+                "{text}"
+            );
+        }
+        for text in [
+            "Rok plačila: 15.10.2026",
+            "Račun: 09/2026",
+            "KOMUNALNE STOR. 13/2026",
+        ] {
+            assert_eq!(find_source_period_month_year(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn damaged_identity_label_uses_best_match_before_reading_value() {
+        assert_eq!(
+            labeled_value_result(
+                "Sifra naroönika: 0040113249",
+                "Šifra naročnika",
+                "0040113249"
+            ),
+            (true, true, "0040113249".to_string())
+        );
+        assert!(
+            !labeled_value_result(
+                "Sifra naroönika: 00401132490",
+                "Šifra naročnika",
+                "0040113249"
+            )
+            .1
+        );
+        assert_eq!(
+            labeled_value_result(
+                "PLIN Odjemno mesto: 01505116659\n21.10.2026",
+                "PLIN Odjemno mesto",
+                "01505116659"
+            ),
+            (true, true, "01505116659".to_string())
+        );
+    }
+
+    #[test]
+    #[ignore = "requires private PDFs in UPN_DEBUG_PDF_DIR and Windows OCR"]
+    fn local_separate_invoice_samples() {
+        let folder = std::env::var("UPN_DEBUG_PDF_DIR").expect("UPN_DEBUG_PDF_DIR");
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run_migrations(&conn).unwrap();
+        let providers = get_providers_inner(&conn);
+        for (name, amount, due_date) in [
+            ("2026-2707-racun.pdf", 13928, "15.10.2026"),
+            ("21896488_9140310.pdf", 8822, "15.10.2026"),
+            ("racun-303-2-17868929.pdf", 938, "21.10.2026"),
+            ("IR18690996.pdf", 3811, "22.10.2026"),
+            ("Racun-26-636646.pdf", 9387, "15.10.2026"),
+        ] {
+            let path = Path::new(&folder).join(name);
+            let document = extract_document_from_file(&path.to_string_lossy()).unwrap();
+            let prepared = prepare_multi_bill_import_from_document(
+                document,
+                name.to_string(),
+                10,
+                2026,
+                &providers,
+                false,
+            );
+            assert_eq!(prepared.detected_source_period(), Some((9, 2026)), "{name}");
+            let previews = preview_prepared_bills(&prepared, &providers);
+            assert_eq!(previews.len(), 1, "{name}: {previews:#?}");
+            assert_eq!(previews[0].amount_cents, amount, "{name}");
+            assert_eq!(previews[0].due_date, due_date, "{name}");
+            assert_eq!(
+                previews[0].identity.status, "matched",
+                "{name}: {previews:#?}"
+            );
+            eprintln!("{name}: one verified invoice, correct period, amount and due date");
+        }
     }
 
     #[test]
