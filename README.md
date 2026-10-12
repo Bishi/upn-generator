@@ -161,13 +161,15 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 
 | Action | Description |
 |--------|-------------|
-| **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
+| **Preview / Preview all** | Opens one UPN slip or an apartment's full UPN packet in the in-app PDF viewer |
 | **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
 | **Send All Emails** | Opens a summary drawer with the billing month, packet totals, slip counts, and recipient addresses; **Confirm send** starts the batch using current email safety settings, including previously emailed packets |
 
-**Attach original bills** is checked by default on UPN Preview. Each apartment email includes the exact stored supplier PDFs/images for the bills in its UPN packet. Combined source PDFs are sent in full, including any other pages in the original; a source shared by several bills is attached only once per email. The page shows the available file count and warns about bills without retained originals (such as manual or older imports); sending still includes UPN slips and all available originals. Uncheck the box to send only the UPN PDF. A corrupt or missing linked source file fails that apartment's send rather than silently omitting it. The email message mentions supplier originals when they are attached.
+**Attach original bills** is checked by default on UPN Preview. Each apartment email includes its UPN PDF plus one `Original_bills.pdf` combining all available supplier PDFs for the bills in its UPN packet. Every source page is included, including unselected or informational pages; a source shared by several bills is included only once per email. Image originals are attached separately with unchanged bytes. Stored originals remain unchanged and available through **View original**. The page shows the available source-file count and warns about bills without retained originals (such as manual or older imports); sending still includes UPN slips and all available originals. Uncheck the box to send only the UPN PDF. A corrupt or missing linked source file, or a PDF that cannot be combined, fails that apartment's send rather than silently omitting it. The email message mentions supplier originals when they are attached.
+
+When combining multiple supplier PDFs, encrypted or layered PDFs block the send with an error. Layered PDFs have document-level visibility settings that cannot safely be discarded. Uncheck **Attach original bills** to send UPNs only in this case; retained originals remain accessible through **View original**.
 
 UPN PDFs share embedded fonts across slips, include only the font characters used in the packet, and use lossless compression to keep email attachments and downloads small while preserving print quality and QR resolution.
 
@@ -237,7 +239,7 @@ Open it to see the raw extracted text and what each detection phase found or mis
 
 **UPN preview does not open**
 
-Make sure a PDF viewer is installed (for example Adobe Acrobat or Microsoft Edge). The eye button saves a temporary PDF and opens it with Windows' default PDF app. If the launch fails, the error is shown directly on the UPN page instead of failing silently.
+The UPN preview opens inside the app. If generation or display fails, the viewer shows the error. Close it and check that the selected month has calculated splits and the required payment details.
 
 **Email not sending**
 

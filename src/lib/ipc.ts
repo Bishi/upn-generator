@@ -146,12 +146,10 @@ export const ipc = {
   // UPN
   generateUpnPdf: (billId: number, apartmentId: number) =>
     invoke<string>("generate_upn_pdf", { billId, apartmentId }),
-  previewUpn: (billId: number, apartmentId: number) =>
-    invoke<string>("preview_upn", { billId, apartmentId }),
-  openPreviewUpn: (billId: number, apartmentId: number) =>
-    invoke<string>("open_preview_upn", { billId, apartmentId }),
-  openPreviewApartmentUpns: (billingPeriodId: number, apartmentId: number) =>
-    invoke<string>("open_preview_apartment_upns", { billingPeriodId, apartmentId }),
+  readUpnPreview: (billId: number, apartmentId: number) =>
+    invoke<ArrayBuffer>("read_upn_preview", { billId, apartmentId }),
+  readApartmentUpnPreview: (billingPeriodId: number, apartmentId: number) =>
+    invoke<ArrayBuffer>("read_apartment_upn_preview", { billingPeriodId, apartmentId }),
   saveAllUpnsZip: (billingPeriodId: number, outputPath: string) =>
     invoke<UpnZipExportResult>("save_all_upns_zip", { billingPeriodId, outputPath }),
   sendEmails: (billingPeriodId: number, includeOriginalBills = true, content?: EmailContent, extraAttachments: ExtraEmailAttachment[] = []) =>

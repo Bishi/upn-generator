@@ -27,8 +27,8 @@ use commands::inbox::{
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
     close_billing_period, generate_upn_pdf, get_upn_delivery_events, get_upn_delivery_rollup,
-    get_upn_packet_hashes, mark_upn_period_delivered, open_preview_apartment_upns,
-    open_preview_upn, preview_upn, reopen_billing_period, save_all_upns_zip, save_smtp_password,
+    get_upn_packet_hashes, mark_upn_period_delivered, read_apartment_upn_preview,
+    read_upn_preview, reopen_billing_period, save_all_upns_zip, save_smtp_password,
     send_emails, test_smtp_connection, unmark_upn_period_delivered,
 };
 use commands::upn_validation::validate_upn_pre_send;
@@ -60,7 +60,6 @@ pub fn run() {
     migrations::run_migrations(&conn).expect("Failed to run migrations");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(DbState(
@@ -125,9 +124,8 @@ pub fn run() {
             save_split,
             // UPN
             generate_upn_pdf,
-            preview_upn,
-            open_preview_upn,
-            open_preview_apartment_upns,
+            read_upn_preview,
+            read_apartment_upn_preview,
             save_all_upns_zip,
             send_emails,
             mark_upn_period_delivered,

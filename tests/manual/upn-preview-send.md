@@ -47,7 +47,8 @@
 - [ ] Create a duplicate provider bill or split total mismatch and confirm Send Emails, Download All PDFs, and Mark Delivered are disabled until the issue is fixed.
 - [ ] Open a single apartment preview and confirm a PDF is generated without an app error.
 - [ ] Confirm single-apartment previews remain available when validation only blocks delivery actions.
-- [ ] Confirm the preview opens through the system PDF viewer or reports a clear launch failure.
+- [ ] Open one slip and an apartment's Preview all packet; confirm both appear in the in-app PDF viewer, show the correct slips in order, and close with the button or Escape.
+- [ ] Switch between UPN previews and confirm no stale slip remains; a preview generation failure appears inside the viewer and closing it returns focus to the opening button.
 - [ ] Download all PDFs and confirm the save dialog is pre-populated with a `.zip` filename for the selected month.
 - [ ] While Download All PDFs is preparing the export, confirm the page shows a loading overlay and blocks other clicks until the export completes or fails.
 - [ ] Open the exported ZIP and confirm it contains one combined PDF packet for each apartment.
@@ -69,7 +70,7 @@
 - [ ] Click Unmark Delivered, accept the confirmation prompt, and confirm manual delivery marks are removed while email delivery history remains.
 - [ ] Confirm a mixed month with some emailed packets and a manual delivered confirmation marks the UPN workflow step complete.
 - [ ] Confirm generated UPN PDFs use the selected billing month, payer, recipient, IBAN, reference, purpose, and amount.
-- [ ] Open single and apartment previews and confirm preview/open temp PDFs do not create delivery history.
+- [ ] Open single and apartment previews and confirm they do not create delivery history or temporary PDF files.
 - [ ] Navigate away from and back to UPN Preview after manual delivery and confirm delivered pills, row statuses, and Mark/Unmark button do not flash through an incorrect state.
 - [ ] Send emails with allowlist enabled and confirm all non-allowlisted recipients are blocked by validation.
 - [ ] Send a test email to an allowed recipient and confirm delivery succeeds.
@@ -84,10 +85,12 @@
 - [ ] With Attach original bills checked, confirm the drawer describes full original PDFs/images, the available file count, and unavailable originals; uncheck it and confirm the drawer says UPN slips only and the resulting emails omit originals.
 - [ ] Send UPN emails for the October 2026 billing period and confirm the subject is `Poloznice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`.
 - [ ] Open UPN Preview and confirm Attach original bills is checked by default; navigate away and back and confirm a newly opened page defaults to checked again.
-- [ ] With the checkbox checked, send an apartment email and confirm it includes the UPN PDF and exact complete original PDFs/images for that apartment's bills, with readable filenames and correct file types.
-- [ ] Import several bills from one combined PDF and confirm the full PDF is attached once per apartment email, including unselected/informational pages; compare attachment bytes with the imported source.
+- [ ] With the checkbox checked, send an apartment email and confirm it includes the UPN PDF plus one Original_bills.pdf with all supplier PDF pages in source order; verify page sizes, rotation, text, images, and readability against the sources. Original images remain separate exact-byte attachments.
+- [ ] Open the Send All Emails confirmation drawer with originals enabled and confirm its attachment summary describes one combined supplier PDF per apartment plus separate image bills.
+- [ ] Import several bills from one combined PDF and confirm every page is included once in Original_bills.pdf, including unselected/informational pages; confirm View original still opens the unchanged stored source.
 - [ ] Use separate source documents for different apartments/months and confirm only sources linked to the current apartment packet are sent.
-- [ ] Import distinct originals with the same filename and confirm both are attached with distinct readable filenames and unchanged bytes.
+- [ ] Import distinct PDF originals with the same filename and confirm both documents' pages appear in Original_bills.pdf; confirm distinct image originals with the same filename retain distinct readable attachment names and unchanged bytes.
+- [ ] Use a malformed, encrypted, or layered PDF among multiple originals in a disposable database and confirm combining fails visibly before sending (layered PDFs must report that they cannot be safely combined); confirm UPN-only sending remains available when Attach original bills is unchecked.
 - [ ] Uncheck Attach original bills and confirm the helper text says only UPN slips will be sent; send and confirm the email contains only the UPN PDF and no mention of supplier originals.
 - [ ] Include a manual/legacy bill with no original and confirm the page identifies the bill as unavailable before sending; confirm sending still includes UPN slips and any available originals.
 - [ ] In a disposable database, corrupt a linked original's bytes or remove the linked source row; confirm that apartment's send fails visibly without sending an incomplete email, while unaffected apartments can still send. Uncheck the checkbox and confirm UPN-only sending succeeds.

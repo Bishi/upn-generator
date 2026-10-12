@@ -1,4 +1,4 @@
-use ::lopdf::Document as LoDocument;
+use ::lopdf::{dictionary, Document as LoDocument};
 use base64::Engine;
 use lettre::message::header::{ContentDisposition, ContentTransferEncoding, ContentType};
 use lettre::message::{Mailbox, MultiPart, SinglePart};
@@ -13,8 +13,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
-use tauri_plugin_opener::OpenerExt;
+use tauri::{ipc::Response, AppHandle, Manager, State};
 
 use crate::credentials::{self, MailCredentialKind};
 
@@ -1647,76 +1646,30 @@ pub fn generate_upn_pdf(
     Ok(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes))
 }
 
-fn write_preview_pdf(data: &UpnData, bill_id: i64, apartment_id: i64) -> Result<String, String> {
-    let pdf_bytes = render_upn_pdf(data)?;
-    let temp_path = std::env::temp_dir().join(format!("upn_{}_{}.pdf", bill_id, apartment_id));
-    std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
-    temp_path
-        .to_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Invalid temp path".to_string())
-}
-
-fn write_batch_preview_pdf(
-    items: &[UpnData],
-    billing_period_id: i64,
-    apartment_id: i64,
-) -> Result<String, String> {
-    let pdf_bytes = render_upn_pdf_batch(items)?;
-    let temp_path = std::env::temp_dir().join(format!(
-        "upn_batch_{}_{}.pdf",
-        billing_period_id, apartment_id
-    ));
-    std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
-    temp_path
-        .to_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Invalid temp path".to_string())
-}
-
 #[tauri::command]
-pub fn preview_upn(db: State<DbState>, bill_id: i64, apartment_id: i64) -> Result<String, String> {
-    let data = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        load_upn_data(&conn, bill_id, apartment_id)?
-    };
-    write_preview_pdf(&data, bill_id, apartment_id)
-}
-
-#[tauri::command]
-pub fn open_preview_upn(
-    app: AppHandle,
+pub fn read_upn_preview(
     db: State<DbState>,
     bill_id: i64,
     apartment_id: i64,
-) -> Result<String, String> {
+) -> Result<Response, String> {
     let data = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         load_upn_data(&conn, bill_id, apartment_id)?
     };
-    let path = write_preview_pdf(&data, bill_id, apartment_id)?;
-    app.opener()
-        .open_path(&path, None::<String>)
-        .map_err(|e| format!("System PDF opener failed for {}: {}", path, e))?;
-    Ok(path)
+    Ok(Response::new(render_upn_pdf(&data)?))
 }
 
 #[tauri::command]
-pub fn open_preview_apartment_upns(
-    app: AppHandle,
+pub fn read_apartment_upn_preview(
     db: State<DbState>,
     billing_period_id: i64,
     apartment_id: i64,
-) -> Result<String, String> {
+) -> Result<Response, String> {
     let items = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         load_apartment_upn_data(&conn, billing_period_id, apartment_id)?
     };
-    let path = write_batch_preview_pdf(&items, billing_period_id, apartment_id)?;
-    app.opener()
-        .open_path(&path, None::<String>)
-        .map_err(|e| format!("System PDF opener failed for {}: {}", path, e))?;
-    Ok(path)
+    Ok(Response::new(render_upn_pdf_batch(&items)?))
 }
 
 #[tauri::command]
@@ -1854,6 +1807,87 @@ struct PreparedEmailPacket {
     preparation_error: String,
 }
 
+fn combine_original_pdf_bills(
+    originals: Vec<OriginalBillAttachment>,
+) -> Result<Vec<OriginalBillAttachment>, String> {
+    let (mut pdfs, mut images): (Vec<_>, Vec<_>) = originals
+        .into_iter()
+        .partition(|file| file.content_type == ContentType::parse("application/pdf").unwrap());
+    if pdfs.is_empty() {
+        return Ok(images);
+    }
+    let mut bundle = pdfs.remove(0);
+    if !pdfs.is_empty() {
+        let mut merged = LoDocument::with_version("1.7");
+        let pages_id = merged.new_object_id();
+        let mut kids = Vec::new();
+        let mut page_count = 0;
+        for file in std::iter::once(&bundle).chain(pdfs.iter()) {
+            let mut merge_file = || -> Result<(), String> {
+                let mut source = LoDocument::load_mem(&file.bytes).map_err(|e| e.to_string())?;
+                if source.is_encrypted() {
+                    return Err("Encrypted PDFs cannot be combined.".into());
+                }
+                // Layer visibility belongs to the source catalog, rather than
+                // its page tree. Dropping it can expose normally hidden content.
+                if source
+                    .catalog()
+                    .map_err(|e| e.to_string())?
+                    .has(b"OCProperties")
+                {
+                    return Err("Layered PDFs cannot be safely combined. Uncheck Attach original bills to send UPNs only.".into());
+                }
+                let count = source.get_pages().len();
+                if count == 0 {
+                    return Err("PDF has no readable pages.".into());
+                }
+                source.renumber_objects_with(merged.max_id + 1);
+                let root = source
+                    .catalog()
+                    .and_then(|catalog| catalog.get(b"Pages"))
+                    .and_then(::lopdf::Object::as_reference)
+                    .map_err(|e| e.to_string())?;
+                // Retain each source page tree so inherited resources, rotation,
+                // and page boxes stay attached to the correct supplier pages.
+                source
+                    .get_object_mut(root)
+                    .and_then(::lopdf::Object::as_dict_mut)
+                    .map_err(|e| e.to_string())?
+                    .set("Parent", pages_id);
+                kids.push(::lopdf::Object::Reference(root));
+                page_count += count;
+                merged.max_id = source.max_id;
+                merged.objects.extend(source.objects);
+                Ok(())
+            };
+            merge_file().map_err(|e| {
+                format!(
+                    "Could not combine original bill '{}': {e}",
+                    file.original_name
+                )
+            })?;
+        }
+        merged.objects.insert(
+            pages_id,
+            ::lopdf::Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => kids, "Count" => page_count as i64,
+            }),
+        );
+        let catalog_id = merged.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages_id,
+        });
+        merged.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        merged
+            .save_to(&mut bytes)
+            .map_err(|e| format!("Could not save combined original bills: {e}"))?;
+        bundle.bytes = bytes;
+    }
+    bundle.original_name = "Original_bills.pdf".into();
+    images.insert(0, bundle);
+    Ok(images)
+}
+
 fn prepare_upn_email_packet(
     items: &[UpnData],
     originals: Result<Vec<OriginalBillAttachment>, String>,
@@ -1862,6 +1896,7 @@ fn prepare_upn_email_packet(
     // payment packet, so their audit events must retain its delivery identity.
     let attachment_sha256 = packet_data_hash(items);
     match originals
+        .and_then(combine_original_pdf_bills)
         .and_then(|originals| render_upn_pdf_batch(items).map(|bytes| (bytes, originals)))
     {
         Ok((bytes, originals)) => PreparedEmailPacket {
@@ -3140,6 +3175,189 @@ mod tests {
                 assert_eq!(rollup.apartments[0].delivered, previously_sent, "{update}");
             }
         }
+    }
+
+    #[test]
+    fn original_pdfs_are_combined_with_full_ordered_page_trees_and_separate_images() {
+        fn supplier_pdf(texts: &[&str], rotation: i64) -> Vec<u8> {
+            let mut doc = LoDocument::with_version("1.5");
+            let pages_id = doc.new_object_id();
+            let font = doc.add_object(dictionary! {
+                "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            });
+            let resources = doc.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
+            let mut kids = Vec::new();
+            for text in texts {
+                let content = doc.add_object(::lopdf::Stream::new(
+                    dictionary! {},
+                    format!("BT /F1 12 Tf 20 30 Td ({text}) Tj ET").into_bytes(),
+                ));
+                let page = doc.add_object(dictionary! {
+                    "Type" => "Page", "Parent" => pages_id, "Contents" => content,
+                });
+                kids.push(::lopdf::Object::Reference(page));
+            }
+            doc.objects.insert(pages_id, ::lopdf::Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => kids, "Count" => texts.len() as i64,
+                "Resources" => resources, "MediaBox" => vec![0.into(), 0.into(), 400.into(), 600.into()],
+                "CropBox" => vec![10.into(), 10.into(), 390.into(), 590.into()], "Rotate" => rotation,
+            }));
+            let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+            doc.trailer.set("Root", catalog);
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            bytes
+        }
+        let sources = [
+            supplier_pdf(&["First bill", "Informational page"], 90),
+            supplier_pdf(&["Second bill"], 0),
+        ];
+        let mut originals: Vec<_> = sources
+            .iter()
+            .enumerate()
+            .map(|(index, bytes)| OriginalBillAttachment {
+                document_id: index as i64 + 1,
+                original_name: "same.pdf".into(),
+                content_type: ContentType::parse("application/pdf").unwrap(),
+                bytes: bytes.clone(),
+            })
+            .collect();
+        originals.push(OriginalBillAttachment {
+            document_id: 3,
+            original_name: "scan.png".into(),
+            content_type: ContentType::parse("image/png").unwrap(),
+            bytes: b"exact image".to_vec(),
+        });
+        let combined = combine_original_pdf_bills(originals).unwrap();
+        assert_eq!(combined.len(), 2);
+        assert_eq!(combined[0].original_name, "Original_bills.pdf");
+        assert_eq!(combined[1].bytes, b"exact image");
+        let doc = LoDocument::load_mem(&combined[0].bytes).unwrap();
+        assert_eq!(doc.get_pages().len(), 3);
+        for (number, expected) in [
+            (1, "First bill"),
+            (2, "Informational page"),
+            (3, "Second bill"),
+        ] {
+            assert!(doc.extract_text(&[number]).unwrap().contains(expected));
+            let page_id = doc.get_pages()[&number];
+            let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
+            let parent_id = page.get(b"Parent").unwrap().as_reference().unwrap();
+            let parent = doc.get_object(parent_id).unwrap().as_dict().unwrap();
+            assert_eq!(
+                parent.get(b"Rotate").unwrap().as_i64().unwrap(),
+                if number < 3 { 90 } else { 0 }
+            );
+            assert_eq!(
+                parent.get(b"MediaBox").unwrap().as_array().unwrap().len(),
+                4
+            );
+            assert!(parent.has(b"CropBox"));
+            assert!(parent.has(b"Resources"));
+        }
+        let parsed = formatted_test_email(upn_email_parts(
+            "Bills".into(),
+            "UPN.pdf".into(),
+            b"UPNs".to_vec(),
+            combined,
+            &[],
+        ));
+        let mail = mailparse::parse_mail(&parsed).unwrap();
+        assert_eq!(mail.subparts.len(), 4); // Body, UPNs, combined bills, image.
+        assert_eq!(
+            mail.subparts[2].get_content_disposition().params["filename"],
+            "Original_bills.pdf"
+        );
+        assert_eq!(
+            LoDocument::load_mem(&mail.subparts[2].get_body_raw().unwrap())
+                .unwrap()
+                .get_pages()
+                .len(),
+            3
+        );
+
+        let single = combine_original_pdf_bills(vec![OriginalBillAttachment {
+            document_id: 1,
+            original_name: "bill.pdf".into(),
+            content_type: ContentType::parse("application/pdf").unwrap(),
+            bytes: sources[0].clone(),
+        }])
+        .unwrap();
+        assert_eq!(single[0].bytes, sources[0]);
+        assert!(combine_original_pdf_bills(Vec::new()).unwrap().is_empty());
+
+        // A source with an initially hidden layer must fail preparation instead
+        // of losing its catalog visibility settings in the combined attachment.
+        let mut layered = LoDocument::load_mem(&sources[0]).unwrap();
+        let group = layered.add_object(dictionary! { "Type" => "OCG", "Name" => "Hidden layer" });
+        layered.catalog_mut().unwrap().set("OCProperties", dictionary! {
+            "OCGs" => vec![::lopdf::Object::Reference(group)],
+            "D" => dictionary! { "BaseState" => "ON", "OFF" => vec![::lopdf::Object::Reference(group)] },
+        });
+        let page = layered.get_pages()[&1];
+        let page_dict = layered.get_object(page).unwrap().as_dict().unwrap();
+        let content_id = page_dict.get(b"Contents").unwrap().as_reference().unwrap();
+        let parent_id = page_dict.get(b"Parent").unwrap().as_reference().unwrap();
+        let resources_id = layered
+            .get_object(parent_id)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Resources")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        layered
+            .get_object_mut(resources_id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Properties", dictionary! { "Hidden" => group });
+        let stream = layered
+            .get_object_mut(content_id)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap();
+        stream.set_content([b"/OC /Hidden BDC\n".as_slice(), &stream.content, b"\nEMC"].concat());
+        let mut layered_bytes = Vec::new();
+        layered.save_to(&mut layered_bytes).unwrap();
+        let originals = [layered_bytes, sources[1].clone()]
+            .into_iter()
+            .enumerate()
+            .map(|(index, bytes)| OriginalBillAttachment {
+                document_id: index as i64 + 1,
+                original_name: format!("supplier-{index}.pdf"),
+                content_type: ContentType::parse("application/pdf").unwrap(),
+                bytes,
+            })
+            .collect();
+        let items = vec![compact_pdf_test_data()];
+        let packet = prepare_upn_email_packet(&items, Ok(originals));
+        assert!(packet.attachment_bytes.is_none());
+        assert!(packet.originals.is_empty());
+        assert_eq!(packet.attachment_sha256, packet_data_hash(&items));
+        assert!(packet.preparation_error.contains("supplier-0.pdf"));
+        assert!(packet
+            .preparation_error
+            .contains("Layered PDFs cannot be safely combined"));
+    }
+
+    #[test]
+    fn pdf_merge_failure_prevents_sending_and_preserves_payment_packet_identity() {
+        let items = vec![compact_pdf_test_data()];
+        let originals = (1..=2)
+            .map(|document_id| OriginalBillAttachment {
+                document_id,
+                original_name: format!("invalid-{document_id}.pdf"),
+                content_type: ContentType::parse("application/pdf").unwrap(),
+                bytes: b"not a PDF".to_vec(),
+            })
+            .collect();
+        let packet = prepare_upn_email_packet(&items, Ok(originals));
+        assert!(packet.attachment_bytes.is_none());
+        assert!(packet.originals.is_empty());
+        assert_eq!(packet.attachment_sha256, packet_data_hash(&items));
+        assert!(packet.preparation_error.contains("invalid-1.pdf"));
     }
 
     #[test]
