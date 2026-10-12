@@ -60,10 +60,12 @@
 - [ ] With Attach original bills checked, confirm the drawer describes full original PDFs/images, the available file count, and unavailable originals; uncheck it and confirm the drawer says UPN slips only and the resulting emails omit originals.
 - [ ] Send UPN emails for the October 2026 billing period and confirm the subject is `Poloznice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`.
 - [ ] Open UPN Preview and confirm Attach original bills is checked by default; navigate away and back and confirm a newly opened page defaults to checked again.
-- [ ] With the checkbox checked, send an apartment email and confirm it includes the UPN PDF and exact complete original PDFs/images for that apartment's bills, with readable filenames and correct file types.
-- [ ] Import several bills from one combined PDF and confirm the full PDF is attached once per apartment email, including unselected/informational pages; compare attachment bytes with the imported source.
+- [ ] With the checkbox checked, send an apartment email and confirm it includes the UPN PDF plus one Original_bills.pdf with all supplier PDF pages in source order; verify page sizes, rotation, text, images, and readability against the sources. Original images remain separate exact-byte attachments.
+- [ ] Open the Send All Emails confirmation drawer with originals enabled and confirm its attachment summary describes one combined supplier PDF per apartment plus separate image bills.
+- [ ] Import several bills from one combined PDF and confirm every page is included once in Original_bills.pdf, including unselected/informational pages; confirm View original still opens the unchanged stored source.
 - [ ] Use separate source documents for different apartments/months and confirm only sources linked to the current apartment packet are sent.
-- [ ] Import distinct originals with the same filename and confirm both are attached with distinct readable filenames and unchanged bytes.
+- [ ] Import distinct PDF originals with the same filename and confirm both documents' pages appear in Original_bills.pdf; confirm distinct image originals with the same filename retain distinct readable attachment names and unchanged bytes.
+- [ ] Use a malformed or encrypted PDF among multiple originals in a disposable database and confirm combining fails visibly before sending; confirm UPN-only sending remains available when Attach original bills is unchecked.
 - [ ] Uncheck Attach original bills and confirm the helper text says only UPN slips will be sent; send and confirm the email contains only the UPN PDF and no mention of supplier originals.
 - [ ] Include a manual/legacy bill with no original and confirm the page identifies the bill as unavailable before sending; confirm sending still includes UPN slips and any available originals.
 - [ ] In a disposable database, corrupt a linked original's bytes or remove the linked source row; confirm that apartment's send fails visibly without sending an incomplete email, while unaffected apartments can still send. Uncheck the checkbox and confirm UPN-only sending succeeds.

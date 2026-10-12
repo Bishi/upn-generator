@@ -1229,7 +1229,8 @@ function UpnPage() {
           <>
             <p>
               Each email includes the UPN slips and available original bills for that apartment.
-              Full PDFs/images are sent, with each source file attached once per email.
+              Original PDFs are combined into one bill attachment, including all pages of each source.
+              Image bills are attached separately; shared sources are included once per email.
               {!snapshot.loading && emailBills.length > 0 && (
                 <> {originalFileCount} original {originalFileCount === 1 ? "file is" : "files are"} available.</>
               )}
