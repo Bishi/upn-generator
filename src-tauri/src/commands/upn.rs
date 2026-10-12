@@ -1848,6 +1848,38 @@ fn load_original_bill_attachments(
     .collect()
 }
 
+#[derive(Default)]
+struct PreparedEmailPacket {
+    attachment_bytes: Option<Vec<u8>>,
+    attachment_sha256: String,
+    originals: Vec<OriginalBillAttachment>,
+    preparation_error: String,
+}
+
+fn prepare_upn_email_packet(
+    items: &[UpnData],
+    originals: Result<Vec<OriginalBillAttachment>, String>,
+) -> PreparedEmailPacket {
+    // Supporting-document or render failures still belong to this unchanged
+    // payment packet, so their audit events must retain its delivery identity.
+    let attachment_sha256 = packet_data_hash(items);
+    match originals
+        .and_then(|originals| render_upn_pdf_batch(items).map(|bytes| (bytes, originals)))
+    {
+        Ok((bytes, originals)) => PreparedEmailPacket {
+            attachment_bytes: Some(bytes),
+            attachment_sha256,
+            originals,
+            preparation_error: String::new(),
+        },
+        Err(preparation_error) => PreparedEmailPacket {
+            attachment_sha256,
+            preparation_error,
+            ..Default::default()
+        },
+    }
+}
+
 fn binary_email_attachment(
     filename: String,
     bytes: Vec<u8>,
@@ -2021,13 +2053,13 @@ fn send_emails_impl(
         let load_start = Instant::now();
         let packet_items = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
-            load_apartment_upn_data(&conn, billing_period_id, *apt_id).and_then(|items| {
+            load_apartment_upn_data(&conn, billing_period_id, *apt_id).map(|items| {
                 let originals = if include_original_bills {
-                    load_original_bill_attachments(&conn, billing_period_id, *apt_id)?
+                    load_original_bill_attachments(&conn, billing_period_id, *apt_id)
                 } else {
-                    Vec::new()
+                    Ok(Vec::new())
                 };
-                Ok((items, originals))
+                (items, originals)
             })
         };
         eprintln!(
@@ -2036,17 +2068,15 @@ fn send_emails_impl(
             load_start.elapsed().as_millis()
         );
 
-        let (attachment_bytes, attachment_sha256, originals, preparation_error) = match packet_items
-        {
+        let PreparedEmailPacket {
+            attachment_bytes,
+            attachment_sha256,
+            originals,
+            preparation_error,
+        } = match packet_items {
             Ok((items, originals)) => {
-                // Delivery completion tracks the UPN payment packet for both email
-                // and manual delivery, independently of the optional supporting files.
-                let hash = packet_data_hash(&items);
                 let pdf_start = Instant::now();
-                let result = match render_upn_pdf_batch(&items) {
-                    Ok(bytes) => (Some(bytes), hash, originals, String::new()),
-                    Err(e) => (None, String::new(), Vec::new(), e),
-                };
+                let result = prepare_upn_email_packet(&items, originals);
                 eprintln!(
                     "[send_emails] apartment={} pdf_prepare={}ms",
                     apt_label,
@@ -2054,7 +2084,10 @@ fn send_emails_impl(
                 );
                 result
             }
-            Err(e) => (None, String::new(), Vec::new(), e),
+            Err(preparation_error) => PreparedEmailPacket {
+                preparation_error,
+                ..Default::default()
+            },
         };
 
         let mut allowed_valid = Vec::<(String, String, Mailbox)>::new();
@@ -2960,6 +2993,49 @@ mod tests {
                 load_original_bill_attachments(&conn, 1, 2).is_ok(),
                 "{update}"
             );
+        }
+    }
+
+    #[test]
+    fn original_attachment_failures_retain_packet_hash_and_current_delivery_warning() {
+        let items = vec![compact_pdf_test_data()];
+        let hash = packet_data_hash(&items);
+        for update in [
+            "UPDATE source_documents SET content=x'00' WHERE id=1",
+            "UPDATE source_documents SET media_type='invalid' WHERE id=1",
+            "DELETE FROM source_documents WHERE id=1",
+        ] {
+            let conn = original_attachment_conn();
+            conn.execute(update, []).unwrap();
+            let prepared =
+                prepare_upn_email_packet(&items, load_original_bill_attachments(&conn, 1, 1));
+            assert_eq!(prepared.attachment_sha256, hash, "{update}");
+            assert!(prepared.attachment_bytes.is_none(), "{update}");
+            assert!(prepared.originals.is_empty(), "{update}");
+            assert!(!prepared.preparation_error.is_empty(), "{update}");
+
+            let mut failed = test_event(2, 1, "email", "failed", &prepared.attachment_sha256);
+            failed.error = prepared.preparation_error;
+            for previously_sent in [false, true] {
+                let mut events = Vec::new();
+                if previously_sent {
+                    events.push(test_event(1, 1, "email", "sent", &hash));
+                }
+                events.push(failed.clone());
+                let rollup = build_delivery_rollup(1, vec![test_packet(1, &hash)], &events);
+                assert_eq!(rollup.current_failed_event_count, 1, "{update}");
+                assert_eq!(
+                    rollup.apartments[0].current_failed_event_count, 1,
+                    "{update}"
+                );
+                assert_eq!(
+                    rollup.apartments[0].last_current_delivery_status.as_deref(),
+                    Some("failed")
+                );
+                // Supporting-file failure warns about the latest attempt without
+                // undoing a previous successful payment-packet delivery.
+                assert_eq!(rollup.apartments[0].delivered, previously_sent, "{update}");
+            }
         }
     }
 
