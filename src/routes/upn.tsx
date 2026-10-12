@@ -677,6 +677,7 @@ function UpnPage() {
   const splits = snapshot.splits;
   const apartmentsConfig = snapshot.apartments;
   const [sending, setSending] = useState(false);
+  const [includeOriginalBills, setIncludeOriginalBills] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [markingDelivered, setMarkingDelivered] = useState(false);
   const [closingMonth, setClosingMonth] = useState(false);
@@ -760,7 +761,7 @@ function UpnPage() {
     }
     setSending(true);
     try {
-      const results = await sendPeriodEmails(selected.id);
+      const results = await sendPeriodEmails(selected.id, includeOriginalBills);
       setEmailResults(results);
       const summary = summarizeEmailResults(results);
       if (summary.hasIssues) {
@@ -968,6 +969,18 @@ function UpnPage() {
     hasSendableRecipient(apartment.contactEmail),
   ).length;
   const missingRecipientCount = Math.max(0, apartments.length - readyRecipientCount);
+  const emailBillIds = new Set(
+    splits
+      .filter((split) =>
+        hasSendableRecipient(apartmentConfigById.get(split.apartment_id)?.contact_email ?? ""),
+      )
+      .map((split) => split.bill_id),
+  );
+  const emailBills = snapshot.bills.filter((bill) => bill.id != null && emailBillIds.has(bill.id));
+  const originalFileCount = new Set(
+    emailBills.flatMap((bill) => bill.source_document_id == null ? [] : [bill.source_document_id]),
+  ).size;
+  const billsWithoutOriginals = emailBills.filter((bill) => bill.source_document_id == null);
   const selectedPeriodId = selected?.id ?? null;
   const selectedStatusKnown =
     selectedPeriodId !== null && snapshot.periodStatuses.has(selectedPeriodId);
@@ -1141,6 +1154,17 @@ function UpnPage() {
               Mark Delivered
             </Button>
           )}
+          <label className="flex items-center gap-2 px-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={includeOriginalBills}
+              onChange={(event) => setIncludeOriginalBills(event.target.checked)}
+              disabled={sending || isClosed}
+              className="size-4 accent-primary"
+              aria-describedby="original-bills-summary"
+            />
+            Attach original bills
+          </label>
           <Button
             onClick={sendEmails}
             title={
@@ -1173,6 +1197,31 @@ function UpnPage() {
         </>
       }
     >
+      <div id="original-bills-summary" className="text-sm text-muted-foreground">
+        {includeOriginalBills ? (
+          <>
+            <p>
+              Each email includes the UPN slips and available original bills for that apartment.
+              Full PDFs/images are sent, with each source file attached once per email.
+              {!snapshot.loading && emailBills.length > 0 && (
+                <> {originalFileCount} original {originalFileCount === 1 ? "file is" : "files are"} available.</>
+              )}
+            </p>
+            {!snapshot.loading && billsWithoutOriginals.length > 0 && (
+              <p className="mt-2 flex items-start gap-2 text-warning" role="status">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  Original unavailable for {billsWithoutOriginals.length === 1 ? "this bill" : "these bills"}: {billsWithoutOriginals
+                    .map((bill) => bill.provider_name || bill.creditor_name || `Bill ${bill.id}`)
+                    .join(", ")}. Emails will include the UPN slips and any available originals.
+                </span>
+              </p>
+            )}
+          </>
+        ) : (
+          <p>Emails will include only the UPN slips.</p>
+        )}
+      </div>
       {downloading && (
         <div className="fixed inset-0 z-[100] grid place-items-center bg-background/70 backdrop-blur-sm">
           <div

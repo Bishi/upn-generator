@@ -165,11 +165,13 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 | **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
-| **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
+| **Send Emails** | Sends one combined apartment UPN PDF plus available original bills by default, to configured recipient addresses allowed by the current email safety settings |
+
+**Attach original bills** is checked by default on UPN Preview. Each apartment email includes the exact stored supplier PDFs/images for the bills in its UPN packet. Combined source PDFs are sent in full, including any other pages in the original; a source shared by several bills is attached only once per email. The page shows the available file count and warns about bills without retained originals (such as manual or older imports); sending still includes UPN slips and all available originals. Uncheck the box to send only the UPN PDF. A corrupt or missing linked source file fails that apartment's send rather than silently omitting it. The email message mentions supplier originals when they are attached.
 
 Email subjects and messages name the previous service month: the October 2026 billing period sends UPN slips for September 2026, and January 2027 sends slips for December 2026.
 
-UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Downloaded PDFs do not mark a month delivered by themselves.
+UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Delivery completion tracks the UPN payment packet, independently of the optional original-bill attachments. Downloaded PDFs do not mark a month delivered by themselves.
 
 After every current apartment UPN packet is delivered and Mark Delivered validation has no blocking issues, use the one-click **Close Month** action to mark the billing month done. Closed months remain readable: you can still inspect bills and splits, open UPN previews, and download the PDF ZIP. Editing bills, importing from local files or inbox, recalculating or overriding splits, sending emails, changing manual delivery marks, deleting the period, or deleting an apartment referenced by the month requires the one-click **Reopen Month** action first.
 

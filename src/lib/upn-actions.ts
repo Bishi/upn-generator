@@ -29,6 +29,7 @@ export async function downloadPeriodUpnPdfs(
 
 export function sendPeriodEmails(
   billingPeriodId: number,
+  includeOriginalBills = true,
 ): Promise<EmailResult[]> {
-  return ipc.sendEmails(billingPeriodId);
+  return ipc.sendEmails(billingPeriodId, includeOriginalBills);
 }

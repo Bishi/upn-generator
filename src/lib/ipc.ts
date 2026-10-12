@@ -148,8 +148,8 @@ export const ipc = {
     invoke<string>("open_preview_apartment_upns", { billingPeriodId, apartmentId }),
   saveAllUpnsZip: (billingPeriodId: number, outputPath: string) =>
     invoke<UpnZipExportResult>("save_all_upns_zip", { billingPeriodId, outputPath }),
-  sendEmails: (billingPeriodId: number) =>
-    invoke<EmailResult[]>("send_emails", { billingPeriodId }),
+  sendEmails: (billingPeriodId: number, includeOriginalBills = true) =>
+    invoke<EmailResult[]>("send_emails", { billingPeriodId, includeOriginalBills }),
   markUpnPeriodDelivered: (billingPeriodId: number) =>
     invoke<UpnDeliveryRollup>("mark_upn_period_delivered", { billingPeriodId }),
   unmarkUpnPeriodDelivered: (billingPeriodId: number) =>
