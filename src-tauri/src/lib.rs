@@ -27,9 +27,9 @@ use commands::inbox::{
 use commands::splits::{calculate_splits, get_splits, save_split};
 use commands::upn::{
     close_billing_period, generate_upn_pdf, get_upn_delivery_events, get_upn_delivery_rollup,
-    get_upn_packet_hashes, mark_upn_period_delivered, read_apartment_upn_preview,
-    read_upn_preview, reopen_billing_period, save_all_upns_zip, save_smtp_password,
-    send_emails, test_smtp_connection, unmark_upn_period_delivered,
+    get_upn_packet_hashes, mark_upn_period_delivered, read_apartment_upn_preview, read_upn_preview,
+    reopen_billing_period, save_all_upns_zip, save_smtp_password, send_emails,
+    test_smtp_connection, unmark_upn_period_delivered,
 };
 use commands::upn_validation::validate_upn_pre_send;
 use db::migrations;
