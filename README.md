@@ -250,3 +250,11 @@ If the validation panel reports an email safety blocker, the recipient is not li
 **Inbox import not connecting**
 
 Check the IMAP settings under **Settings -> Delivery**. For Gmail, use `imap.gmail.com`, port `993`, TLS enabled, and an **App Password**.
+
+### Email content
+
+Settings > Email Content (before App) saves the default UPN email subject and plain-text body. The built-in subject is `Položnice za {month}/{year}`; an unchanged older default is upgraded automatically, while customized subjects are preserved. `{month}` and `{year}` refer to the service month before the selected billing month, including the January year rollover. `{originals_note}` adds a note about available original bills when they are included.
+
+Send All Emails opens a review drawer with the resolved subject and body. Edit either before Confirm send; the edited content applies to all emails in that batch and does not change the saved defaults. Cancelling and reopening starts with the defaults again. The subject must be nonempty and on one line; a blank body is allowed. Defaults are included in SQLite backups; restoring an older backup uses the built-in defaults. Factory reset restores the built-in email content. Batch edits are temporary and are not stored in delivery history.
+
+The Send All drawer also accepts additional files for every recipient in the batch. Add or remove them before confirming. These global attachments are independent of the original-bill checkbox and stay in memory only; closing the drawer discards them, and they are not stored in the database, backups, or delivery history. Up to 10 additional files totaling 15 MiB are supported; mail-provider limits apply to the complete encoded email, including UPN slips and original bills. Attachment filenames are sanitized and made unique, and the exact selected bytes are sent. UPN delivery hashes continue to identify the payment packet.

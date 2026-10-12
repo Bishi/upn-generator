@@ -1,21 +1,21 @@
 # Status
 
-- Current version: `0.7.3`
-- Current tag: `v0.7.3`
+- Current version: `0.8.0`
+- Current tag: `v0.8.0`
 - Release status: released from `main`
 
 ## Latest Included Changes
 
-- Single UPN slips and apartment packets open in the in-app PDF viewer without temporary PDF files or the system PDF opener
-- Apartment emails combine available supplier PDFs into one `Original_bills.pdf` alongside the existing UPN PDF, including every source page and deduplicating shared sources
-- Original images remain separate exact-byte attachments; retained source documents stay unchanged
-- Multi-PDF merging rejects encrypted or layered sources rather than sending altered or incomplete bills; UPN-only sending remains available through the attachment checkbox
-- Page and confirmation drawer summaries describe the combined supplier PDF; confirmation, delivery history, compact UPN PDFs, and previous service-month email wording remain available
+- Settings > Email Content saves the default subject and body, with previous-service-month placeholders, concise help, backup/restore support, factory-reset defaults, and unsaved-change handling
+- Send All Emails lets the accountant edit the resolved subject/body for one batch; the built-in subject uses `Položnice`, and custom saved subjects are preserved
+- Additional global attachments go to every recipient, remain in memory only, and support add/remove before confirmation with a limit of 10 files and 15 MiB combined
+- Email and inbox import use a shared configurable drawer with responsive width, fading backdrop, clipped animation, fixed header/footer, keyboard focus handling, close guards, and companion-viewer support
+- Retained the v0.7.3 in-app UPN previews, combined supplier PDF attachments, exact original-image attachments, source-document retention, recipient safety, and UPN delivery audit semantics
 
 ## Verification
 
-- UPN preview frontend build and `cargo check` passed; both focused compact UPN PDF tests passed; manual Windows viewer QA remains unchecked
-- Frontend production build passed after integrating the Send All Emails confirmation drawer
-- `cargo check` and all 29 UPN tests passed, including page order, inherited resources and rotation, attachment MIME handling, failure audit identity, and layered-PDF rejection
-- Independent subagent review finding fixed; the pushed fix was re-reviewed with no remaining actionable findings
-- Affected manual QA cases remain unchecked pending desktop and live SMTP verification
+- Frontend production build and `cargo check` passed after integration with current main
+- Rust suite: 127 passed, 3 ignored because they require private PDF/OCR fixtures
+- Headless Edge checks with mocked IPC covered configurable drawer widths, animation clipping, vertical scrolling, focus containment/wrap/restoration, close guards, companion focus/Escape handoff, inbox popovers, scan cancellation and late-session cleanup, plus global attachment selection/removal/limits/cleanup and exact IPC bytes
+- Independent subagent code review found no actionable correctness, security, or regression issues; stale manual QA expectations were corrected and re-reviewed with no remaining findings
+- Live SMTP/IMAP and desktop manual QA remain unverified; affected checklist cases remain unchecked

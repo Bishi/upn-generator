@@ -9,6 +9,7 @@ import { BuildingSection } from "@/components/settings/BuildingSection";
 import { DataSection } from "@/components/settings/DataSection";
 import { InboxSection } from "@/components/settings/InboxSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
+import { EmailContentSection } from "@/components/settings/EmailContentSection";
 import { SmtpSection } from "@/components/settings/SmtpSection";
 import type { SettingsDirtyEntry, SettingsTabId } from "@/components/settings/dirty-state";
 
@@ -26,6 +27,7 @@ const tabs: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "apartments", label: "Apartments", icon: <Home className="size-4" /> },
   { id: "providers", label: "Providers", icon: <Zap className="size-4" /> },
   { id: "delivery", label: "Delivery", icon: <Mail className="size-4" /> },
+  { id: "email-content", label: "Email Content", icon: <Mail className="size-4" /> },
   { id: "app", label: "App", icon: <Settings className="size-4" /> },
 ];
 
@@ -131,6 +133,9 @@ function SettingsPage() {
         <div hidden={activeTab !== "delivery"} className="space-y-4">
           <InboxSection onDirtyEntry={registerDirtyEntry} />
           <SmtpSection onDirtyEntry={registerDirtyEntry} />
+        </div>
+        <div hidden={activeTab !== "email-content"}>
+          <EmailContentSection onDirtyEntry={registerDirtyEntry} />
         </div>
         <div hidden={activeTab !== "app"} className="space-y-4">
           <AppearanceSection />

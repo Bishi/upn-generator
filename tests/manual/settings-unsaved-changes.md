@@ -9,6 +9,10 @@
 
 ## Cases
 
+- [ ] Edit Email Content and switch tabs: Stay keeps edits; Discard and switch restores saved values.
+- [ ] Save and Discard buttons in Email Content reflect dirty state and are disabled while saving.
+- [ ] Discard in Email Content asks for confirmation: Keep editing preserves the draft; Discard changes restores the saved content.
+
 - [ ] On Building, edit a field and confirm Save changes and Discard become enabled.
 - [ ] Click Discard on Building, choose Keep editing, and confirm the edit remains.
 - [ ] Click Discard on Building, choose Discard changes, and confirm the field resets.

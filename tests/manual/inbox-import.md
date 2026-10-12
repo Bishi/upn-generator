@@ -11,6 +11,12 @@
 
 ## Cases
 
+- [ ] Inbox uses the shared drawer shell at 900 px and fits narrow windows, with a fixed header/footer and no opening horizontal scrollbar.
+- [ ] Tab/Shift+Tab stay in the drawer, including portaled sender/status popovers; Escape closes a popover before the drawer.
+- [ ] Close/backdrop/Escape cancel a running preview and reject late results; all close actions stay disabled during final import.
+- [ ] With an original-document viewer open, focus and Escape belong to the viewer; closing it restores normal drawer focus and Escape handling. Verify both a narrow modal viewer and the wide companion layout.
+- [ ] Closing inbox import restores focus to its trigger and restores background scrolling.
+
 - [ ] Test the inbox connection and confirm success/failure messages are clear.
 - [ ] Run Import from Inbox and confirm the preview opens before any bill rows are created.
 - [ ] Start Fetch preview or Re-scan and choose Cancel scan; confirm the spinner stops, another scan can be started, and no late result replaces the new preview or creates bills.

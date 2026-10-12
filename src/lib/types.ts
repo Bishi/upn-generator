@@ -70,6 +70,17 @@ export interface InboxConfig {
   password_configured: boolean;
 }
 
+export interface ExtraEmailAttachment {
+  name: string;
+  content_type: string;
+  data_base64: string;
+}
+
+export interface EmailContent {
+  subject: string;
+  body: string;
+}
+
 export interface AppSettings {
   theme: string;
 }

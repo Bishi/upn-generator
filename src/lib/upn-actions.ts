@@ -1,6 +1,6 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { ipc } from "@/lib/ipc";
-import type { EmailResult, UpnZipExportResult } from "@/lib/types";
+import type { ExtraEmailAttachment, EmailContent, EmailResult, UpnZipExportResult } from "@/lib/types";
 
 function waitForPaint() {
   return new Promise<void>((resolve) => {
@@ -30,6 +30,8 @@ export async function downloadPeriodUpnPdfs(
 export function sendPeriodEmails(
   billingPeriodId: number,
   includeOriginalBills = true,
+  content?: EmailContent,
+  extraAttachments: ExtraEmailAttachment[] = [],
 ): Promise<EmailResult[]> {
-  return ipc.sendEmails(billingPeriodId, includeOriginalBills);
+  return ipc.sendEmails(billingPeriodId, includeOriginalBills, content, extraAttachments);
 }

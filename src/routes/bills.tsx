@@ -33,6 +33,7 @@ import {
 } from "@/components/BillingTable";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Drawer, useDrawerPortalContainer } from "@/components/ui/drawer";
 import { cn } from "@/lib/utils";
 import { SourceDocumentViewer, type SourceDocumentLoadResult } from "@/components/SourceDocumentViewer";
 
@@ -537,6 +538,7 @@ function clampInboxScanDays(value: number) {
 }
 
 function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: string[]; busy: boolean; onEditSettings: () => void }) {
+  const drawerPortalContainer = useDrawerPortalContainer();
   const [open, setOpen] = useState(false);
   const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -634,7 +636,7 @@ function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: strin
                 </Link>
               </div>
             </div>,
-            document.body
+            drawerPortalContainer ?? document.body
           )
         : null}
     </div>
@@ -642,6 +644,7 @@ function SenderAllowlistChip({ senders, busy, onEditSettings }: { senders: strin
 }
 
 function InboxStatusChip({ candidate }: { candidate: InboxPreviewCandidate }) {
+  const drawerPortalContainer = useDrawerPortalContainer();
   const [open, setOpen] = useState(false);
   const [popoverPosition, setPopoverPosition] = useState<{ top: number; right: number } | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -720,7 +723,7 @@ function InboxStatusChip({ candidate }: { candidate: InboxPreviewCandidate }) {
               <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Reason</div>
               <div className="break-words text-xs leading-relaxed text-muted-foreground">{detail}</div>
             </div>,
-            document.body
+            drawerPortalContainer ?? document.body
           )
         : null}
     </div>
@@ -918,15 +921,6 @@ function InboxImportDrawer({
     }
   }, [importing, cancelPreview, onClose, preview?.session_id]);
 
-  useEffect(() => {
-    if (!open || viewer !== null) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !importing) void closeDrawer();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, importing, closeDrawer, viewer]);
-
   const fetchPreview = async () => {
     if (!canEnsurePeriod || readOnly || activeScan.current || importing) return;
     const scan = { requestId: null as string | null, cancelled: false };
@@ -1071,22 +1065,16 @@ function InboxImportDrawer({
 
   return (
     <>
-    <div className="fixed inset-0 z-50">
-      <button
-        type="button"
-        className="absolute inset-0 bg-overlay animate-drawer-scrim-in"
-        aria-label="Close inbox import"
-        disabled={importing}
-        onClick={() => void closeDrawer()}
-      />
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-full flex-col border-l border-border bg-card shadow-pop animate-drawer-slide-in sm:w-[900px]">
-        <header className="border-b border-border px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <h2 className="font-head text-lg font-semibold">Import from Inbox</h2>
-            <Button variant="ghost" size="icon" onClick={() => void closeDrawer()} disabled={importing} aria-label="Close">
-              <X className="size-4" />
-            </Button>
-          </div>
+    <Drawer
+      open={open}
+      onClose={() => void closeDrawer()}
+      title="Import from Inbox"
+      width={900}
+      closeLabel="Close inbox import"
+      closeDisabled={importing}
+      suspendFocusManagement={viewer !== null}
+      bodyClassName="space-y-4"
+      headerContent={
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <InboxChip className="bg-card">
               <Mail className="size-3" />
@@ -1128,9 +1116,66 @@ function InboxImportDrawer({
             </div>
             <SenderAllowlistChip senders={senderEntries} busy={busy} onEditSettings={() => void closeDrawer()} />
           </div>
-        </header>
-
-        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+      }
+      footer={
+        <>
+          {results.length > 0 ? (
+            <>
+              <div className="text-sm text-muted-foreground">
+                {remainingCandidateCount > 0
+                  ? `${remainingCandidateCount} attachment${remainingCandidateCount === 1 ? "" : "s"} remain in this preview.`
+                  : "Import complete. You can close this panel."}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
+                  Close
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={fetchPreview}
+                  disabled={!canEnsurePeriod || readOnly || loadingPreview || importing}
+                  title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
+                >
+                  {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                  Import again
+                </Button>
+                {remainingCandidateCount > 0 && (
+                  <Button onClick={continueReviewing} disabled={busy}>
+                    Continue reviewing
+                  </Button>
+                )}
+              </div>
+            </>
+          ) : preview ? (
+            <>
+              <div className="text-sm text-muted-foreground">
+                <span className="font-semibold text-foreground">{selectedBillCount}</span> selected
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
+                  Close
+                </Button>
+                <Button
+                  onClick={importSelected}
+                  disabled={!preview || readOnly || selectedIds.size === 0 || importing || loadingPreview}
+                  title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
+                >
+                  {importing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                  Import selected ({selectedBillCount})
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div />
+              <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
+                Close
+              </Button>
+            </>
+          )}
+        </>
+      }
+    >
           {error && (
             <div className="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
               {error}
@@ -1422,66 +1467,7 @@ function InboxImportDrawer({
               )}
             </div>
           )}
-        </div>
-
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4">
-          {results.length > 0 ? (
-            <>
-              <div className="text-sm text-muted-foreground">
-                {remainingCandidateCount > 0
-                  ? `${remainingCandidateCount} attachment${remainingCandidateCount === 1 ? "" : "s"} remain in this preview.`
-                  : "Import complete. You can close this panel."}
-              </div>
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
-                  Close
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={fetchPreview}
-                  disabled={!canEnsurePeriod || readOnly || loadingPreview || importing}
-                  title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
-                >
-                  {loadingPreview ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                  Import again
-                </Button>
-                {remainingCandidateCount > 0 && (
-                  <Button onClick={continueReviewing} disabled={busy}>
-                    Continue reviewing
-                  </Button>
-                )}
-              </div>
-            </>
-          ) : preview ? (
-            <>
-              <div className="text-sm text-muted-foreground">
-                <span className="font-semibold text-foreground">{selectedBillCount}</span> selected
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
-                  Close
-                </Button>
-                <Button
-                  onClick={importSelected}
-                  disabled={!preview || readOnly || selectedIds.size === 0 || importing || loadingPreview}
-                  title={readOnly ? "Reopen this month before importing inbox bills." : undefined}
-                >
-                  {importing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-                  Import selected ({selectedBillCount})
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div />
-              <Button variant="outline" onClick={() => void closeDrawer()} disabled={importing}>
-                Close
-              </Button>
-            </>
-          )}
-        </footer>
-      </aside>
-    </div>
+    </Drawer>
     <SourceDocumentViewer
       open={viewer !== null}
       load={viewer?.load ?? null}
