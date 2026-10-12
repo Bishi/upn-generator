@@ -1840,6 +1840,21 @@ fn log_send_email_phase(overall_start: Instant, previous: &mut Instant, label: &
     *previous = now;
 }
 
+fn upn_email_content(billing_month: i32, billing_year: i32) -> (String, String) {
+    // Billing periods follow the service month named in the recipient email.
+    let (service_month, service_year) = if billing_month == 1 {
+        (12, billing_year - 1)
+    } else {
+        (billing_month - 1, billing_year)
+    };
+    let subject = format!("Poloznice za {:02}/{}", service_month, service_year);
+    let body = format!(
+        "Spoštovani,\n\nv priponki najdete UPN položnice za {:02}/{}.\n\nLep pozdrav",
+        service_month, service_year
+    );
+    (subject, body)
+}
+
 fn send_emails_impl(
     db: State<'_, DbState>,
     billing_period_id: i64,
@@ -2043,11 +2058,7 @@ fn send_emails_impl(
             let mailer = mailer.as_ref().expect("mailer initialized");
             match (&from_addr, mailer.as_ref()) {
                 (Ok(from_addr), Ok(mailer)) => {
-                    let subject = format!("Poloznice za {}/{}", month, year);
-                    let body = format!(
-                        "Spoštovani,\n\nv priponki najdete UPN položnice za {:02}/{}.\n\nLep pozdrav",
-                        month, year
-                    );
+                    let (subject, body) = upn_email_content(month, year);
                     let filename = format!(
                         "UPN_{}_{:02}_{}.pdf",
                         apt_label.replace(' ', "_"),
@@ -2766,6 +2777,28 @@ fn save_all_upns_zip_blocking(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upn_email_content_uses_previous_month() {
+        let (subject, body) = upn_email_content(10, 2026);
+
+        assert_eq!(subject, "Poloznice za 09/2026");
+        assert_eq!(
+            body,
+            "Spoštovani,\n\nv priponki najdete UPN položnice za 09/2026.\n\nLep pozdrav"
+        );
+    }
+
+    #[test]
+    fn upn_email_content_rolls_back_year_for_january() {
+        let (subject, body) = upn_email_content(1, 2027);
+
+        assert_eq!(subject, "Poloznice za 12/2026");
+        assert_eq!(
+            body,
+            "Spoštovani,\n\nv priponki najdete UPN položnice za 12/2026.\n\nLep pozdrav"
+        );
+    }
 
     fn period_state_conn(status: &str, closed_at: Option<&str>) -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().expect("in-memory database");

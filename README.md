@@ -167,6 +167,8 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 | **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
 | **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
 
+Email subjects and messages name the previous service month: the October 2026 billing period sends UPN slips for September 2026, and January 2027 sends slips for December 2026.
+
 UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Downloaded PDFs do not mark a month delivered by themselves.
 
 After every current apartment UPN packet is delivered and Mark Delivered validation has no blocking issues, use the one-click **Close Month** action to mark the billing month done. Closed months remain readable: you can still inspect bills and splits, open UPN previews, and download the PDF ZIP. Editing bills, importing from local files or inbox, recalculating or overriding splits, sending emails, changing manual delivery marks, deleting the period, or deleting an apartment referenced by the month requires the one-click **Reopen Month** action first.
