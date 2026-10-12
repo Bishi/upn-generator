@@ -87,7 +87,7 @@ export function EmailSendDrawer({
             <h3 className="font-semibold">Attachments</h3>
             <p className="mt-2 text-muted-foreground">
               {includeOriginalBills
-                ? `UPN slips and available original bills. ${originalFileCount} original file${originalFileCount === 1 ? "" : "s"} available across the batch. Full PDFs/images are attached once per email for the apartment's bills.`
+                ? `UPN slips and available original bills. ${originalFileCount} original file${originalFileCount === 1 ? "" : "s"} available across the batch. All original PDF pages are combined into one bill attachment per apartment; image bills are attached separately. Shared sources are included once per email.`
                 : "UPN slips only. Original bills will not be attached."}
             </p>
             {includeOriginalBills && missingOriginalLabels.length > 0 && (
