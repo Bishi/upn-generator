@@ -1,4 +1,4 @@
-use ::lopdf::{Document as LoDocument, Object, ObjectId};
+use ::lopdf::Document as LoDocument;
 use base64::Engine;
 use lettre::message::header::{ContentDisposition, ContentTransferEncoding, ContentType};
 use lettre::message::{Mailbox, MultiPart, SinglePart};
@@ -8,9 +8,8 @@ use printpdf::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
@@ -559,14 +558,22 @@ fn render_upnqr_pixels(data: &UpnData) -> Result<(Vec<u8>, usize), String> {
 }
 
 fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
-    let (doc, page1, layer1) = PdfDocument::new(
+    render_upn_pdf_batch(std::slice::from_ref(data))
+}
+
+fn render_upn_pdf_batch(items: &[UpnData]) -> Result<Vec<u8>, String> {
+    if items.is_empty() {
+        return Err("No UPN PDFs to render.".to_string());
+    }
+    let (doc, first_page, first_layer) = PdfDocument::new(
         "Obrazec UPN QR",
         Mm(FORM_WIDTH_MM),
         Mm(FORM_HEIGHT_MM),
         "Layer 1",
     );
-    let layer = doc.get_page(page1).get_layer(layer1);
 
+    // Embed each font once for the whole packet. Font subsetting includes glyphs
+    // used on every page, including Slovenian characters in payer/provider names.
     let label_font = if let Some(bytes) =
         load_system_font(&["arialbd.ttf", "calibrib.ttf", "seguisb.ttf", "verdanab.ttf"])
     {
@@ -587,6 +594,37 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
             .map_err(|e| e.to_string())?
     };
 
+    for (index, data) in items.iter().enumerate() {
+        let (page, layer) = if index == 0 {
+            (first_page, first_layer)
+        } else {
+            doc.add_page(Mm(FORM_WIDTH_MM), Mm(FORM_HEIGHT_MM), "Layer 1")
+        };
+        draw_upn_page(
+            data,
+            &doc.get_page(page).get_layer(layer),
+            &label_font,
+            &mono_font,
+        );
+    }
+
+    // printpdf skips optimization in debug builds and leaves font streams
+    // uncompressed. Reopening enables lossless compression for all streams in
+    // both debug and release, without changing text, geometry, or QR pixels.
+    let bytes = doc.save_to_bytes().map_err(|e| e.to_string())?;
+    let mut document = LoDocument::load_mem(&bytes).map_err(|e| e.to_string())?;
+    document.compress();
+    let mut output = Vec::new();
+    document.save_to(&mut output).map_err(|e| e.to_string())?;
+    Ok(output)
+}
+
+fn draw_upn_page(
+    data: &UpnData,
+    layer: &PdfLayerReference,
+    label_font: &IndirectFontRef,
+    mono_font: &IndirectFontRef,
+) {
     let orange = rgb(244, 120, 54);
     let top_fill = rgb(254, 224, 205);
     let bottom_fill = rgb(255, 244, 210);
@@ -684,10 +722,10 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     };
 
     layer.set_fill_color(rgb(255, 255, 255));
-    fill_rect_top(&layer, 0.0, 0.0, FORM_WIDTH_MM, FORM_HEIGHT_MM);
+    fill_rect_top(layer, 0.0, 0.0, FORM_WIDTH_MM, FORM_HEIGHT_MM);
     layer.set_fill_color(top_fill);
     fill_rect_top(
-        &layer,
+        layer,
         LEFT_WIDTH_MM,
         0.0,
         FORM_WIDTH_MM,
@@ -695,7 +733,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     );
     layer.set_fill_color(bottom_fill);
     fill_rect_top(
-        &layer,
+        layer,
         LEFT_WIDTH_MM,
         TOP_RIGHT_HEIGHT_MM,
         FORM_WIDTH_MM,
@@ -705,69 +743,69 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     layer.set_outline_color(orange.clone());
     layer.set_fill_color(orange.clone());
     layer.set_outline_thickness(0.25);
-    draw_perforation(&layer);
+    draw_perforation(layer);
 
     stroke_rect_top(
-        &layer,
+        layer,
         receipt_payer_box.x1,
         receipt_payer_box.y1,
         receipt_payer_box.x2,
         receipt_payer_box.y2,
     );
     stroke_rect_top(
-        &layer,
+        layer,
         receipt_purpose_box.x1,
         receipt_purpose_box.y1,
         receipt_purpose_box.x2,
         receipt_purpose_box.y2,
     );
     stroke_rect_top(
-        &layer,
+        layer,
         receipt_amount_box.x1,
         receipt_amount_box.y1,
         receipt_amount_box.x2,
         receipt_amount_box.y2,
     );
     stroke_rect_top(
-        &layer,
+        layer,
         receipt_iban_ref_box.x1,
         receipt_iban_ref_box.y1,
         receipt_iban_ref_box.x2,
         receipt_iban_ref_box.y2,
     );
     stroke_rect_top(
-        &layer,
+        layer,
         receipt_creditor_box.x1,
         receipt_creditor_box.y1,
         receipt_creditor_box.x2,
         receipt_creditor_box.y2,
     );
 
-    draw_grid_field(&layer, 106.5, 6.0, 177.7, 11.0, Some(3.75));
-    draw_grid_field(&layer, 185.2, 6.5, 189.2, 10.5, None);
-    draw_grid_field(&layer, 196.5, 6.5, 200.5, 10.5, None);
-    stroke_rect_top(&layer, qr_box.x1, qr_box.y1, qr_box.x2, qr_box.y2);
-    draw_grid_field(&layer, 106.5, 14.0, 121.5, 19.0, Some(3.75));
-    draw_grid_field(&layer, 123.5, 14.0, 206.0, 19.0, Some(3.75));
+    draw_grid_field(layer, 106.5, 6.0, 177.7, 11.0, Some(3.75));
+    draw_grid_field(layer, 185.2, 6.5, 189.2, 10.5, None);
+    draw_grid_field(layer, 196.5, 6.5, 200.5, 10.5, None);
+    stroke_rect_top(layer, qr_box.x1, qr_box.y1, qr_box.x2, qr_box.y2);
+    draw_grid_field(layer, 106.5, 14.0, 121.5, 19.0, Some(3.75));
+    draw_grid_field(layer, 123.5, 14.0, 206.0, 19.0, Some(3.75));
     draw_three_line_box(
-        &layer,
+        layer,
         main_payer_box.x1,
         main_payer_box.y1,
         main_payer_box.x2,
         main_payer_box.y2,
     );
     draw_grid_field(
-        &layer,
+        layer,
         amount_box.x1,
         amount_box.y1,
         amount_box.x2,
         amount_box.y2,
         Some(3.75),
     );
-    draw_grid_field(&layer, 161.2, 40.5, 191.2, 45.5, Some(3.75));
-    draw_grid_field(&layer, 196.5, 41.0, 200.5, 45.0, None);
+    draw_grid_field(layer, 161.2, 40.5, 191.2, 45.5, Some(3.75));
+    draw_grid_field(layer, 196.5, 41.0, 200.5, 45.0, None);
     draw_grid_field(
-        &layer,
+        layer,
         purpose_code_box.x1,
         purpose_code_box.y1,
         purpose_code_box.x2,
@@ -775,7 +813,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         Some(3.75),
     );
     draw_grid_field(
-        &layer,
+        layer,
         purpose_box.x1,
         purpose_box.y1,
         purpose_box.x2,
@@ -783,7 +821,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         Some(3.75),
     );
     draw_grid_field(
-        &layer,
+        layer,
         date_box.x1,
         date_box.y1,
         date_box.x2,
@@ -791,7 +829,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         Some(3.72),
     );
     draw_grid_field(
-        &layer,
+        layer,
         creditor_iban_box.x1,
         creditor_iban_box.y1,
         creditor_iban_box.x2,
@@ -799,7 +837,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         Some(3.75),
     );
     draw_grid_field(
-        &layer,
+        layer,
         creditor_reference_model_box.x1,
         creditor_reference_model_box.y1,
         creditor_reference_model_box.x2,
@@ -807,7 +845,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         Some(3.75),
     );
     draw_grid_field(
-        &layer,
+        layer,
         creditor_reference_body_box.x1,
         creditor_reference_body_box.y1,
         creditor_reference_body_box.x2,
@@ -815,89 +853,89 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         Some(3.75),
     );
     draw_three_line_box(
-        &layer,
+        layer,
         creditor_box.x1,
         creditor_box.y1,
         creditor_box.x2,
         creditor_box.y2,
     );
-    stroke_rect_top(&layer, 168.6, 71.0, 203.3, 89.0);
-    line_top(&layer, 172.0, 85.6, 200.0, 85.6);
+    stroke_rect_top(layer, 168.6, 71.0, 203.3, 89.0);
+    line_top(layer, 172.0, 85.6, 200.0, 85.6);
 
     layer.set_fill_color(black.clone());
-    fill_rect_top(&layer, 61.0, 1.0, 62.5, 2.5);
-    fill_rect_top(&layer, 207.5, 1.0, 209.0, 2.5);
-    fill_rect_top(&layer, 207.5, 96.5, 209.0, 98.0);
+    fill_rect_top(layer, 61.0, 1.0, 62.5, 2.5);
+    fill_rect_top(layer, 207.5, 1.0, 209.0, 2.5);
+    fill_rect_top(layer, 207.5, 96.5, 209.0, 98.0);
 
     layer.set_fill_color(orange.clone());
-    text_top(&layer, "Ime plačnika", 7.0, 4.0, 3.5, &label_font);
-    text_top(&layer, "UPN QR - potrdilo", 10.0, 28.0, 2.0, &label_font);
-    text_top(&layer, "Namen in rok plačila", 7.0, 4.0, 20.0, &label_font);
-    text_top(&layer, "Znesek", 7.0, 16.5, 32.0, &label_font);
+    text_top(layer, "Ime plačnika", 7.0, 4.0, 3.5, &label_font);
+    text_top(layer, "UPN QR - potrdilo", 10.0, 28.0, 2.0, &label_font);
+    text_top(layer, "Namen in rok plačila", 7.0, 4.0, 20.0, &label_font);
+    text_top(layer, "Znesek", 7.0, 16.5, 32.0, &label_font);
     text_top(
-        &layer,
+        layer,
         "IBAN in referenca prejemnika",
         7.0,
         4.0,
         40.0,
-        &label_font,
+        label_font,
     );
-    text_top(&layer, "Ime prejemnika", 7.0, 4.0, 56.5, &label_font);
+    text_top(layer, "Ime prejemnika", 7.0, 4.0, 56.5, &label_font);
     text_top(
-        &layer,
+        layer,
         "Prostor za vpise ponudnika plačilnih storitev",
         6.0,
         13.8,
         97.0,
-        &label_font,
+        label_font,
     );
-    text_top(&layer, "Koda QR", 7.0, 63.5, 3.5, &label_font);
-    text_top(&layer, "IBAN plačnika", 7.0, 106.5, 3.5, &label_font);
-    text_top(&layer, "Polog", 7.0, 184.3, 3.5, &label_font);
-    text_top(&layer, "Dvig", 7.0, 196.1, 3.5, &label_font);
-    text_top(&layer, "Referenca plačnika", 7.0, 106.5, 11.0, &label_font);
+    text_top(layer, "Koda QR", 7.0, 63.5, 3.5, &label_font);
+    text_top(layer, "IBAN plačnika", 7.0, 106.5, 3.5, &label_font);
+    text_top(layer, "Polog", 7.0, 184.3, 3.5, &label_font);
+    text_top(layer, "Dvig", 7.0, 196.1, 3.5, &label_font);
+    text_top(layer, "Referenca plačnika", 7.0, 106.5, 11.0, &label_font);
     text_top(
-        &layer,
+        layer,
         "Ime, ulica in kraj plačnika",
         7.0,
         106.5,
         19.5,
-        &label_font,
+        label_font,
     );
-    text_top(&layer, "EUR", 11.0, 7.8, 35.6, &label_font);
-    text_top(&layer, "EUR", 11.0, 104.5, 41.6, &label_font);
-    text_top(&layer, "Znesek", 7.0, 114.2, 38.0, &label_font);
-    text_top(&layer, "Datum plačila", 7.0, 161.2, 38.0, &label_font);
-    text_top(&layer, "Nujno", 7.0, 195.3, 38.0, &label_font);
-    text_top(&layer, "Koda namena", 7.0, 63.5, 46.5, &label_font);
-    text_top(&layer, "Namen plačila", 7.0, 80.5, 46.5, &label_font);
-    text_top(&layer, "Rok plačila", 7.0, 176.2, 46.5, &label_font);
-    text_top(&layer, "IBAN prejemnika", 7.0, 63.5, 55.5, &label_font);
-    text_top(&layer, "UPN QR", 10.0, 194.3, 59.1, &label_font);
-    text_top(&layer, "Referenca prejemnika", 7.0, 63.5, 63.5, &label_font);
+    text_top(layer, "EUR", 11.0, 7.8, 35.6, &label_font);
+    text_top(layer, "EUR", 11.0, 104.5, 41.6, &label_font);
+    text_top(layer, "Znesek", 7.0, 114.2, 38.0, &label_font);
+    text_top(layer, "Datum plačila", 7.0, 161.2, 38.0, &label_font);
+    text_top(layer, "Nujno", 7.0, 195.3, 38.0, &label_font);
+    text_top(layer, "Koda namena", 7.0, 63.5, 46.5, &label_font);
+    text_top(layer, "Namen plačila", 7.0, 80.5, 46.5, &label_font);
+    text_top(layer, "Rok plačila", 7.0, 176.2, 46.5, &label_font);
+    text_top(layer, "IBAN prejemnika", 7.0, 63.5, 55.5, &label_font);
+    text_top(layer, "UPN QR", 10.0, 194.3, 59.1, &label_font);
+    text_top(layer, "Referenca prejemnika", 7.0, 63.5, 63.5, &label_font);
     text_top(
-        &layer,
+        layer,
         "Ime, ulica in kraj prejemnika",
         7.0,
         63.5,
         71.5,
-        &label_font,
+        label_font,
     );
     text_top(
-        &layer,
+        layer,
         "Podpis plačnika (neobvezno žig)",
         6.0,
         172.0,
         89.0,
-        &label_font,
+        label_font,
     );
     text_top(
-        &layer,
+        layer,
         "Prostor za vpise ponudnika plačilnih storitev",
         5.0,
         118.9,
         97.0,
-        &label_font,
+        label_font,
     );
 
     layer.set_fill_color(black);
@@ -924,7 +962,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     let amount_display = format_amount_display(data.amount_cents);
 
     draw_fitted_multi_line(
-        &layer,
+        layer,
         &[
             data.payer_name.clone(),
             data.payer_address.clone(),
@@ -933,26 +971,26 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         receipt_payer_box,
         10.8,
         MIN_FONT_SIZE_PT,
-        &mono_font,
+        mono_font,
     );
     draw_fitted_multi_line(
-        &layer,
+        layer,
         &[receipt_purpose_line, receipt_detail],
         receipt_purpose_box,
         9.6,
         7.8,
-        &mono_font,
+        mono_font,
     );
     draw_fitted_single_line(
-        &layer,
+        layer,
         &amount_display,
         receipt_amount_box,
         11.5,
         9.0,
-        &mono_font,
+        mono_font,
     );
     draw_fitted_multi_line(
-        &layer,
+        layer,
         &[
             creditor_iban.clone(),
             format!("{} {}", reference_model, reference_body),
@@ -960,10 +998,10 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         receipt_iban_ref_box,
         10.0,
         7.8,
-        &mono_font,
+        mono_font,
     );
     draw_fitted_multi_line(
-        &layer,
+        layer,
         &[
             data.creditor_name.clone(),
             data.creditor_address.clone(),
@@ -972,7 +1010,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         receipt_creditor_box,
         10.6,
         MIN_FONT_SIZE_PT,
-        &mono_font,
+        mono_font,
     );
 
     if let Ok((pixels, img_px)) = render_upnqr_pixels(data) {
@@ -1000,7 +1038,7 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
     }
 
     draw_fitted_multi_line(
-        &layer,
+        layer,
         &[
             data.payer_name.clone(),
             data.payer_address.clone(),
@@ -1009,45 +1047,45 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         main_payer_box,
         13.2,
         9.0,
-        &mono_font,
+        mono_font,
     );
-    draw_fitted_single_line(&layer, &amount_display, amount_box, 11.5, 8.5, &mono_font);
+    draw_fitted_single_line(layer, &amount_display, amount_box, 11.5, 8.5, &mono_font);
     draw_fitted_single_line(
-        &layer,
+        layer,
         &data.purpose_code.to_uppercase(),
         purpose_code_box,
         10.5,
         8.0,
-        &mono_font,
+        mono_font,
     );
-    draw_fitted_single_line(&layer, &purpose_line, purpose_box, 10.0, 7.8, &mono_font);
-    draw_fitted_single_line(&layer, &data.due_date, date_box, 11.0, 8.5, &mono_font);
+    draw_fitted_single_line(layer, &purpose_line, purpose_box, 10.0, 7.8, &mono_font);
+    draw_fitted_single_line(layer, &data.due_date, date_box, 11.0, 8.5, &mono_font);
     draw_fitted_single_line(
-        &layer,
+        layer,
         &creditor_iban,
         creditor_iban_box,
         10.4,
         8.0,
-        &mono_font,
+        mono_font,
     );
     draw_fitted_single_line(
-        &layer,
+        layer,
         &reference_model,
         creditor_reference_model_box,
         10.0,
         8.0,
-        &mono_font,
+        mono_font,
     );
     draw_fitted_single_line(
-        &layer,
+        layer,
         &reference_body,
         creditor_reference_body_box,
         10.0,
         7.8,
-        &mono_font,
+        mono_font,
     );
     draw_fitted_multi_line(
-        &layer,
+        layer,
         &[
             data.creditor_name.clone(),
             data.creditor_address.clone(),
@@ -1056,131 +1094,8 @@ fn render_upn_pdf(data: &UpnData) -> Result<Vec<u8>, String> {
         creditor_box,
         12.2,
         8.8,
-        &mono_font,
+        mono_font,
     );
-
-    let mut buf: Vec<u8> = Vec::new();
-    doc.save(&mut BufWriter::new(std::io::Cursor::new(&mut buf)))
-        .map_err(|e| e.to_string())?;
-    Ok(buf)
-}
-
-fn merge_pdf_documents(documents: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
-    if documents.is_empty() {
-        return Err("No UPN PDFs to merge.".to_string());
-    }
-    if documents.len() == 1 {
-        return Ok(documents.into_iter().next().unwrap());
-    }
-
-    let mut max_id = 1;
-    let mut pages = BTreeMap::<ObjectId, Object>::new();
-    let mut objects = BTreeMap::<ObjectId, Object>::new();
-    let mut merged = LoDocument::with_version("1.5");
-    let mut catalog_object: Option<(ObjectId, Object)> = None;
-    let mut pages_object: Option<(ObjectId, Object)> = None;
-
-    for bytes in documents {
-        let mut document = LoDocument::load_mem(&bytes).map_err(|e| e.to_string())?;
-        document.renumber_objects_with(max_id);
-        max_id = document.max_id + 1;
-
-        for (object_id, object) in document.get_pages().into_values().map(|object_id| {
-            let object = document
-                .get_object(object_id)
-                .map(|obj| obj.to_owned())
-                .unwrap_or(Object::Null);
-            (object_id, object)
-        }) {
-            pages.insert(object_id, object);
-        }
-
-        objects.extend(document.objects);
-    }
-
-    for (object_id, object) in objects {
-        match object.type_name().unwrap_or("") {
-            "Catalog" => {
-                catalog_object = Some((
-                    catalog_object.map(|(id, _)| id).unwrap_or(object_id),
-                    object,
-                ));
-            }
-            "Pages" => {
-                if let Ok(dictionary) = object.as_dict() {
-                    let mut dictionary = dictionary.clone();
-                    if let Some((_, ref existing)) = pages_object {
-                        if let Ok(existing_dictionary) = existing.as_dict() {
-                            dictionary.extend(existing_dictionary);
-                        }
-                    }
-                    pages_object = Some((
-                        pages_object.map(|(id, _)| id).unwrap_or(object_id),
-                        Object::Dictionary(dictionary),
-                    ));
-                }
-            }
-            "Page" | "Outlines" | "Outline" => {}
-            _ => {
-                merged.objects.insert(object_id, object);
-            }
-        }
-    }
-
-    let (pages_id, pages_root) = pages_object.ok_or_else(|| "Pages root not found.".to_string())?;
-    let (catalog_id, catalog_root) =
-        catalog_object.ok_or_else(|| "Catalog root not found.".to_string())?;
-
-    for (object_id, object) in &pages {
-        if let Ok(dictionary) = object.as_dict() {
-            let mut dictionary = dictionary.clone();
-            dictionary.set("Parent", pages_id);
-            merged
-                .objects
-                .insert(*object_id, Object::Dictionary(dictionary));
-        }
-    }
-
-    if let Ok(dictionary) = pages_root.as_dict() {
-        let mut dictionary = dictionary.clone();
-        dictionary.set("Count", pages.len() as u32);
-        dictionary.set(
-            "Kids",
-            pages
-                .keys()
-                .copied()
-                .map(Object::Reference)
-                .collect::<Vec<_>>(),
-        );
-        merged
-            .objects
-            .insert(pages_id, Object::Dictionary(dictionary));
-    }
-
-    if let Ok(dictionary) = catalog_root.as_dict() {
-        let mut dictionary = dictionary.clone();
-        dictionary.set("Pages", pages_id);
-        dictionary.remove(b"Outlines");
-        merged
-            .objects
-            .insert(catalog_id, Object::Dictionary(dictionary));
-    }
-
-    merged.trailer.set("Root", catalog_id);
-    merged.max_id = merged.objects.len() as u32;
-    merged.renumber_objects();
-
-    let mut output = Vec::new();
-    merged.save_to(&mut output).map_err(|e| e.to_string())?;
-    Ok(output)
-}
-
-fn render_upn_pdf_batch(items: &[UpnData]) -> Result<Vec<u8>, String> {
-    let pdfs = items
-        .iter()
-        .map(render_upn_pdf)
-        .collect::<Result<Vec<_>, _>>()?;
-    merge_pdf_documents(pdfs)
 }
 
 fn load_upn_data(
@@ -3235,6 +3150,103 @@ mod tests {
             packet_hash: hash.to_string(),
             packet_error: String::new(),
         }
+    }
+
+    fn compact_pdf_test_data() -> UpnData {
+        UpnData {
+            payer_name: "Tenant".to_string(),
+            payer_address: "Street 1".to_string(),
+            payer_city: "Ljubljana".to_string(),
+            payer_postal_code: "1000".to_string(),
+            amount_cents: 12345,
+            purpose_code: "OTHR".to_string(),
+            purpose_text: "Utilities".to_string(),
+            due_date: "2026-10-15".to_string(),
+            creditor_iban: "SI56020110257890131".to_string(),
+            creditor_reference: "SI00 20262707".to_string(),
+            creditor_name: "Provider".to_string(),
+            creditor_address: "Provider Street 2".to_string(),
+            creditor_city: "Ljubljana".to_string(),
+        }
+    }
+
+    #[test]
+    fn compact_upn_pdf_preserves_packet_pages_qr_glyphs_and_dimensions() {
+        let mut items = vec![compact_pdf_test_data(); 5];
+        // Introduce new characters on later pages to catch incomplete subsetting.
+        for (index, item) in items.iter_mut().enumerate() {
+            item.purpose_text = format!("Utilities {}", index + 1);
+        }
+        items[4].payer_name = "ČŠŽ čšž".to_string();
+        let bytes = render_upn_pdf_batch(&items).expect("render packet");
+        assert!(bytes.len() < 200_000, "packet is {} bytes", bytes.len());
+        let document = LoDocument::load_mem(&bytes).expect("valid PDF");
+        let pages = document.get_pages();
+        assert_eq!(pages.len(), items.len());
+        let font_count = document
+            .objects
+            .values()
+            .filter(|object| {
+                object.as_dict().ok().is_some_and(|dict| {
+                    dict.get(b"Subtype")
+                        .and_then(::lopdf::Object::as_name_str)
+                        .ok()
+                        == Some("Type0")
+                })
+            })
+            .count();
+        assert!(font_count <= 2, "fonts must be shared across pages");
+        for (number, id) in pages {
+            let page = document.get_object(id).unwrap().as_dict().unwrap();
+            let media_box = page.get(b"MediaBox").unwrap().as_array().unwrap();
+            assert!((media_box[2].as_float().unwrap() - 210.0 * 72.0 / 25.4).abs() < 0.01);
+            assert!((media_box[3].as_float().unwrap() - 99.0 * 72.0 / 25.4).abs() < 0.01);
+            let images = document.get_page_images(id).expect("page QR image");
+            assert_eq!(images.len(), 1);
+            let (expected_pixels, expected_size) =
+                render_upnqr_pixels(&items[number as usize - 1]).unwrap();
+            assert_eq!(images[0].width, expected_size as i64);
+            assert_eq!(images[0].height, expected_size as i64);
+            let mut stream = document
+                .get_object(images[0].id)
+                .unwrap()
+                .as_stream()
+                .unwrap()
+                .clone();
+            // lopdf's generic decompressor excludes images; this QR uses plain
+            // FlateDecode, so decode it as a stream to compare every source pixel.
+            stream.dict.remove(b"Subtype");
+            assert_eq!(stream.decompressed_content().unwrap(), expected_pixels);
+            if number == 5 && font_count > 0 {
+                // Check that subsetting retained all later-page Slovenian glyphs.
+                // lopdf's text extractor cannot parse printpdf's subset CMaps;
+                // rendered text is additionally checked with an independent viewer.
+                let maps = document
+                    .objects
+                    .values()
+                    .filter_map(|object| {
+                        let stream = object.as_stream().ok()?;
+                        String::from_utf8(stream.decompressed_content().ok()?).ok()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                for codepoint in ["<010c>", "<0160>", "<017d>", "<010d>", "<0161>", "<017e>"] {
+                    assert!(maps.contains(codepoint), "missing glyph {codepoint}");
+                }
+            }
+        }
+        let single = render_upn_pdf(&items[0]).expect("render single slip");
+        assert!(
+            single.len() < 100_000,
+            "single slip is {} bytes",
+            single.len()
+        );
+        assert_eq!(LoDocument::load_mem(&single).unwrap().get_pages().len(), 1);
+    }
+
+    #[test]
+    fn compact_upn_pdf_rejects_empty_packets() {
+        assert!(render_upn_pdf_batch(&[]).is_err());
     }
 
     #[test]
