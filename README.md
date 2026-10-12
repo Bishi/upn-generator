@@ -165,7 +165,7 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 | **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
-| **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
+| **Send All Emails** | Opens a summary drawer with the billing month, packet totals, slip counts, and recipient addresses; **Confirm send** starts the batch using current email safety settings, including previously emailed packets |
 
 UPN PDFs share embedded fonts across slips, include only the font characters used in the packet, and use lossless compression to keep email attachments and downloads small while preserving print quality and QR resolution.
 
