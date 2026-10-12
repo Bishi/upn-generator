@@ -11,6 +11,30 @@
 
 ## Cases
 
+- [ ] Email uses the shared drawer shell at 720 px on wide windows and fits narrow windows; backdrop fade, panel motion, header, and footer match inbox import.
+- [ ] Tab/Shift+Tab stay in the drawer, Escape/backdrop/Close dismiss it, and focus returns to Send All Emails.
+- [ ] Background content cannot scroll while the drawer is open; internal scrolling keeps the header and footer visible.
+
+- [ ] Drawer uses concise attachment summaries, with no email-content help sentence; global attachment summary still identifies every recipient and the file limits.
+
+- [ ] Body editor is white with readable dark text, including when the app uses a dark theme.
+- [ ] Add multiple global attachments, confirm filenames/sizes, remove one, and send to allowlisted test recipients: every recipient gets the remaining exact files with UPN slips.
+- [ ] Global attachments are still included when original bills are unchecked; leaving global attachments empty preserves the usual UPN/originals behavior.
+- [ ] Reject selections exceeding 10 files or 15 MiB combined without adding any files from the rejected selection; previously selected files remain.
+- [ ] Confirm send stays disabled while files are being read; close during a read and confirm no late result appears in a reopened drawer.
+- [ ] Cancel and reopen, change billing period, or navigate away: all global attachment selections are discarded.
+- [ ] Duplicate filenames, including a name matching the UPN PDF or an original bill, arrive under distinct safe filenames.
+- [ ] After sending with global attachments, delivery status continues to track the UPN packet; backups contain no global attachment contents.
+
+- [ ] Open Send All Emails at narrow and wide window sizes: no horizontal scrollbar appears during the slide-in animation; the drawer body still scrolls vertically.
+
+- [ ] Send All loads saved subject/body with placeholders resolved before Confirm send is available.
+- [ ] Edit subject and multiline body, send to allowlisted test recipients, and confirm every recipient gets the exact edited content and expected attachments.
+- [ ] Clear the subject: Confirm send is disabled. Clear only the body: sending remains available.
+- [ ] Cancel and reopen: batch edits are discarded and saved defaults are loaded again.
+- [ ] Original-bill note appears only when originals are enabled and available; partial availability uses wording about available originals.
+- [ ] A content loading error is visible and blocks sending; closing/reopening retries.
+
 - [ ] Select an empty billing month and confirm there is no red validation blocker or `0 validation issues` chip; the page prompts for bill import and bulk UPN actions remain disabled.
 - [ ] Select a billing period and confirm each apartment card shows line items and total due.
 - [ ] Confirm the validation panel appears for the selected billing period and summarizes blocking errors and warnings without pushing content down unexpectedly.

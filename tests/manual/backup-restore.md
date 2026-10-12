@@ -10,6 +10,8 @@
 
 ## Cases
 
+- [ ] Backup/restore preserves customized email subject/body; restoring a backup predating these settings uses the built-in defaults.
+
 - [ ] Create a backup and confirm a `.sqlite3` file is written to the selected folder.
 - [ ] While backup creation is running, confirm a loading overlay appears and page clicks are blocked until it finishes.
 - [ ] Confirm the Backup Created dialog appears after the loading overlay is gone, not on top of it.

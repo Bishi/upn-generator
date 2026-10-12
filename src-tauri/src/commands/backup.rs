@@ -512,6 +512,23 @@ fn restore_db_backup_inner(db: &DbState, input_path: String) -> Result<(), Strin
         )
         .map_err(|e| e.to_string())?;
 
+        // Use current built-in defaults even when the live schema still has older
+        // column defaults. Restore backed-up customization over them below.
+        tx.execute(
+            "UPDATE app_settings SET email_subject=?1, email_body=?2 WHERE id=1",
+            rusqlite::params![
+                crate::commands::email_content::DEFAULT_SUBJECT,
+                crate::commands::email_content::DEFAULT_BODY
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        if has_app_settings {
+            for column in ["email_subject", "email_body"] {
+                if attached_column_exists(&tx, "app_settings", column)? {
+                    tx.execute(&format!("UPDATE app_settings SET {column}=(SELECT {column} FROM restore_db.app_settings WHERE id=1) WHERE id=1 AND EXISTS(SELECT 1 FROM restore_db.app_settings WHERE id=1)"), []).map_err(|e| e.to_string())?;
+                }
+            }
+        }
         tx.execute(
             "DELETE FROM source_documents
              WHERE NOT EXISTS (
@@ -599,6 +616,51 @@ mod tests {
         restore_db_backup_inner(&state, file.path().to_string_lossy().into_owned())
             .expect("restore backup");
         state
+    }
+
+    #[test]
+    fn email_content_restore_and_legacy_defaults() {
+        for legacy in [false, true] {
+            let file = backup_file("draft", None, false);
+            let backup = Connection::open(file.path()).unwrap();
+            if legacy {
+                backup.execute_batch("ALTER TABLE app_settings DROP COLUMN email_subject; ALTER TABLE app_settings DROP COLUMN email_body;").unwrap();
+            } else {
+                backup
+                    .execute(
+                        "UPDATE app_settings SET email_subject=?1, email_body=?2 WHERE id=1",
+                        rusqlite::params!["Custom subject", "Custom body\nSecond line"],
+                    )
+                    .unwrap();
+            }
+            drop(backup);
+            let state = restore_backup(&file);
+            let conn = state.0.lock().unwrap();
+            let content = crate::commands::email_content::load(&conn).unwrap();
+            assert_eq!(
+                content.subject,
+                if legacy {
+                    crate::commands::email_content::DEFAULT_SUBJECT
+                } else {
+                    "Custom subject"
+                }
+            );
+            assert_eq!(
+                content.body,
+                if legacy {
+                    crate::commands::email_content::DEFAULT_BODY
+                } else {
+                    "Custom body\nSecond line"
+                }
+            );
+            migrations::reset_to_defaults(&conn).unwrap();
+            let reset = crate::commands::email_content::load(&conn).unwrap();
+            assert_eq!(
+                reset.subject,
+                crate::commands::email_content::DEFAULT_SUBJECT
+            );
+            assert_eq!(reset.body, crate::commands::email_content::DEFAULT_BODY);
+        }
     }
 
     #[test]

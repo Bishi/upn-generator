@@ -34,6 +34,7 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - `smtp_config` table always has exactly 1 row (`id=1`); seeded defaults use Gmail SMTP host/port/TLS, `kamniska.racuni@gmail.com` username/from/allowlist, and blank password
 - SMTP email safety is stored on `smtp_config`; the recipient allowlist defaults enabled with `kamniska.racuni@gmail.com` as the seeded test recipient so bulk UPN sends remain limited until more recipients are listed or the allowlist is disabled
 - `app_settings` table always has exactly 1 row (`id=1`) for database-backed UI preferences such as theme
+- UPN email subject/body templates are stored on `app_settings` and included in backups; legacy backup restore and factory reset use built-in defaults. Email Content settings owns these fields independently of theme. Send All resolves previous-service-month placeholders and accepts transient subject/body overrides for the entire batch; overrides are not persisted in delivery history.
 - `inbox_config` table always has exactly 1 row (`id=1`) for manual IMAP inbox import settings; seeded defaults use Gmail IMAP host/port/TLS/INBOX, `kamniska.racuni@gmail.com` username, and blank password
 - Inbox imports are manual, read-only IMAP scans using `EXAMINE` and `BODY.PEEK`; the Bills page previews fetched attachments before import, finalization requires the reparsed invoice set to match the preview, attachments are staged only in short-lived temp files, and raw extracted text is not persisted for inbox imports
 - Inbox preview scans have in-memory request-scoped cancellation: cancelling closes the active IMAP socket, rejects late results, and removes the matching preview session; temporary files are released after any current bounded extraction completes. Closing the drawer or navigating away also cancels the active scan.
@@ -41,6 +42,7 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - Bills keep parser/OCR warning text in `parse_note`; explicit review completion is stored separately on `bills.reviewed_at`/`review_note`, and unreviewed warning bills block bulk UPN delivery actions until marked reviewed
 - Provider identity rules are typed and editable; local/inbox imports persist page-attributed identity evidence, require a match or explicit noted exception, and recheck rules plus provider/month occupancy atomically before saving. Splits and delivery use the same eligibility rule. Closed months with migrated `not_checked` bills remain PDF ZIP exportable; reopening restores the normal export identity gate.
 - Accepted local/inbox imports retain the exact full source PDF/image in deduplicated SQLite `source_documents` rows and link bills through `source_document_id`; staged and stored originals are viewed through scoped raw-byte IPC and short-lived Blob URLs, while legacy/manual bills remain explicitly unavailable.
+- Send All supports transient global extra attachments selected in the drawer and sent to every recipient, independently of original-bill inclusion. User-selected bytes cross IPC in memory with backend count/size validation (10 files, 15 MiB combined), safe unique MIME filenames, and no database, backup, or delivery-history retention. Delivery hashes still identify only the UPN packet.
 - UPN email sends default to including exact full retained originals for bills in each apartment packet, deduplicated per source document. The send-time checkbox can disable these attachments; unavailable legacy/manual originals are warned about in the UI, while linked-file integrity failures fail the apartment send. Delivery hashes continue to identify the UPN payment packet independently of supporting originals.
 - Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
 - Apartment `contact_email` remains the persisted field name and supports comma-separated recipients
@@ -57,7 +59,7 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - `src-tauri/src/commands/backup.rs` - manual DB backup and restore commands
 - `src/lib/types.ts` - TypeScript types mirroring Rust structs
 - `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
-- `src/routes/settings.tsx` - Settings page (5 horizontal tabs; Delivery contains Email/Inbox, App contains Appearance/Data)
+- `src/routes/settings.tsx` - Settings page (6 horizontal tabs; Delivery contains Email/Inbox, Email Content precedes App, App contains Appearance/Data)
 - `src/components/settings/` - per-tab setting components
 - `src/lib/theme.tsx` - database-backed theme preference runtime
 - `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
@@ -65,6 +67,7 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - `src-tauri/src/commands/splits.rs` - split calculation logic
 - `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, email safety, delivery history, month close/reopen, SMTP test, and email sending
 - `src-tauri/src/commands/upn_validation.rs` - backend-owned pre-send validation gates for UPN delivery actions
+- `src/components/ui/drawer.tsx` - shared drawer shell with configurable width, header/footer slots, focus handling, backdrop, scrolling, and close guards
 - `src/routes/bills.tsx` - Bills page
 - `src/routes/splits.tsx` - Splits matrix page
 - `src/routes/upn.tsx` - UPN preview and send page

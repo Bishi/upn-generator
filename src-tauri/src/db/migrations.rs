@@ -516,6 +516,29 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    for (column, default) in [
+        (
+            "email_subject",
+            crate::commands::email_content::DEFAULT_SUBJECT,
+        ),
+        ("email_body", crate::commands::email_content::DEFAULT_BODY),
+    ] {
+        if !table_has_column(conn, "app_settings", column) {
+            conn.execute_batch(&format!(
+                "ALTER TABLE app_settings ADD COLUMN {column} TEXT NOT NULL DEFAULT '{}'",
+                default.replace('\'', "''")
+            ))
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    conn.execute(
+        "UPDATE app_settings SET email_subject=?1 WHERE id=1 AND email_subject=?2",
+        rusqlite::params![
+            crate::commands::email_content::DEFAULT_SUBJECT,
+            "Poloznice za {month}/{year}"
+        ],
+    )
+    .map_err(|e| e.to_string())?;
     let _ = conn.execute(
         "ALTER TABLE apartments ADD COLUMN unit_code TEXT NOT NULL DEFAULT ''",
         [],
@@ -724,6 +747,14 @@ pub fn reset_to_defaults(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    conn.execute(
+        "UPDATE app_settings SET email_subject=?1, email_body=?2 WHERE id=1",
+        rusqlite::params![
+            crate::commands::email_content::DEFAULT_SUBJECT,
+            crate::commands::email_content::DEFAULT_BODY
+        ],
+    )
+    .map_err(|e| e.to_string())?;
     seed_defaults(conn)
 }
 

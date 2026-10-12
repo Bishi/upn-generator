@@ -23,6 +23,8 @@ import { useBillingPeriodSelection } from "@/lib/billing-period-selection";
 import { useWorkflowSnapshotContext } from "@/lib/workflow-snapshot";
 import type {
   Apartment,
+  EmailContent,
+  ExtraEmailAttachment,
   EmailResult,
   SplitRow,
   UpnDeliveryApartmentRollup,
@@ -757,7 +759,7 @@ function UpnPage() {
     });
   }, [snapshot.error]);
 
-  const sendEmails = async () => {
+  const sendEmails = async (content: EmailContent, extraAttachments: ExtraEmailAttachment[]) => {
     if (!selected?.id || sendInProgressRef.current || emailSummaryPeriodId !== selected.id) return;
     if (snapshot.loading || snapshot.isRefreshing || !snapshot.selectedPreSendValidation?.can_send_emails) return;
     if (selected.status === "closed") {
@@ -768,7 +770,7 @@ function UpnPage() {
     setSending(true);
     setEmailSummaryPeriodId(null);
     try {
-      const results = await sendPeriodEmails(selected.id, includeOriginalBills);
+      const results = await sendPeriodEmails(selected.id, includeOriginalBills, content, extraAttachments);
       setEmailResults(results);
       const summary = summarizeEmailResults(results);
       if (summary.hasIssues) {
@@ -1207,6 +1209,7 @@ function UpnPage() {
     >
       {selected?.id && emailSummaryPeriodId === selected.id && (
         <EmailSendDrawer
+          billingPeriodId={selected.id}
           periodLabel={`${String(selected.month).padStart(2, "0")}/${selected.year}`}
           packets={apartments.filter(([, apartment]) => hasSendableRecipient(apartment.contactEmail)).map(([apartmentId, apartment]) => ({
             apartmentId,
@@ -1221,7 +1224,7 @@ function UpnPage() {
           missingOriginalLabels={billsWithoutOriginals.map((bill) => bill.provider_name || bill.creditor_name || `Bill ${bill.id}`)}
           canSend={!snapshot.loading && !snapshot.isRefreshing && !isClosed && !sending && canSendEmails && splits.length > 0}
           onClose={() => setEmailSummaryPeriodId(null)}
-          onConfirm={() => void sendEmails()}
+          onConfirm={(content, extraAttachments) => void sendEmails(content, extraAttachments)}
         />
       )}
       <div id="original-bills-summary" className="text-sm text-muted-foreground">

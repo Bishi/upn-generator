@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
+  EmailContent,
+  ExtraEmailAttachment,
   Apartment,
   BackupFileInfo,
   Bill,
@@ -58,6 +60,10 @@ export const ipc = {
     invoke<void>("test_inbox_connection", { config, password }),
   testSmtpConnection: (config: SmtpConfig, password: string, testRecipient: string) =>
     invoke<void>("test_smtp_connection", { config, password, testRecipient }),
+  getEmailContent: () => invoke<EmailContent>("get_email_content"),
+  saveEmailContent: (content: EmailContent) => invoke<EmailContent>("save_email_content", { content }),
+  previewEmailContent: (billingPeriodId: number, includeOriginalBills: boolean) =>
+    invoke<EmailContent>("preview_email_content", { billingPeriodId, includeOriginalBills }),
   getAppSettings: () => invoke<AppSettings>("get_app_settings"),
   saveAppSettings: (settings: AppSettings) =>
     invoke<AppSettings>("save_app_settings", { settings }),
@@ -148,8 +154,8 @@ export const ipc = {
     invoke<string>("open_preview_apartment_upns", { billingPeriodId, apartmentId }),
   saveAllUpnsZip: (billingPeriodId: number, outputPath: string) =>
     invoke<UpnZipExportResult>("save_all_upns_zip", { billingPeriodId, outputPath }),
-  sendEmails: (billingPeriodId: number, includeOriginalBills = true) =>
-    invoke<EmailResult[]>("send_emails", { billingPeriodId, includeOriginalBills }),
+  sendEmails: (billingPeriodId: number, includeOriginalBills = true, content?: EmailContent, extraAttachments: ExtraEmailAttachment[] = []) =>
+    invoke<EmailResult[]>("send_emails", { billingPeriodId, includeOriginalBills, content, extraAttachments }),
   markUpnPeriodDelivered: (billingPeriodId: number) =>
     invoke<UpnDeliveryRollup>("mark_upn_period_delivered", { billingPeriodId }),
   unmarkUpnPeriodDelivered: (billingPeriodId: number) =>

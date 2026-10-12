@@ -10,6 +10,15 @@
 
 ## Cases
 
+- [ ] Built-in subject uses "Položnice". An unchanged old default upgrades automatically; a customized subject is preserved.
+
+- [ ] Email Content shows one short description per placeholder row, has no introductory paragraph, and uses a white body editor with dark text.
+
+- [ ] Email Content appears before App; save a subject and multiline body, restart, and confirm both persist.
+- [ ] Save `{month}`, `{year}`, and `{originals_note}` placeholders; confirm Send All resolves them, including January's previous year.
+- [ ] Empty/whitespace subjects are rejected; an empty body saves successfully.
+- [ ] Saving email content preserves the appearance theme; changing the theme preserves email content.
+
 - [ ] Save SMTP settings with a new password and confirm the form reports a saved password state after reload.
 - [ ] Leave SMTP password blank on a later save and confirm the existing saved password is kept.
 - [ ] Change SMTP username and confirm the old saved password is not reused for the new username.

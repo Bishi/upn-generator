@@ -1,4 +1,4 @@
-export type SettingsTabId = "building" | "apartments" | "providers" | "delivery" | "app";
+export type SettingsTabId = "building" | "apartments" | "providers" | "delivery" | "email-content" | "app";
 
 export interface SettingsDirtyEntry {
   tab: SettingsTabId;

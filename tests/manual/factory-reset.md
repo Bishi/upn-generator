@@ -9,6 +9,8 @@
 
 ## Cases
 
+- [ ] Factory reset restores the built-in email subject/body templates.
+
 - [ ] Confirm reset restores the seeded electricity OR identity rule, gas/waste/water labeled identifiers, and the temporary weaker ZLM address rule, while the chimney provider remains explicitly Unconfigured.
 
 - [ ] Start factory reset and confirm the warning clearly describes destructive data loss.

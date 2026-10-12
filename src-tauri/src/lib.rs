@@ -17,6 +17,7 @@ use commands::documents::{
     clear_local_preview_source, get_bill_source_document_info, get_local_preview_source_info,
     read_bill_source_document, read_local_preview_source, LocalPreviewState,
 };
+use commands::email_content::{get_email_content, preview_email_content, save_email_content};
 use commands::inbox::{
     begin_inbox_preview, cancel_inbox_preview, clear_inbox_preview_session, get_inbox_config,
     get_inbox_preview_source_info, import_inbox_preview_selection, preview_inbox_attachments,
@@ -99,6 +100,9 @@ pub fn run() {
             read_local_preview_source,
             get_bill_source_document_info,
             read_bill_source_document,
+            get_email_content,
+            save_email_content,
+            preview_email_content,
             get_app_settings,
             save_app_settings,
             reset_all_data,

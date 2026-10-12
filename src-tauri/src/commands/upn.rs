@@ -1738,6 +1738,8 @@ pub async fn send_emails(
     app: AppHandle,
     billing_period_id: i64,
     include_original_bills: Option<bool>,
+    content: Option<super::email_content::EmailContent>,
+    extra_attachments: Option<Vec<ExtraEmailAttachment>>,
 ) -> Result<Vec<EmailResult>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<DbState>();
@@ -1745,6 +1747,8 @@ pub async fn send_emails(
             db,
             billing_period_id,
             include_original_bills.unwrap_or(true),
+            content,
+            extra_attachments.unwrap_or_default(),
         )
     })
     .await
@@ -1761,28 +1765,22 @@ fn log_send_email_phase(overall_start: Instant, previous: &mut Instant, label: &
     *previous = now;
 }
 
+#[cfg(test)]
 fn upn_email_content(
     billing_month: i32,
     billing_year: i32,
     has_original_bills: bool,
 ) -> (String, String) {
-    // Billing periods follow the service month named in the recipient email.
-    let (service_month, service_year) = if billing_month == 1 {
-        (12, billing_year - 1)
-    } else {
-        (billing_month - 1, billing_year)
-    };
-    let subject = format!("Poloznice za {:02}/{}", service_month, service_year);
-    let originals_note = if has_original_bills {
-        "\n\nPriloženi so tudi izvirni računi dobaviteljev."
-    } else {
-        ""
-    };
-    let body = format!(
-        "Spoštovani,\n\nv priponki najdete UPN položnice za {:02}/{}.{}\n\nLep pozdrav",
-        service_month, service_year, originals_note
+    let content = super::email_content::render(
+        &super::email_content::EmailContent {
+            subject: super::email_content::DEFAULT_SUBJECT.into(),
+            body: super::email_content::DEFAULT_BODY.into(),
+        },
+        billing_month,
+        billing_year,
+        has_original_bills,
     );
-    (subject, body)
+    (content.subject, content.body)
 }
 
 struct OriginalBillAttachment {
@@ -1880,6 +1878,74 @@ fn prepare_upn_email_packet(
     }
 }
 
+const MAX_EXTRA_ATTACHMENTS: usize = 10;
+const MAX_EXTRA_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+pub struct ExtraEmailAttachment {
+    pub name: String,
+    pub content_type: String,
+    pub data_base64: String,
+}
+
+#[derive(Debug)]
+struct PreparedExtraAttachment {
+    name: String,
+    content_type: ContentType,
+    bytes: Vec<u8>,
+}
+
+fn prepare_extra_attachments(
+    files: Vec<ExtraEmailAttachment>,
+) -> Result<Vec<PreparedExtraAttachment>, String> {
+    if files.len() > MAX_EXTRA_ATTACHMENTS {
+        return Err("Choose at most 10 additional attachments.".into());
+    }
+    let mut total = 0;
+    files
+        .into_iter()
+        .map(|file| {
+            if file.name.trim().is_empty()
+                || file.name.len() > 1024
+                || file.content_type.len() > 128
+            {
+                return Err("Invalid additional attachment name or content type.".into());
+            }
+            // Bound allocation before decoding IPC data, then enforce the decoded batch total.
+            if file.data_base64.len() > MAX_EXTRA_ATTACHMENT_BYTES.div_ceil(3) * 4 {
+                return Err("Additional attachments must total at most 15 MiB.".into());
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&file.data_base64)
+                .map_err(|_| "An additional attachment could not be decoded.".to_string())?;
+            total += bytes.len();
+            if total > MAX_EXTRA_ATTACHMENT_BYTES {
+                return Err("Additional attachments must total at most 15 MiB.".into());
+            }
+            let content_type = ContentType::parse(if file.content_type.is_empty() {
+                "application/octet-stream"
+            } else {
+                &file.content_type
+            })
+            .map_err(|_| "Invalid additional attachment content type.".to_string())?;
+            Ok(PreparedExtraAttachment {
+                name: file.name,
+                content_type,
+                bytes,
+            })
+        })
+        .collect()
+}
+
+fn clean_attachment_name(name: &str) -> String {
+    name.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
 fn binary_email_attachment(
     filename: String,
     bytes: Vec<u8>,
@@ -1899,6 +1965,7 @@ fn upn_email_parts(
     upn_filename: String,
     upn_bytes: Vec<u8>,
     originals: Vec<OriginalBillAttachment>,
+    extra_attachments: &[PreparedExtraAttachment],
 ) -> MultiPart {
     let mut used_names = HashSet::from([upn_filename.to_lowercase()]);
     let mut parts = MultiPart::mixed()
@@ -1911,14 +1978,7 @@ fn upn_email_parts(
     for original in originals {
         // Keep readable source filenames, strip paths/control characters, and avoid
         // collisions between separate documents received under the same filename.
-        let base_name: String = original
-            .original_name
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or_default()
-            .chars()
-            .filter(|c| !c.is_control())
-            .collect();
+        let base_name = clean_attachment_name(&original.original_name);
         let base_name = if base_name.trim().is_empty() {
             format!("Original_bill_{}", original.document_id)
         } else {
@@ -1936,6 +1996,25 @@ fn upn_email_parts(
             original.content_type,
         ));
     }
+    for (index, extra) in extra_attachments.iter().enumerate() {
+        let name = clean_attachment_name(&extra.name);
+        let name = if name.trim().is_empty() {
+            format!("Additional_attachment_{}", index + 1)
+        } else {
+            name
+        };
+        let mut filename = name.clone();
+        let mut suffix = 1;
+        while !used_names.insert(filename.to_lowercase()) {
+            filename = format!("Additional_{}_{}_{}", index + 1, suffix, name);
+            suffix += 1;
+        }
+        parts = parts.singlepart(binary_email_attachment(
+            filename,
+            extra.bytes.clone(),
+            extra.content_type.clone(),
+        ));
+    }
     parts
 }
 
@@ -1943,7 +2022,18 @@ fn send_emails_impl(
     db: State<'_, DbState>,
     billing_period_id: i64,
     include_original_bills: bool,
+    content: Option<super::email_content::EmailContent>,
+    extra_attachments: Vec<ExtraEmailAttachment>,
 ) -> Result<Vec<EmailResult>, String> {
+    let extra_attachments = prepare_extra_attachments(extra_attachments)?;
+    if let Some(ref content) = content {
+        super::email_content::validate(content)?;
+    }
+    let template = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        super::email_content::load(&conn)?
+    };
+    super::email_content::validate(&template)?;
     let overall_start = Instant::now();
     let mut previous_phase = overall_start;
     // Keep this guard alive until every external send has a matching audit event. Close Month
@@ -2006,6 +2096,14 @@ fn send_emails_impl(
         .map_err(|e| e.to_string())?
     };
     log_send_email_phase(overall_start, &mut previous_phase, "loaded billing period");
+    if content.is_none() {
+        // Validate both attachment variants before any external send can start.
+        for originals in [false, true] {
+            super::email_content::validate(&super::email_content::render(
+                &template, month, year, originals,
+            ))?;
+        }
+    }
 
     let apartments: Vec<(i64, String, String)> = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -2154,7 +2252,11 @@ fn send_emails_impl(
             let mailer = mailer.as_ref().expect("mailer initialized");
             match (&from_addr, mailer.as_ref()) {
                 (Ok(from_addr), Ok(mailer)) => {
-                    let (subject, body) = upn_email_content(month, year, !originals.is_empty());
+                    let message_content = content.clone().unwrap_or_else(|| {
+                        super::email_content::render(&template, month, year, !originals.is_empty())
+                    });
+                    let subject = message_content.subject;
+                    let body = message_content.body;
                     let filename = format!(
                         "UPN_{}_{:02}_{}.pdf",
                         apt_label.replace(' ', "_"),
@@ -2166,6 +2268,7 @@ fn send_emails_impl(
                         filename,
                         attachment_bytes.unwrap_or_default(),
                         originals,
+                        &extra_attachments,
                     );
                     let builder = allowed_valid.iter().fold(
                         Message::builder().from(from_addr.clone()).subject(&subject),
@@ -3050,6 +3153,7 @@ mod tests {
             "UPN.pdf".into(),
             b"UPN payment slips".to_vec(),
             originals,
+            &[],
         ));
         let parsed = mailparse::parse_mail(&message).unwrap();
         assert_eq!(parsed.subparts.len(), 4);
@@ -3076,6 +3180,89 @@ mod tests {
     }
 
     #[test]
+    fn global_extra_attachments_preserve_bytes_mime_and_unique_names_for_every_packet() {
+        let extras = prepare_extra_attachments(vec![
+            ExtraEmailAttachment {
+                name: "folder/UPN.pdf".into(),
+                content_type: "application/pdf".into(),
+                data_base64: base64::engine::general_purpose::STANDARD.encode(b"exact ASCII bytes"),
+            },
+            ExtraEmailAttachment {
+                name: "../UPN.pdf".into(),
+                content_type: String::new(),
+                data_base64: base64::engine::general_purpose::STANDARD.encode([0, 255, 13, 10]),
+            },
+        ])
+        .unwrap();
+        for packet in [b"Apartment A".to_vec(), b"Apartment B".to_vec()] {
+            let message = formatted_test_email(upn_email_parts(
+                "Body".into(),
+                "UPN.pdf".into(),
+                packet.clone(),
+                Vec::new(),
+                &extras,
+            ));
+            let parsed = mailparse::parse_mail(&message).unwrap();
+            assert_eq!(parsed.subparts.len(), 4);
+            assert_eq!(parsed.subparts[1].get_body_raw().unwrap(), packet);
+            assert_eq!(
+                parsed.subparts[2].get_body_raw().unwrap(),
+                b"exact ASCII bytes"
+            );
+            assert_eq!(parsed.subparts[3].get_body_raw().unwrap(), [0, 255, 13, 10]);
+            assert_eq!(parsed.subparts[2].ctype.mimetype, "application/pdf");
+            assert_eq!(
+                parsed.subparts[3].ctype.mimetype,
+                "application/octet-stream"
+            );
+            let names: Vec<_> = parsed
+                .subparts
+                .iter()
+                .skip(1)
+                .map(|part| part.get_content_disposition().params["filename"].clone())
+                .collect();
+            assert_eq!(
+                names
+                    .iter()
+                    .map(|name| name.to_lowercase())
+                    .collect::<HashSet<_>>()
+                    .len(),
+                3
+            );
+            assert!(names.iter().all(|name| !name.contains(['/', '\\'])));
+        }
+    }
+
+    #[test]
+    fn global_extra_attachment_validation_rejects_malformed_and_oversized_batches() {
+        let file = || ExtraEmailAttachment {
+            name: "note.txt".into(),
+            content_type: "text/plain".into(),
+            data_base64: "eA==".into(),
+        };
+        assert!(prepare_extra_attachments((0..11).map(|_| file()).collect()).is_err());
+        let mut malformed = file();
+        malformed.data_base64 = "not base64!".into();
+        assert!(prepare_extra_attachments(vec![malformed]).is_err());
+        let mut invalid_mime = file();
+        invalid_mime.content_type = "text/plain\r\nInjected: header".into();
+        assert!(prepare_extra_attachments(vec![invalid_mime]).is_err());
+        let mut too_large = file();
+        too_large.data_base64 = "!".repeat(MAX_EXTRA_ATTACHMENT_BYTES.div_ceil(3) * 4 + 1);
+        assert!(prepare_extra_attachments(vec![too_large])
+            .unwrap_err()
+            .contains("15 MiB"));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(vec![0; 8 * 1024 * 1024]);
+        let mut first = file();
+        first.data_base64 = encoded.clone();
+        let mut second = file();
+        second.data_base64 = encoded;
+        assert!(prepare_extra_attachments(vec![first, second])
+            .unwrap_err()
+            .contains("15 MiB"));
+    }
+
+    #[test]
     fn upn_email_parts_without_originals_contain_only_payment_slips() {
         let (_, body) = upn_email_content(10, 2026, false);
         let message = formatted_test_email(upn_email_parts(
@@ -3083,6 +3270,7 @@ mod tests {
             "UPN.pdf".into(),
             b"UPN only".to_vec(),
             Vec::new(),
+            &[],
         ));
         let parsed = mailparse::parse_mail(&message).unwrap();
         assert_eq!(parsed.subparts.len(), 2);
@@ -3107,6 +3295,7 @@ mod tests {
             "UPN.pdf".into(),
             vec![42],
             originals,
+            &[],
         ));
         let parsed = mailparse::parse_mail(&message).unwrap();
         let names: Vec<_> = parsed
@@ -3136,7 +3325,7 @@ mod tests {
     fn upn_email_content_uses_previous_month() {
         let (subject, body) = upn_email_content(10, 2026, false);
 
-        assert_eq!(subject, "Poloznice za 09/2026");
+        assert_eq!(subject, "Položnice za 09/2026");
         assert_eq!(
             body,
             "Spoštovani,\n\nv priponki najdete UPN položnice za 09/2026.\n\nLep pozdrav"
@@ -3147,7 +3336,7 @@ mod tests {
     fn upn_email_content_rolls_back_year_for_january() {
         let (subject, body) = upn_email_content(1, 2027, false);
 
-        assert_eq!(subject, "Poloznice za 12/2026");
+        assert_eq!(subject, "Položnice za 12/2026");
         assert_eq!(
             body,
             "Spoštovani,\n\nv priponki najdete UPN položnice za 12/2026.\n\nLep pozdrav"

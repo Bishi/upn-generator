@@ -39,7 +39,7 @@ Known caveats, environment details, or sample files used.
 | [inbox-import.md](./inbox-import.md) | Manual read-only IMAP scan, attachment preview, duplicate/allowlist handling |
 | [splits.md](./splits.md) | Split calculation, provider split basis, manual split edits |
 | [upn-preview-send.md](./upn-preview-send.md) | UPN preview, download, email sending, delivery history, email safety |
-| [settings-delivery.md](./settings-delivery.md) | SMTP/IMAP settings, credential storage, test actions, allowlists |
+| [settings-delivery.md](./settings-delivery.md) | SMTP/IMAP settings, email content templates, credential storage, test actions, allowlists |
 | [settings-unsaved-changes.md](./settings-unsaved-changes.md) | Settings dirty-form save/discard behavior and tab-switch confirmation |
 | [settings-provider-identity.md](./settings-provider-identity.md) | Typed provider identity rules, seeded identifiers, and weaker ZLM address evidence |
 | [backup-restore.md](./backup-restore.md) | Manual SQLite backup/restore, password exclusion, theme/data preservation |
