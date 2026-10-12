@@ -49,6 +49,9 @@
 - [ ] Navigate away from and back to UPN Preview after manual delivery and confirm delivered pills, row statuses, and Mark/Unmark button do not flash through an incorrect state.
 - [ ] Send emails with allowlist enabled and confirm all non-allowlisted recipients are blocked by validation.
 - [ ] Send a test email to an allowed recipient and confirm delivery succeeds.
+- [ ] Send UPN emails for the October 2026 billing period and confirm the subject is `Poloznice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`.
+- [ ] Send UPN emails for the January 2027 billing period and confirm both subject and message name `12/2026`.
+- [ ] Send UPN emails for a past billing period and confirm the subject and message use the month before the selected period regardless of today's date.
 - [ ] Send apartment emails with multiple comma-separated recipients and confirm per-recipient status is recorded.
 - [ ] Reload the UPN page and confirm delivery history is restored for sent, failed, blocked, or partial rows.
 - [ ] Change packet content after a prior send/manual confirmation and confirm the prior delivery is shown as no longer current until sent or manually marked delivered again.
