@@ -2,7 +2,7 @@
 
 - Current version: `0.6.4`
 - Current tag: `v0.6.4`
-- Release status: prepared for release from `main`
+- Release status: released from `main`
 
 ## Latest Included Changes
 
