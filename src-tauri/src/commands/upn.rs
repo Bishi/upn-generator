@@ -1877,6 +1877,15 @@ fn combine_original_pdf_bills(
                 if source.is_encrypted() {
                     return Err("Encrypted PDFs cannot be combined.".into());
                 }
+                // Layer visibility belongs to the source catalog, rather than
+                // its page tree. Dropping it can expose normally hidden content.
+                if source
+                    .catalog()
+                    .map_err(|e| e.to_string())?
+                    .has(b"OCProperties")
+                {
+                    return Err("Layered PDFs cannot be safely combined. Uncheck Attach original bills to send UPNs only.".into());
+                }
                 let count = source.get_pages().len();
                 if count == 0 {
                     return Err("PDF has no readable pages.".into());
@@ -3219,6 +3228,61 @@ mod tests {
         .unwrap();
         assert_eq!(single[0].bytes, sources[0]);
         assert!(combine_original_pdf_bills(Vec::new()).unwrap().is_empty());
+
+        // A source with an initially hidden layer must fail preparation instead
+        // of losing its catalog visibility settings in the combined attachment.
+        let mut layered = LoDocument::load_mem(&sources[0]).unwrap();
+        let group = layered.add_object(dictionary! { "Type" => "OCG", "Name" => "Hidden layer" });
+        layered.catalog_mut().unwrap().set("OCProperties", dictionary! {
+            "OCGs" => vec![::lopdf::Object::Reference(group)],
+            "D" => dictionary! { "BaseState" => "ON", "OFF" => vec![::lopdf::Object::Reference(group)] },
+        });
+        let page = layered.get_pages()[&1];
+        let page_dict = layered.get_object(page).unwrap().as_dict().unwrap();
+        let content_id = page_dict.get(b"Contents").unwrap().as_reference().unwrap();
+        let parent_id = page_dict.get(b"Parent").unwrap().as_reference().unwrap();
+        let resources_id = layered
+            .get_object(parent_id)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Resources")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        layered
+            .get_object_mut(resources_id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Properties", dictionary! { "Hidden" => group });
+        let stream = layered
+            .get_object_mut(content_id)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap();
+        stream.set_content([b"/OC /Hidden BDC\n".as_slice(), &stream.content, b"\nEMC"].concat());
+        let mut layered_bytes = Vec::new();
+        layered.save_to(&mut layered_bytes).unwrap();
+        let originals = [layered_bytes, sources[1].clone()]
+            .into_iter()
+            .enumerate()
+            .map(|(index, bytes)| OriginalBillAttachment {
+                document_id: index as i64 + 1,
+                original_name: format!("supplier-{index}.pdf"),
+                content_type: ContentType::parse("application/pdf").unwrap(),
+                bytes,
+            })
+            .collect();
+        let items = vec![compact_pdf_test_data()];
+        let packet = prepare_upn_email_packet(&items, Ok(originals));
+        assert!(packet.attachment_bytes.is_none());
+        assert!(packet.originals.is_empty());
+        assert_eq!(packet.attachment_sha256, packet_data_hash(&items));
+        assert!(packet.preparation_error.contains("supplier-0.pdf"));
+        assert!(packet
+            .preparation_error
+            .contains("Layered PDFs cannot be safely combined"));
     }
 
     #[test]
