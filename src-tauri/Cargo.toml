@@ -23,7 +23,7 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 dirs-next = "2"
 regex = "1"
 pdf-extract = "0.7"
-printpdf = "0.6"
+printpdf = { version = "0.6", features = ["font_subsetting"] }
 lettre = { version = "0.11", features = ["smtp-transport", "rustls-tls", "builder"] }
 base64 = "0.22"
 chrono = "0.4"

@@ -55,6 +55,10 @@
 - [ ] Set a bill identity status to an unverified state and confirm Send Emails, Download All PDFs, and Mark Delivered are blocked by `building_identity_unverified`.
 - [ ] Approve a non-empty identity exception and confirm those actions are eligible again when no unrelated validation issue remains; the UI must not call the exception a match.
 
+- [ ] Generate a five-slip apartment packet in both development and packaged builds; confirm the PDF is comfortably below 200 KB with the standard Windows fonts.
+- [ ] Confirm previews, ZIP downloads, and received email attachments all contain the expected slips in order, including Slovenian letters that appear only on later pages.
+- [ ] Scan the QR code on each slip from a received attachment and confirm its amount, IBAN, reference, and payment details match the bill.
+
 ## Notes
 
 Use [upn-visual-reference.md](./upn-visual-reference.md) when the rendered UPN geometry or printed output changes.
