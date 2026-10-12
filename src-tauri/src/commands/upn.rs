@@ -1,7 +1,7 @@
 use ::lopdf::Document as LoDocument;
 use base64::Engine;
-use lettre::message::header::ContentType;
-use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
+use lettre::message::header::{ContentDisposition, ContentTransferEncoding, ContentType};
+use lettre::message::{Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use printpdf::*;
@@ -23,6 +23,7 @@ use super::bills::{
     PERIOD_STATUS_DRAFT,
 };
 use super::config::{DbState, SmtpConfig};
+use super::documents::sha256_hex;
 use super::upn_validation::{
     ensure_validation_allows, validate_upn_pre_send_inner, ACTION_DOWNLOAD_ALL,
     ACTION_MARK_DELIVERED, ACTION_SEND_EMAILS,
@@ -1736,10 +1737,15 @@ pub fn save_smtp_password(db: State<DbState>, password: String) -> Result<(), St
 pub async fn send_emails(
     app: AppHandle,
     billing_period_id: i64,
+    include_original_bills: Option<bool>,
 ) -> Result<Vec<EmailResult>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<DbState>();
-        send_emails_impl(db, billing_period_id)
+        send_emails_impl(
+            db,
+            billing_period_id,
+            include_original_bills.unwrap_or(true),
+        )
     })
     .await
     .map_err(|e| format!("Email send task failed: {e}"))?
@@ -1755,7 +1761,11 @@ fn log_send_email_phase(overall_start: Instant, previous: &mut Instant, label: &
     *previous = now;
 }
 
-fn upn_email_content(billing_month: i32, billing_year: i32) -> (String, String) {
+fn upn_email_content(
+    billing_month: i32,
+    billing_year: i32,
+    has_original_bills: bool,
+) -> (String, String) {
     // Billing periods follow the service month named in the recipient email.
     let (service_month, service_year) = if billing_month == 1 {
         (12, billing_year - 1)
@@ -1763,16 +1773,176 @@ fn upn_email_content(billing_month: i32, billing_year: i32) -> (String, String) 
         (billing_month - 1, billing_year)
     };
     let subject = format!("Poloznice za {:02}/{}", service_month, service_year);
+    let originals_note = if has_original_bills {
+        "\n\nPriloženi so tudi izvirni računi dobaviteljev."
+    } else {
+        ""
+    };
     let body = format!(
-        "Spoštovani,\n\nv priponki najdete UPN položnice za {:02}/{}.\n\nLep pozdrav",
-        service_month, service_year
+        "Spoštovani,\n\nv priponki najdete UPN položnice za {:02}/{}.{}\n\nLep pozdrav",
+        service_month, service_year, originals_note
     );
     (subject, body)
+}
+
+struct OriginalBillAttachment {
+    document_id: i64,
+    original_name: String,
+    content_type: ContentType,
+    bytes: Vec<u8>,
+}
+
+fn load_original_bill_attachments(
+    conn: &rusqlite::Connection,
+    billing_period_id: i64,
+    apartment_id: i64,
+) -> Result<Vec<OriginalBillAttachment>, String> {
+    // A shared combined PDF is attached once, in full. Null links are normal for
+    // legacy/manual bills; a dangling link or corrupt retained file is an error.
+    let mut stmt = conn
+        .prepare(
+            "SELECT linked.source_document_id, d.original_name, d.media_type,
+                    d.content, d.content_sha256, d.byte_size
+             FROM (
+                 SELECT DISTINCT b.source_document_id
+                 FROM bill_splits bs
+                 JOIN bills b ON b.id = bs.bill_id
+                 WHERE b.billing_period_id = ?1 AND bs.apartment_id = ?2
+                   AND b.source_document_id IS NOT NULL
+             ) linked
+             LEFT JOIN source_documents d ON d.id = linked.source_document_id
+             ORDER BY linked.source_document_id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![billing_period_id, apartment_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<Vec<u8>>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.map(|row| {
+        let (document_id, name, media_type, bytes, hash, size) = row.map_err(|e| e.to_string())?;
+        let missing = || format!("Retained original bill document {document_id} is unavailable.");
+        let original_name = name.ok_or_else(missing)?;
+        let bytes = bytes.ok_or_else(missing)?;
+        if Some(bytes.len() as i64) != size || Some(sha256_hex(&bytes)) != hash {
+            return Err(format!(
+                "Original bill '{original_name}' is corrupt or incomplete."
+            ));
+        }
+        let content_type = ContentType::parse(&media_type.ok_or_else(missing)?)
+            .map_err(|_| format!("Original bill '{original_name}' has an invalid file type."))?;
+        Ok(OriginalBillAttachment {
+            document_id,
+            original_name,
+            content_type,
+            bytes,
+        })
+    })
+    .collect()
+}
+
+#[derive(Default)]
+struct PreparedEmailPacket {
+    attachment_bytes: Option<Vec<u8>>,
+    attachment_sha256: String,
+    originals: Vec<OriginalBillAttachment>,
+    preparation_error: String,
+}
+
+fn prepare_upn_email_packet(
+    items: &[UpnData],
+    originals: Result<Vec<OriginalBillAttachment>, String>,
+) -> PreparedEmailPacket {
+    // Supporting-document or render failures still belong to this unchanged
+    // payment packet, so their audit events must retain its delivery identity.
+    let attachment_sha256 = packet_data_hash(items);
+    match originals
+        .and_then(|originals| render_upn_pdf_batch(items).map(|bytes| (bytes, originals)))
+    {
+        Ok((bytes, originals)) => PreparedEmailPacket {
+            attachment_bytes: Some(bytes),
+            attachment_sha256,
+            originals,
+            preparation_error: String::new(),
+        },
+        Err(preparation_error) => PreparedEmailPacket {
+            attachment_sha256,
+            preparation_error,
+            ..Default::default()
+        },
+    }
+}
+
+fn binary_email_attachment(
+    filename: String,
+    bytes: Vec<u8>,
+    content_type: ContentType,
+) -> SinglePart {
+    // Automatic 7-bit encoding can append a CRLF to ASCII-only files. Base64
+    // preserves exact attachment bytes regardless of the document's contents.
+    SinglePart::builder()
+        .header(ContentDisposition::attachment(&filename))
+        .header(content_type)
+        .header(ContentTransferEncoding::Base64)
+        .body(bytes)
+}
+
+fn upn_email_parts(
+    body: String,
+    upn_filename: String,
+    upn_bytes: Vec<u8>,
+    originals: Vec<OriginalBillAttachment>,
+) -> MultiPart {
+    let mut used_names = HashSet::from([upn_filename.to_lowercase()]);
+    let mut parts = MultiPart::mixed()
+        .singlepart(SinglePart::plain(body))
+        .singlepart(binary_email_attachment(
+            upn_filename,
+            upn_bytes,
+            ContentType::parse("application/pdf").unwrap(),
+        ));
+    for original in originals {
+        // Keep readable source filenames, strip paths/control characters, and avoid
+        // collisions between separate documents received under the same filename.
+        let base_name: String = original
+            .original_name
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect();
+        let base_name = if base_name.trim().is_empty() {
+            format!("Original_bill_{}", original.document_id)
+        } else {
+            base_name
+        };
+        let mut filename = base_name.clone();
+        let mut suffix = 1;
+        while !used_names.insert(filename.to_lowercase()) {
+            filename = format!("{}_{}_{}", original.document_id, suffix, base_name);
+            suffix += 1;
+        }
+        parts = parts.singlepart(binary_email_attachment(
+            filename,
+            original.bytes,
+            original.content_type,
+        ));
+    }
+    parts
 }
 
 fn send_emails_impl(
     db: State<'_, DbState>,
     billing_period_id: i64,
+    include_original_bills: bool,
 ) -> Result<Vec<EmailResult>, String> {
     let overall_start = Instant::now();
     let mut previous_phase = overall_start;
@@ -1883,7 +2053,14 @@ fn send_emails_impl(
         let load_start = Instant::now();
         let packet_items = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
-            load_apartment_upn_data(&conn, billing_period_id, *apt_id)
+            load_apartment_upn_data(&conn, billing_period_id, *apt_id).map(|items| {
+                let originals = if include_original_bills {
+                    load_original_bill_attachments(&conn, billing_period_id, *apt_id)
+                } else {
+                    Ok(Vec::new())
+                };
+                (items, originals)
+            })
         };
         eprintln!(
             "[send_emails] apartment={} db_load={}ms",
@@ -1891,14 +2068,15 @@ fn send_emails_impl(
             load_start.elapsed().as_millis()
         );
 
-        let (attachment_bytes, attachment_sha256, pdf_error) = match packet_items {
-            Ok(items) => {
-                let hash = packet_data_hash(&items);
+        let PreparedEmailPacket {
+            attachment_bytes,
+            attachment_sha256,
+            originals,
+            preparation_error,
+        } = match packet_items {
+            Ok((items, originals)) => {
                 let pdf_start = Instant::now();
-                let result = match render_upn_pdf_batch(&items) {
-                    Ok(bytes) => (Some(bytes), hash, String::new()),
-                    Err(e) => (None, String::new(), e),
-                };
+                let result = prepare_upn_email_packet(&items, originals);
                 eprintln!(
                     "[send_emails] apartment={} pdf_prepare={}ms",
                     apt_label,
@@ -1906,7 +2084,10 @@ fn send_emails_impl(
                 );
                 result
             }
-            Err(e) => (None, String::new(), e),
+            Err(preparation_error) => PreparedEmailPacket {
+                preparation_error,
+                ..Default::default()
+            },
         };
 
         let mut allowed_valid = Vec::<(String, String, Mailbox)>::new();
@@ -1940,13 +2121,13 @@ fn send_emails_impl(
             allowed_valid.push((normalized, original.clone(), mailbox));
         }
 
-        if !pdf_error.is_empty() {
+        if !preparation_error.is_empty() {
             for (normalized, original, _) in &allowed_valid {
                 event_rows.push((
                     "failed".to_string(),
                     normalized.clone(),
                     original.clone(),
-                    pdf_error.clone(),
+                    preparation_error.clone(),
                 ));
             }
         } else if !allowed_valid.is_empty() {
@@ -1973,19 +2154,19 @@ fn send_emails_impl(
             let mailer = mailer.as_ref().expect("mailer initialized");
             match (&from_addr, mailer.as_ref()) {
                 (Ok(from_addr), Ok(mailer)) => {
-                    let (subject, body) = upn_email_content(month, year);
+                    let (subject, body) = upn_email_content(month, year, !originals.is_empty());
                     let filename = format!(
                         "UPN_{}_{:02}_{}.pdf",
                         apt_label.replace(' ', "_"),
                         month,
                         year
                     );
-                    let mp = MultiPart::mixed()
-                        .singlepart(SinglePart::plain(body))
-                        .singlepart(Attachment::new(filename).body(
-                            attachment_bytes.unwrap_or_default(),
-                            ContentType::parse("application/pdf").unwrap(),
-                        ));
+                    let mp = upn_email_parts(
+                        body,
+                        filename,
+                        attachment_bytes.unwrap_or_default(),
+                        originals,
+                    );
                     let builder = allowed_valid.iter().fold(
                         Message::builder().from(from_addr.clone()).subject(&subject),
                         |builder, (_, _, to_addr)| builder.to(to_addr.clone()),
@@ -2693,9 +2874,267 @@ fn save_all_upns_zip_blocking(
 mod tests {
     use super::*;
 
+    fn original_attachment_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE source_documents (
+                id INTEGER PRIMARY KEY, original_name TEXT, media_type TEXT,
+                content BLOB, content_sha256 TEXT, byte_size INTEGER
+             );
+             CREATE TABLE bills (
+                id INTEGER PRIMARY KEY, billing_period_id INTEGER, source_document_id INTEGER
+             );
+             CREATE TABLE bill_splits (bill_id INTEGER, apartment_id INTEGER);
+             INSERT INTO bills VALUES (1,1,1),(2,1,1),(3,1,2),(4,2,3),(5,1,NULL),(6,1,4);
+             INSERT INTO bill_splits VALUES (1,1),(2,1),(3,2),(4,1),(5,1),(6,1);",
+        )
+        .unwrap();
+        for (id, name, media_type, bytes) in [
+            (
+                1,
+                "combined.pdf",
+                "application/pdf",
+                b"%PDF-1.7 full combined file, including unselected pages".as_slice(),
+            ),
+            (
+                2,
+                "other-apartment.pdf",
+                "application/pdf",
+                b"other apartment".as_slice(),
+            ),
+            (
+                3,
+                "other-month.pdf",
+                "application/pdf",
+                b"other month".as_slice(),
+            ),
+            (
+                4,
+                "scan.png",
+                "image/png",
+                b"\x89PNG\r\n\x1a\nexact original image".as_slice(),
+            ),
+        ] {
+            conn.execute(
+                "INSERT INTO source_documents VALUES (?1,?2,?3,?4,?5,?6)",
+                params![
+                    id,
+                    name,
+                    media_type,
+                    bytes,
+                    sha256_hex(bytes),
+                    bytes.len() as i64
+                ],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    fn formatted_test_email(parts: MultiPart) -> Vec<u8> {
+        Message::builder()
+            .from("accountant@example.com".parse().unwrap())
+            .to("tenant@example.com".parse().unwrap())
+            .subject("Bills")
+            .multipart(parts)
+            .unwrap()
+            .formatted()
+    }
+
+    #[test]
+    fn original_bill_attachments_are_scoped_deduplicated_and_complete() {
+        let conn = original_attachment_conn();
+        let originals = load_original_bill_attachments(&conn, 1, 1).unwrap();
+        assert_eq!(originals.len(), 2); // Two bills share the first file; the manual bill has none.
+        assert_eq!(originals[0].document_id, 1);
+        assert_eq!(originals[0].original_name, "combined.pdf");
+        assert_eq!(
+            originals[0].bytes,
+            b"%PDF-1.7 full combined file, including unselected pages"
+        );
+        assert_eq!(originals[1].document_id, 4);
+        assert_eq!(
+            originals[1].content_type,
+            ContentType::parse("image/png").unwrap()
+        );
+        let other_apartment = load_original_bill_attachments(&conn, 1, 2).unwrap();
+        assert_eq!(other_apartment.len(), 1);
+        assert_eq!(other_apartment[0].document_id, 2);
+        let other_month = load_original_bill_attachments(&conn, 2, 1).unwrap();
+        assert_eq!(other_month.len(), 1);
+        assert_eq!(other_month[0].document_id, 3);
+        assert!(load_original_bill_attachments(&conn, 1, 99)
+            .unwrap()
+            .is_empty());
+        conn.execute("UPDATE bills SET source_document_id=NULL", [])
+            .unwrap();
+        assert!(load_original_bill_attachments(&conn, 1, 1)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn original_bill_attachments_reject_corrupt_missing_or_invalid_linked_files() {
+        for update in [
+            "UPDATE source_documents SET content=x'00' WHERE id=1",
+            "UPDATE source_documents SET byte_size=0 WHERE id=1",
+            "UPDATE source_documents SET content_sha256='wrong' WHERE id=1",
+            "UPDATE source_documents SET media_type='invalid' WHERE id=1",
+            "DELETE FROM source_documents WHERE id=1",
+        ] {
+            let conn = original_attachment_conn();
+            conn.execute(update, []).unwrap();
+            assert!(
+                load_original_bill_attachments(&conn, 1, 1).is_err(),
+                "{update}"
+            );
+            // A broken file outside the apartment packet never prevents its send.
+            assert!(
+                load_original_bill_attachments(&conn, 1, 2).is_ok(),
+                "{update}"
+            );
+        }
+    }
+
+    #[test]
+    fn original_attachment_failures_retain_packet_hash_and_current_delivery_warning() {
+        let items = vec![compact_pdf_test_data()];
+        let hash = packet_data_hash(&items);
+        for update in [
+            "UPDATE source_documents SET content=x'00' WHERE id=1",
+            "UPDATE source_documents SET media_type='invalid' WHERE id=1",
+            "DELETE FROM source_documents WHERE id=1",
+        ] {
+            let conn = original_attachment_conn();
+            conn.execute(update, []).unwrap();
+            let prepared =
+                prepare_upn_email_packet(&items, load_original_bill_attachments(&conn, 1, 1));
+            assert_eq!(prepared.attachment_sha256, hash, "{update}");
+            assert!(prepared.attachment_bytes.is_none(), "{update}");
+            assert!(prepared.originals.is_empty(), "{update}");
+            assert!(!prepared.preparation_error.is_empty(), "{update}");
+
+            let mut failed = test_event(2, 1, "email", "failed", &prepared.attachment_sha256);
+            failed.error = prepared.preparation_error;
+            for previously_sent in [false, true] {
+                let mut events = Vec::new();
+                if previously_sent {
+                    events.push(test_event(1, 1, "email", "sent", &hash));
+                }
+                events.push(failed.clone());
+                let rollup = build_delivery_rollup(1, vec![test_packet(1, &hash)], &events);
+                assert_eq!(rollup.current_failed_event_count, 1, "{update}");
+                assert_eq!(
+                    rollup.apartments[0].current_failed_event_count, 1,
+                    "{update}"
+                );
+                assert_eq!(
+                    rollup.apartments[0].last_current_delivery_status.as_deref(),
+                    Some("failed")
+                );
+                // Supporting-file failure warns about the latest attempt without
+                // undoing a previous successful payment-packet delivery.
+                assert_eq!(rollup.apartments[0].delivered, previously_sent, "{update}");
+            }
+        }
+    }
+
+    #[test]
+    fn upn_email_parts_preserve_original_mime_types_names_and_bytes() {
+        let conn = original_attachment_conn();
+        let originals = load_original_bill_attachments(&conn, 1, 1).unwrap();
+        let expected_bytes: Vec<_> = originals.iter().map(|file| file.bytes.clone()).collect();
+        let (_, body) = upn_email_content(10, 2026, true);
+        let message = formatted_test_email(upn_email_parts(
+            body,
+            "UPN.pdf".into(),
+            b"UPN payment slips".to_vec(),
+            originals,
+        ));
+        let parsed = mailparse::parse_mail(&message).unwrap();
+        assert_eq!(parsed.subparts.len(), 4);
+        assert!(parsed.subparts[0]
+            .get_body()
+            .unwrap()
+            .contains("izvirni računi dobaviteljev"));
+        assert_eq!(
+            parsed.subparts[1].get_body_raw().unwrap(),
+            b"UPN payment slips"
+        );
+        for (index, (name, media_type)) in [
+            ("combined.pdf", "application/pdf"),
+            ("scan.png", "image/png"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let part = &parsed.subparts[index + 2];
+            assert_eq!(part.ctype.mimetype, media_type);
+            assert_eq!(part.get_content_disposition().params["filename"], name);
+            assert_eq!(part.get_body_raw().unwrap(), expected_bytes[index]);
+        }
+    }
+
+    #[test]
+    fn upn_email_parts_without_originals_contain_only_payment_slips() {
+        let (_, body) = upn_email_content(10, 2026, false);
+        let message = formatted_test_email(upn_email_parts(
+            body,
+            "UPN.pdf".into(),
+            b"UPN only".to_vec(),
+            Vec::new(),
+        ));
+        let parsed = mailparse::parse_mail(&message).unwrap();
+        assert_eq!(parsed.subparts.len(), 2);
+        assert!(!parsed.subparts[0].get_body().unwrap().contains("izvirni"));
+        assert_eq!(parsed.subparts[1].get_body_raw().unwrap(), b"UPN only");
+    }
+
+    #[test]
+    fn upn_email_parts_strip_paths_and_make_duplicate_names_unique() {
+        let originals = ["folder\\UPN.pdf", "../upn.pdf", "\r\n"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| OriginalBillAttachment {
+                document_id: index as i64 + 1,
+                original_name: name.into(),
+                content_type: ContentType::parse("application/pdf").unwrap(),
+                bytes: vec![index as u8],
+            })
+            .collect();
+        let message = formatted_test_email(upn_email_parts(
+            "Bills".into(),
+            "UPN.pdf".into(),
+            vec![42],
+            originals,
+        ));
+        let parsed = mailparse::parse_mail(&message).unwrap();
+        let names: Vec<_> = parsed
+            .subparts
+            .iter()
+            .skip(1)
+            .map(|part| part.get_content_disposition().params["filename"].clone())
+            .collect();
+        assert_eq!(names.len(), 4);
+        assert_eq!(
+            names
+                .iter()
+                .map(|name| name.to_lowercase())
+                .collect::<HashSet<_>>()
+                .len(),
+            4
+        );
+        assert!(names
+            .iter()
+            .all(|name| !name.contains(['/', '\\', '\r', '\n'])));
+        for (index, part) in parsed.subparts.iter().skip(2).enumerate() {
+            assert_eq!(part.get_body_raw().unwrap(), vec![index as u8]);
+        }
+    }
+
     #[test]
     fn upn_email_content_uses_previous_month() {
-        let (subject, body) = upn_email_content(10, 2026);
+        let (subject, body) = upn_email_content(10, 2026, false);
 
         assert_eq!(subject, "Poloznice za 09/2026");
         assert_eq!(
@@ -2706,7 +3145,7 @@ mod tests {
 
     #[test]
     fn upn_email_content_rolls_back_year_for_january() {
-        let (subject, body) = upn_email_content(1, 2027);
+        let (subject, body) = upn_email_content(1, 2027, false);
 
         assert_eq!(subject, "Poloznice za 12/2026");
         assert_eq!(
