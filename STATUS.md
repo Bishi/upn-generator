@@ -1,18 +1,20 @@
 # Status
 
-- Current version: `0.6.4`
-- Current tag: `v0.6.4`
+- Current version: `0.7.0`
+- Current tag: `v0.7.0`
 - Release status: released from `main`
 
 ## Latest Included Changes
 
-- Reduced UPN packet size by sharing fonts across slips, embedding only used font characters, and applying lossless compression in development and release builds
-- Regenerated the reported five-slip packet at 84,636 bytes versus 9,288,356 bytes, with identical text, QR payment data, and pixel-identical renders at 216 DPI
-- Added regression coverage for size, shared fonts, page dimensions and order, exact QR pixels, later-page Slovenian characters, and empty packets
-- Preserved the v0.6.3 email service-month wording fix, including January-to-December year rollover
+- Added Attach original bills to UPN email sending, checked by default; each apartment receives its UPN slips and the exact complete stored supplier PDFs/images for its bills
+- Combined PDFs are sent in full, shared sources are attached once per email, and attachment encoding preserves the exact original bytes
+- Missing legacy/manual originals show a warning while available originals still send; linked-file integrity failures fail the affected apartment's send
+- Preserved the valid UPN packet hash on attachment preparation failures so failure history remains current after reload and failed resends retain warnings alongside earlier successful delivery
+- Retained the compact UPN PDF rendering and previous service-month email wording from v0.6.4 and v0.6.3
 
 ## Verification
 
-- Rust cargo check passed; full Rust test suite passed with 113 tests and 3 existing private-sample tests ignored
-- Independent subagent review found no actionable issues in the PDF size change
-- Affected manual QA cases are documented and remain unchecked pending packaged desktop and email verification
+- Frontend production build and Rust cargo check passed
+- All 44 UPN and pre-send validation tests passed, including original attachment bytes, apartment/month scoping, deduplication, integrity failures, current failure-history association, and compact PDF rendering
+- Independent subagent review finding fixed; re-review of the exact fix commit found no further defects
+- Affected manual QA cases are documented and remain unchecked pending desktop and live SMTP verification
