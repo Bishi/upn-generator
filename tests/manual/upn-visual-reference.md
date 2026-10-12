@@ -19,6 +19,8 @@
 - [ ] Confirm output remains visually close to examples in `file-examples/`.
 - [ ] Print or print-preview at actual size and confirm scaling is not applied unexpectedly.
 
+- [ ] Compare compact PDFs with previous output at actual size; confirm font appearance, Slovenian letters, form geometry, and QR sharpness are preserved on every page.
+
 ## Notes
 
 Any UPN rendering change should be checked here before release.

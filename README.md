@@ -167,6 +167,8 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 | **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
 | **Send Emails** | Sends one combined apartment PDF to configured recipient addresses allowed by the current email safety settings |
 
+UPN PDFs share embedded fonts across slips, include only the font characters used in the packet, and use lossless compression to keep email attachments and downloads small while preserving print quality and QR resolution.
+
 Email subjects and messages name the previous service month: the October 2026 billing period sends UPN slips for September 2026, and January 2027 sends slips for December 2026.
 
 UPN Preview keeps delivery history for the selected month. After reload, apartment rows can show sent email, manually delivered, failed, blocked, partial, or changed status based on current packet hashes and persisted delivery events. Downloaded PDFs do not mark a month delivered by themselves.
