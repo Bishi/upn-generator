@@ -161,7 +161,7 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 
 | Action | Description |
 |--------|-------------|
-| **Eye icon** | Generates the UPN PDF and opens it in your default PDF viewer |
+| **Preview / Preview all** | Opens one UPN slip or an apartment's full UPN packet in the in-app PDF viewer |
 | **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
@@ -239,7 +239,7 @@ Open it to see the raw extracted text and what each detection phase found or mis
 
 **UPN preview does not open**
 
-Make sure a PDF viewer is installed (for example Adobe Acrobat or Microsoft Edge). The eye button saves a temporary PDF and opens it with Windows' default PDF app. If the launch fails, the error is shown directly on the UPN page instead of failing silently.
+The UPN preview opens inside the app. If generation or display fails, the viewer shows the error. Close it and check that the selected month has calculated splits and the required payment details.
 
 **Email not sending**
 

@@ -179,6 +179,7 @@ interface SourceDocumentViewerProps {
   load: (() => Promise<SourceDocumentLoadResult>) | null;
   startPage?: number | null;
   layout?: "fullscreen" | "inbox-companion";
+  documentLabel?: string;
   onClose: () => void;
 }
 
@@ -187,6 +188,7 @@ export function SourceDocumentViewer({
   load,
   startPage,
   layout = "fullscreen",
+  documentLabel = "Original document",
   onClose,
 }: SourceDocumentViewerProps) {
   const [info, setInfo] = useState<SourceDocumentInfo | null>(null);
@@ -225,7 +227,7 @@ export function SourceDocumentViewer({
       .then(async ({ info: nextInfo, bytes }) => {
         if (cancelled) return;
         if (nextInfo.media_type !== "application/pdf" && !nextInfo.media_type.startsWith("image/")) {
-          throw new Error("This original document type cannot be displayed safely.");
+          throw new Error("This document type cannot be displayed safely.");
         }
         if (isTiff(nextInfo.media_type)) {
           const task = startTiffDecode(bytes);
@@ -324,7 +326,7 @@ export function SourceDocumentViewer({
     <div
       ref={viewerRef}
       role="dialog"
-      aria-label="Original document viewer"
+      aria-label={`${documentLabel} viewer`}
       aria-modal={modal || undefined}
       tabIndex={modal ? -1 : undefined}
       className={layout === "inbox-companion"
@@ -333,9 +335,9 @@ export function SourceDocumentViewer({
     >
       <div className="flex min-h-16 items-center gap-3 border-b border-border bg-card px-4 py-3">
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-head text-lg font-semibold">{info?.original_name ?? "Original document"}</h2>
+          <h2 className="truncate font-head text-lg font-semibold">{info?.original_name ?? documentLabel}</h2>
           <p className="text-xs text-muted-foreground">
-            {info ? `${(info.byte_size / 1024 / 1024).toFixed(2)} MB` : "Loading exact retained source…"}
+            {info ? `${(info.byte_size / 1024 / 1024).toFixed(2)} MB` : `Loading ${documentLabel.toLowerCase()}…`}
           </p>
         </div>
         {info?.media_type.startsWith("image/") && (
@@ -349,7 +351,7 @@ export function SourceDocumentViewer({
             </Button>
           </div>
         )}
-        <Button ref={closeButtonRef} variant="ghost" size="icon" onClick={onClose} aria-label="Close original document">
+        <Button ref={closeButtonRef} variant="ghost" size="icon" onClick={onClose} aria-label={`Close ${documentLabel.toLowerCase()}`}>
           <X className="size-5" />
         </Button>
       </div>
@@ -361,7 +363,7 @@ export function SourceDocumentViewer({
         )}
         {error && (
           <div role="alert" className="mx-auto mt-12 max-w-xl rounded-lg border border-danger/30 bg-danger-soft p-5 text-sm text-danger">
-            Original unavailable: {error}
+            {documentLabel} unavailable: {error}
           </div>
         )}
         {viewerUrl && info?.media_type === "application/pdf" && (

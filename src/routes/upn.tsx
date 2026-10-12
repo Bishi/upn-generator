@@ -35,6 +35,7 @@ import type {
 import { formatClosedAt, formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
 import { EmailSendDrawer } from "@/components/EmailSendDrawer";
+import { SourceDocumentViewer, type SourceDocumentLoadResult } from "@/components/SourceDocumentViewer";
 import {
   BillingEmptyState,
   BillingTable,
@@ -488,7 +489,8 @@ function ApartmentRows({
   validationIssue,
   expanded,
   onToggle,
-  onPreviewError,
+  onPreviewBill,
+  onPreviewAll,
 }: {
   billingPeriodId: number;
   apartmentId: number;
@@ -500,43 +502,9 @@ function ApartmentRows({
   validationIssue?: UpnValidationIssue;
   expanded: boolean;
   onToggle: () => void;
-  onPreviewError: (message: string | null) => void;
+  onPreviewBill: (billId: number, apartmentId: number, apartmentLabel: string) => void;
+  onPreviewAll: (billingPeriodId: number, apartmentId: number, apartmentLabel: string) => void;
 }) {
-  const [loadingPreview, setLoadingPreview] = useState<number | null>(null);
-  const [previewingAll, setPreviewingAll] = useState(false);
-
-  const previewUpn = async (billId: number) => {
-    setLoadingPreview(billId);
-    try {
-      onPreviewError(null);
-      const path = await ipc.openPreviewUpn(billId, apartmentId);
-      if (!path || !path.trim()) {
-        throw new Error("Preview did not return a PDF path.");
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      onPreviewError(`Could not open the UPN preview. ${message}`);
-    } finally {
-      setLoadingPreview(null);
-    }
-  };
-
-  const previewAll = async () => {
-    setPreviewingAll(true);
-    try {
-      onPreviewError(null);
-      const path = await ipc.openPreviewApartmentUpns(billingPeriodId, apartmentId);
-      if (!path || !path.trim()) {
-        throw new Error("Preview All did not return a PDF path.");
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      onPreviewError(`Could not open the combined UPN preview. ${message}`);
-    } finally {
-      setPreviewingAll(false);
-    }
-  };
-
   const total = splits.reduce((s, r) => s + r.split_amount_cents, 0);
   const hasRecipient = hasSendableRecipient(contactEmail);
 
@@ -621,15 +589,11 @@ function ApartmentRows({
           <Button
             variant="ghost"
             size="sm"
-            onClick={previewAll}
-            disabled={previewingAll || splits.length === 0}
+            onClick={() => onPreviewAll(billingPeriodId, apartmentId, apartmentLabel)}
+            disabled={splits.length === 0}
             className="w-full"
           >
-            {previewingAll ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Eye className="size-3.5" />
-            )}
+            <Eye className="size-3.5" />
             Preview all
           </Button>
         </td>
@@ -653,15 +617,10 @@ function ApartmentRows({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => previewUpn(split.bill_id)}
-                disabled={loadingPreview === split.bill_id}
+                onClick={() => onPreviewBill(split.bill_id, apartmentId, apartmentLabel)}
                 className="w-full"
               >
-                {loadingPreview === split.bill_id ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Eye className="size-3.5" />
-                )}
+                <Eye className="size-3.5" />
                 Preview
               </Button>
             </td>
@@ -691,6 +650,27 @@ function UpnPage() {
   const lastSnapshotErrorRef = useRef<string | null>(null);
   const [expandedApartmentId, setExpandedApartmentId] = useState<number | null>(null);
   const [validationExpanded, setValidationExpanded] = useState(false);
+  const [previewViewer, setPreviewViewer] = useState<{
+    load: () => Promise<SourceDocumentLoadResult>;
+  } | null>(null);
+
+  const showPreview = (name: string, read: () => Promise<ArrayBuffer>) => {
+    setPreviewViewer({
+      load: async () => {
+        const bytes = await read();
+        return {
+          info: {
+            original_name: name,
+            media_type: "application/pdf",
+            byte_size: bytes.byteLength,
+            page_start: null,
+            page_end: null,
+          },
+          bytes,
+        };
+      },
+    });
+  };
 
   useEffect(() => {
     setValidationExpanded(false);
@@ -1392,7 +1372,12 @@ function UpnPage() {
                       current === aptId ? null : aptId,
                     )
                   }
-                  onPreviewError={setPageError}
+                  onPreviewBill={(billId, apartmentId, label) =>
+                    showPreview(`UPN - ${label}.pdf`, () => ipc.readUpnPreview(billId, apartmentId))
+                  }
+                  onPreviewAll={(billingPeriodId, apartmentId, label) =>
+                    showPreview(`UPN packet - ${label}.pdf`, () => ipc.readApartmentUpnPreview(billingPeriodId, apartmentId))
+                  }
                 />
               ))}
             </tbody>
@@ -1439,6 +1424,12 @@ function UpnPage() {
           </div>
         </div>
       )}
+      <SourceDocumentViewer
+        open={previewViewer !== null}
+        load={previewViewer?.load ?? null}
+        documentLabel="UPN preview"
+        onClose={() => setPreviewViewer(null)}
+      />
     </BillingPageShell>
   );
 }
