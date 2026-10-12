@@ -758,7 +758,7 @@ function UpnPage() {
 
   const sendEmails = async () => {
     if (!selected?.id || sendInProgressRef.current || emailSummaryPeriodId !== selected.id) return;
-    if (snapshot.loading || !snapshot.selectedPreSendValidation?.can_send_emails) return;
+    if (snapshot.loading || snapshot.isRefreshing || !snapshot.selectedPreSendValidation?.can_send_emails) return;
     if (selected.status === "closed") {
       setPageError("This billing month is closed. Reopen it before sending emails.");
       return;
@@ -1192,7 +1192,7 @@ function UpnPage() {
             totalCents: apartment.splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
           }))}
           warningCount={validation?.warning_count ?? 0}
-          canSend={!snapshot.loading && !isClosed && !sending && canSendEmails && splits.length > 0}
+          canSend={!snapshot.loading && !snapshot.isRefreshing && !isClosed && !sending && canSendEmails && splits.length > 0}
           onClose={() => setEmailSummaryPeriodId(null)}
           onConfirm={() => void sendEmails()}
         />
