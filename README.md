@@ -165,7 +165,7 @@ Before a packet is sent, marked delivered, or downloaded in bulk, the app checks
 | **Download All PDFs** | Saves one pre-named ZIP archive containing one combined UPN packet PDF per apartment for review or external use |
 | **Mark/Unmark Delivered** | After a confirmation prompt, marks all current apartment UPN packets delivered or removes manual delivery marks |
 | **Close/Reopen Month** | Locks a delivered month against bill, split, inbox import, and delivery changes, or reopens it for corrections |
-| **Send Emails** | Sends one combined apartment UPN PDF plus available original bills by default, to configured recipient addresses allowed by the current email safety settings |
+| **Send All Emails** | Opens a summary drawer with the billing month, packet totals, slip counts, and recipient addresses; **Confirm send** starts the batch using current email safety settings, including previously emailed packets |
 
 **Attach original bills** is checked by default on UPN Preview. Each apartment email includes the exact stored supplier PDFs/images for the bills in its UPN packet. Combined source PDFs are sent in full, including any other pages in the original; a source shared by several bills is attached only once per email. The page shows the available file count and warns about bills without retained originals (such as manual or older imports); sending still includes UPN slips and all available originals. Uncheck the box to send only the UPN PDF. A corrupt or missing linked source file fails that apartment's send rather than silently omitting it. The email message mentions supplier originals when they are attached.
 

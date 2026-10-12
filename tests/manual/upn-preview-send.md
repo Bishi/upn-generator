@@ -49,6 +49,16 @@
 - [ ] Navigate away from and back to UPN Preview after manual delivery and confirm delivered pills, row statuses, and Mark/Unmark button do not flash through an incorrect state.
 - [ ] Send emails with allowlist enabled and confirm all non-allowlisted recipients are blocked by validation.
 - [ ] Send a test email to an allowed recipient and confirm delivery succeeds.
+- [ ] Click Send All Emails and confirm a summary drawer shows the selected billing month, apartment packet count, total slip count, and each apartment's amount, slip count, and recipient addresses, including multiple comma-separated recipients; no emails are sent yet.
+- [ ] Close the summary with Cancel, the close icon, Escape, or the backdrop and confirm no emails are sent and delivery history plus displayed results remain unchanged.
+- [ ] Use Tab and Shift+Tab in the drawer and confirm focus stays inside it, starts on Cancel, and returns to Send All Emails when dismissed.
+- [ ] Click Confirm send and confirm the drawer closes and exactly one batch starts; repeated clicks must not start duplicate batches or show an additional native confirmation prompt.
+- [ ] With validation warnings present, confirm the drawer includes the warning count before sending.
+- [ ] After a prior successful send, click Send All Emails and confirm the drawer warns that previously emailed packets will be sent again and sent emails cannot be recalled.
+- [ ] If workflow data refreshes while the drawer is open, confirm its summary follows the current snapshot and Confirm send is disabled while loading or when validation blocks sending.
+- [ ] At a narrow window size or with many recipients, confirm the summary scrolls while Cancel and Confirm send remain visible in the footer.
+- [ ] With Attach original bills checked, confirm the drawer describes full original PDFs/images, the available file count, and unavailable originals; uncheck it and confirm the drawer says UPN slips only and the resulting emails omit originals.
+- [ ] Send UPN emails for the October 2026 billing period and confirm the subject is `Poloznice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`.
 - [ ] Open UPN Preview and confirm Attach original bills is checked by default; navigate away and back and confirm a newly opened page defaults to checked again.
 - [ ] With the checkbox checked, send an apartment email and confirm it includes the UPN PDF and exact complete original PDFs/images for that apartment's bills, with readable filenames and correct file types.
 - [ ] Import several bills from one combined PDF and confirm the full PDF is attached once per apartment email, including unselected/informational pages; compare attachment bytes with the imported source.

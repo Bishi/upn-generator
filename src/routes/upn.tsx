@@ -34,6 +34,7 @@ import type {
 } from "@/lib/types";
 import { formatClosedAt, formatEur } from "@/lib/types";
 import { BillingPageShell } from "@/components/BillingPageShell";
+import { EmailSendDrawer } from "@/components/EmailSendDrawer";
 import {
   BillingEmptyState,
   BillingTable,
@@ -677,6 +678,8 @@ function UpnPage() {
   const splits = snapshot.splits;
   const apartmentsConfig = snapshot.apartments;
   const [sending, setSending] = useState(false);
+  const sendInProgressRef = useRef(false);
+  const [emailSummaryPeriodId, setEmailSummaryPeriodId] = useState<number | null>(null);
   const [includeOriginalBills, setIncludeOriginalBills] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [markingDelivered, setMarkingDelivered] = useState(false);
@@ -691,6 +694,7 @@ function UpnPage() {
 
   useEffect(() => {
     setValidationExpanded(false);
+    setEmailSummaryPeriodId(null);
   }, [selected?.id]);
 
   const setPageError = useCallback((message: string | null) => {
@@ -754,12 +758,15 @@ function UpnPage() {
   }, [snapshot.error]);
 
   const sendEmails = async () => {
-    if (!selected?.id) return;
+    if (!selected?.id || sendInProgressRef.current || emailSummaryPeriodId !== selected.id) return;
+    if (snapshot.loading || snapshot.isRefreshing || !snapshot.selectedPreSendValidation?.can_send_emails) return;
     if (selected.status === "closed") {
       setPageError("This billing month is closed. Reopen it before sending emails.");
       return;
     }
+    sendInProgressRef.current = true;
     setSending(true);
+    setEmailSummaryPeriodId(null);
     try {
       const results = await sendPeriodEmails(selected.id, includeOriginalBills);
       setEmailResults(results);
@@ -778,6 +785,7 @@ function UpnPage() {
         .refresh({ periods: false, core: false, selected: true, statuses: true })
         .catch(() => undefined);
     } finally {
+      sendInProgressRef.current = false;
       setSending(false);
     }
   };
@@ -1166,7 +1174,7 @@ function UpnPage() {
             Attach original bills
           </label>
           <Button
-            onClick={sendEmails}
+            onClick={() => setEmailSummaryPeriodId(selected?.id ?? null)}
             title={
               isClosed
                 ? "Reopen this month before sending emails."
@@ -1197,6 +1205,25 @@ function UpnPage() {
         </>
       }
     >
+      {selected?.id && emailSummaryPeriodId === selected.id && (
+        <EmailSendDrawer
+          periodLabel={`${String(selected.month).padStart(2, "0")}/${selected.year}`}
+          packets={apartments.filter(([, apartment]) => hasSendableRecipient(apartment.contactEmail)).map(([apartmentId, apartment]) => ({
+            apartmentId,
+            label: apartment.label,
+            recipients: parseRecipientList(apartment.contactEmail),
+            slipCount: apartment.splits.length,
+            totalCents: apartment.splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
+          }))}
+          warningCount={validation?.warning_count ?? 0}
+          includeOriginalBills={includeOriginalBills}
+          originalFileCount={originalFileCount}
+          missingOriginalLabels={billsWithoutOriginals.map((bill) => bill.provider_name || bill.creditor_name || `Bill ${bill.id}`)}
+          canSend={!snapshot.loading && !snapshot.isRefreshing && !isClosed && !sending && canSendEmails && splits.length > 0}
+          onClose={() => setEmailSummaryPeriodId(null)}
+          onConfirm={() => void sendEmails()}
+        />
+      )}
       <div id="original-bills-summary" className="text-sm text-muted-foreground">
         {includeOriginalBills ? (
           <>
