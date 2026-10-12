@@ -23,7 +23,8 @@
 - [ ] Create a duplicate provider bill or split total mismatch and confirm Send Emails, Download All PDFs, and Mark Delivered are disabled until the issue is fixed.
 - [ ] Open a single apartment preview and confirm a PDF is generated without an app error.
 - [ ] Confirm single-apartment previews remain available when validation only blocks delivery actions.
-- [ ] Confirm the preview opens through the system PDF viewer or reports a clear launch failure.
+- [ ] Open one slip and an apartment's Preview all packet; confirm both appear in the in-app PDF viewer, show the correct slips in order, and close with the button or Escape.
+- [ ] Switch between UPN previews and confirm no stale slip remains; a preview generation failure appears inside the viewer and closing it returns focus to the opening button.
 - [ ] Download all PDFs and confirm the save dialog is pre-populated with a `.zip` filename for the selected month.
 - [ ] While Download All PDFs is preparing the export, confirm the page shows a loading overlay and blocks other clicks until the export completes or fails.
 - [ ] Open the exported ZIP and confirm it contains one combined PDF packet for each apartment.
@@ -45,7 +46,7 @@
 - [ ] Click Unmark Delivered, accept the confirmation prompt, and confirm manual delivery marks are removed while email delivery history remains.
 - [ ] Confirm a mixed month with some emailed packets and a manual delivered confirmation marks the UPN workflow step complete.
 - [ ] Confirm generated UPN PDFs use the selected billing month, payer, recipient, IBAN, reference, purpose, and amount.
-- [ ] Open single and apartment previews and confirm preview/open temp PDFs do not create delivery history.
+- [ ] Open single and apartment previews and confirm they do not create delivery history or temporary PDF files.
 - [ ] Navigate away from and back to UPN Preview after manual delivery and confirm delivered pills, row statuses, and Mark/Unmark button do not flash through an incorrect state.
 - [ ] Send emails with allowlist enabled and confirm all non-allowlisted recipients are blocked by validation.
 - [ ] Send a test email to an allowed recipient and confirm delivery succeeds.

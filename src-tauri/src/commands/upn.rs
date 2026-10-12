@@ -13,8 +13,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
-use tauri_plugin_opener::OpenerExt;
+use tauri::{ipc::Response, AppHandle, Manager, State};
 
 use crate::credentials::{self, MailCredentialKind};
 
@@ -1647,76 +1646,30 @@ pub fn generate_upn_pdf(
     Ok(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes))
 }
 
-fn write_preview_pdf(data: &UpnData, bill_id: i64, apartment_id: i64) -> Result<String, String> {
-    let pdf_bytes = render_upn_pdf(data)?;
-    let temp_path = std::env::temp_dir().join(format!("upn_{}_{}.pdf", bill_id, apartment_id));
-    std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
-    temp_path
-        .to_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Invalid temp path".to_string())
-}
-
-fn write_batch_preview_pdf(
-    items: &[UpnData],
-    billing_period_id: i64,
-    apartment_id: i64,
-) -> Result<String, String> {
-    let pdf_bytes = render_upn_pdf_batch(items)?;
-    let temp_path = std::env::temp_dir().join(format!(
-        "upn_batch_{}_{}.pdf",
-        billing_period_id, apartment_id
-    ));
-    std::fs::write(&temp_path, &pdf_bytes).map_err(|e| e.to_string())?;
-    temp_path
-        .to_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Invalid temp path".to_string())
-}
-
 #[tauri::command]
-pub fn preview_upn(db: State<DbState>, bill_id: i64, apartment_id: i64) -> Result<String, String> {
-    let data = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        load_upn_data(&conn, bill_id, apartment_id)?
-    };
-    write_preview_pdf(&data, bill_id, apartment_id)
-}
-
-#[tauri::command]
-pub fn open_preview_upn(
-    app: AppHandle,
+pub fn read_upn_preview(
     db: State<DbState>,
     bill_id: i64,
     apartment_id: i64,
-) -> Result<String, String> {
+) -> Result<Response, String> {
     let data = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         load_upn_data(&conn, bill_id, apartment_id)?
     };
-    let path = write_preview_pdf(&data, bill_id, apartment_id)?;
-    app.opener()
-        .open_path(&path, None::<String>)
-        .map_err(|e| format!("System PDF opener failed for {}: {}", path, e))?;
-    Ok(path)
+    Ok(Response::new(render_upn_pdf(&data)?))
 }
 
 #[tauri::command]
-pub fn open_preview_apartment_upns(
-    app: AppHandle,
+pub fn read_apartment_upn_preview(
     db: State<DbState>,
     billing_period_id: i64,
     apartment_id: i64,
-) -> Result<String, String> {
+) -> Result<Response, String> {
     let items = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         load_apartment_upn_data(&conn, billing_period_id, apartment_id)?
     };
-    let path = write_batch_preview_pdf(&items, billing_period_id, apartment_id)?;
-    app.opener()
-        .open_path(&path, None::<String>)
-        .map_err(|e| format!("System PDF opener failed for {}: {}", path, e))?;
-    Ok(path)
+    Ok(Response::new(render_upn_pdf_batch(&items)?))
 }
 
 #[tauri::command]
