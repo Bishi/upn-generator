@@ -16,6 +16,9 @@ export function EmailSendDrawer({
   periodLabel,
   packets,
   warningCount,
+  includeOriginalBills,
+  originalFileCount,
+  missingOriginalLabels,
   canSend,
   onClose,
   onConfirm,
@@ -23,6 +26,9 @@ export function EmailSendDrawer({
   periodLabel: string;
   packets: EmailPacketSummary[];
   warningCount: number;
+  includeOriginalBills: boolean;
+  originalFileCount: number;
+  missingOriginalLabels: string[];
   canSend: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -76,6 +82,18 @@ export function EmailSendDrawer({
               {packets.length} apartment packet{packets.length === 1 ? "" : "s"} · {slipCount} UPN slip{slipCount === 1 ? "" : "s"}
             </p>
           </div>
+
+          <section aria-label="Attachments" className="rounded-md border border-border p-4 text-sm">
+            <h3 className="font-semibold">Attachments</h3>
+            <p className="mt-2 text-muted-foreground">
+              {includeOriginalBills
+                ? `UPN slips and available original bills. ${originalFileCount} original file${originalFileCount === 1 ? "" : "s"} available across the batch. Full PDFs/images are attached once per email for the apartment's bills.`
+                : "UPN slips only. Original bills will not be attached."}
+            </p>
+            {includeOriginalBills && missingOriginalLabels.length > 0 && (
+              <p className="mt-2 text-warning">Original unavailable for: {missingOriginalLabels.join(", ")}. UPN slips and any available originals will still be sent.</p>
+            )}
+          </section>
 
           <section aria-label="Packets and recipients" className="space-y-3">
             {packets.map((packet) => (

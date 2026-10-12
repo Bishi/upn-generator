@@ -57,7 +57,20 @@
 - [ ] After a prior successful send, click Send All Emails and confirm the drawer warns that previously emailed packets will be sent again and sent emails cannot be recalled.
 - [ ] If workflow data refreshes while the drawer is open, confirm its summary follows the current snapshot and Confirm send is disabled while loading or when validation blocks sending.
 - [ ] At a narrow window size or with many recipients, confirm the summary scrolls while Cancel and Confirm send remain visible in the footer.
+- [ ] With Attach original bills checked, confirm the drawer describes full original PDFs/images, the available file count, and unavailable originals; uncheck it and confirm the drawer says UPN slips only and the resulting emails omit originals.
 - [ ] Send UPN emails for the October 2026 billing period and confirm the subject is `Poloznice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`.
+- [ ] Open UPN Preview and confirm Attach original bills is checked by default; navigate away and back and confirm a newly opened page defaults to checked again.
+- [ ] With the checkbox checked, send an apartment email and confirm it includes the UPN PDF and exact complete original PDFs/images for that apartment's bills, with readable filenames and correct file types.
+- [ ] Import several bills from one combined PDF and confirm the full PDF is attached once per apartment email, including unselected/informational pages; compare attachment bytes with the imported source.
+- [ ] Use separate source documents for different apartments/months and confirm only sources linked to the current apartment packet are sent.
+- [ ] Import distinct originals with the same filename and confirm both are attached with distinct readable filenames and unchanged bytes.
+- [ ] Uncheck Attach original bills and confirm the helper text says only UPN slips will be sent; send and confirm the email contains only the UPN PDF and no mention of supplier originals.
+- [ ] Include a manual/legacy bill with no original and confirm the page identifies the bill as unavailable before sending; confirm sending still includes UPN slips and any available originals.
+- [ ] In a disposable database, corrupt a linked original's bytes or remove the linked source row; confirm that apartment's send fails visibly without sending an incomplete email, while unaffected apartments can still send. Uncheck the checkbox and confirm UPN-only sending succeeds.
+- [ ] After a send fails because a linked original is corrupt or missing, reload or navigate away and back; confirm the unchanged UPN packet shows Failed rather than Changed. If it was successfully sent earlier, confirm it retains delivery completion but displays a warning for the latest failed attempt.
+- [ ] While sending, confirm the checkbox is disabled; in a closed month, confirm it and Send All Emails are disabled.
+- [ ] Send with originals and multiple recipients and confirm each recipient receives the same attachments and per-recipient delivery history remains correct after reload; toggling the checkbox alone does not change delivery completion.
+- [ ] Send UPN emails for the October 2026 billing period and confirm the subject is `Poloznice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`; when originals are attached, confirm the message also says `Priloženi so tudi izvirni računi dobaviteljev.`.
 - [ ] Send UPN emails for the January 2027 billing period and confirm both subject and message name `12/2026`.
 - [ ] Send UPN emails for a past billing period and confirm the subject and message use the month before the selected period regardless of today's date.
 - [ ] Send apartment emails with multiple comma-separated recipients and confirm per-recipient status is recorded.
