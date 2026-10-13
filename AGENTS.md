@@ -1,23 +1,48 @@
-# UPN Generator Agent Handbook
+# UPN Generator Agent Instructions
 
-Tauri desktop app (Windows) for splitting apartment utility bills and generating UPN payment slips. Replaces manual Minimax workflow for the building accountant at Kamniska ulica 36, Ljubljana.
+**Instruction sync:** Keep the shared instructions in `AGENTS.md` and `CLAUDE.md` identical. When changing either file, apply the same shared changes to the other file in the same task. Only the final `# Claude Instructions` section in `CLAUDE.md` is exempt; keep Claude-specific rules there and do not copy that section into `AGENTS.md`.
 
-This file is the canonical project handbook for all agents. `CLAUDE.md` exists only as a Claude-specific compatibility pointer back to this file.
+UPN Generator is a Tauri desktop app (Windows) for splitting apartment utility bills and generating UPN payment slips. It replaces the manual Minimax workflow for the building accountant at Kamniska ulica 36, Ljubljana. The Rust backend owns all data, validation and delivery truth; the React frontend renders workflow state and never duplicates it.
 
-## Contributor Workflow Docs
+This everyday guide is mirrored in `CLAUDE.md` so both agents receive the full shared instructions directly; its final `# Claude Instructions` section adds only Claude-specific rules. Read `STATUS.md` for the current release snapshot before release work.
+
+## Repository orientation
+
+`src/` holds the React + TypeScript frontend (TanStack Router file-based routes, Tailwind v4 via `@tailwindcss/vite`). `src-tauri/` holds the Rust + Tauri v2 backend with `rusqlite` (bundled) for the local SQLite DB. `tests/manual/` holds manual QA checklists; `file-examples/` holds real provider invoices and UPN forms used as parser and visual references. Build is Vite + `@tauri-apps/cli`.
+
+Contributor workflow docs live under `.agents/` (gitignored, present only in the main checkout):
 
 - `.agents/developer-workflow.md` - review standards, planning rules, deferred-work rules, and manual QA expectations
-- `tests/manual/README.md` - manual QA checklist format and current feature-area index
 - `.agents/todo.md` - active multi-step plans that are too large or risky to keep only in chat
 - `.agents/lessons.md` - general lessons learned after corrections or review findings
+- `tests/manual/README.md` - manual QA checklist format and current feature-area index
 
-## Tech Stack
+## Fundamental Collaboration Rule
 
-- **Frontend:** React + TypeScript, TanStack Router (file-based), Tailwind v4 via `@tailwindcss/vite`
-- **Backend:** Rust + Tauri v2, `rusqlite` (bundled) for local SQLite DB
-- **Build:** Vite + `@tauri-apps/cli`
+Ask whenever meaning is unclear; never guess about data handling, security posture, money, or user workflow. Prefer the cheapest authoritative source: ask for a user reproduction, a screenshot, a sample invoice, or an answer when that is faster than deriving it.
 
-## Key Architecture Decisions
+Implement when asked and finish authorised scope and delivery unless blocked or a checkpoint is requested. Independent review/re-review is user-requested; do not start one or spawn another agent session as an implementation gate. Keep communication compact and state meaningful deferred scope, its reason and the decision that would reopen it before or during implementation. Do not bury deferred scope at the bottom of a plan when it changes the user's expectations for the current work.
+
+For credentials, imports, exports, backups, settings, privacy-sensitive data, new database storage, and security-sensitive behavior, answer these before writing code:
+
+1. What is this feature for?
+2. Is "off" or "not configured" a valid state?
+3. What data is stored, exported, backed up, restored, or intentionally excluded?
+4. What constraints might be missing from the initial request?
+
+If the answers are unclear and the choice would change data handling, security posture, or user workflow, stop and ask before implementing.
+
+## Consequential mistakes
+
+- **Unrelated user changes:** preserve them. Stage only intended work and never revert unrelated edits. After `git revert`, compare the tree with its target before reporting success.
+- **Push without a release:** every push to `main` must be accompanied by a version bump and a matching `vX.Y.Z` tag. See [Versioning & Releases](#versioning--releases).
+- **Credential and backup leaks:** SMTP/IMAP passwords live only in Windows Credential Manager and are never written to the DB, backups, logs, or chat. Backups intentionally blank password columns; never "fix" that.
+- **Closed-month mutations:** closed billing periods are readable/exportable but block bill, split, inbox import, delivery, and deletion until reopened. Never bypass the close gate to make an action work.
+- **Worktree paths:** when working in a `.t3/worktrees/...` checkout, run every command there and report that path, never the canonical `C:\Github\upn-generator` path.
+
+## Architecture decisions
+
+Architecture is firm unless explicitly reopened. Fix the owning command, migration, type, or component rather than the symptom; if the intended path is blocked, stop and report the blocker rather than shipping a reduced substitute.
 
 - `rusqlite` (bundled) is used directly - no `tauri-plugin-sql`
 - TanStack Router route tree is auto-generated at `src/routeTree.gen.ts` - do not edit manually
@@ -50,90 +75,42 @@ This file is the canonical project handbook for all agents. `CLAUDE.md` exists o
 - Provider split logic is configured per provider via `split_basis` (`occupants`, `m2_percentage`, or `equal_apartments`)
 - Factory reset reseeds building/apartments/providers/SMTP defaults and clears periods/bills/splits/delivery history
 
-## Key Files
+### Implementation contracts
+
+- Workflow state owned by `WorkflowSnapshot` must not be duplicated in page-local state for visible status, action buttons, or completion UI. If a page needs more than summary booleans/counts, expose the full selected domain object from `WorkflowSnapshot`; keep page-local state for transient UI state, form inputs, request spinners, or secondary details that do not drive workflow status.
+- Rust IPC changes must keep command registration, Rust types, `src/lib/ipc.ts`, and `src/lib/types.ts` in sync.
+- Database schema changes must check migrations, backup/restore behavior, and factory reset behavior.
+- UPN rendering changes must remain visually close to real Slovenian bank UPN forms and should be compared with `file-examples/`.
+
+### Key files
 
 - `src-tauri/src/lib.rs` - Tauri setup, DB init, command registration
 - `src-tauri/src/credentials.rs` - Windows Credential Manager access and shared mail password resolver
 - `src-tauri/src/db/migrations.rs` - all `CREATE TABLE` statements
 - `src-tauri/src/commands/config.rs` - CRUD IPC commands plus `DbState`
 - `src-tauri/src/commands/backup.rs` - manual DB backup and restore commands
-- `src/lib/types.ts` - TypeScript types mirroring Rust structs
-- `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
-- `src/routes/settings.tsx` - Settings page (6 horizontal tabs; Delivery contains Email/Inbox, Email Content precedes App, App contains Appearance/Data)
-- `src/components/settings/` - per-tab setting components
-- `src/lib/theme.tsx` - database-backed theme preference runtime
 - `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
 - `src-tauri/src/commands/inbox.rs` - read-only IMAP inbox configuration, connection test, and attachment import commands
 - `src-tauri/src/commands/splits.rs` - split calculation logic
 - `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, email safety, delivery history, month close/reopen, SMTP test, and email sending
 - `src-tauri/src/commands/upn_validation.rs` - backend-owned pre-send validation gates for UPN delivery actions
+- `src/lib/types.ts` - TypeScript types mirroring Rust structs
+- `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
+- `src/lib/theme.tsx` - database-backed theme preference runtime
+- `src/routes/settings.tsx` - Settings page (6 horizontal tabs; Delivery contains Email/Inbox, Email Content precedes App, App contains Appearance/Data)
+- `src/components/settings/` - per-tab setting components
 - `src/components/ui/drawer.tsx` - shared drawer shell with configurable width, header/footer slots, focus handling, backdrop, scrolling, and close guards
 - `src/routes/bills.tsx` - Bills page
 - `src/routes/splits.tsx` - Splits matrix page
 - `src/routes/upn.tsx` - UPN preview and send page
 
-## Dev Commands
+### UPN forms
 
-```bash
-npm run tauri dev
-npm run tauri build
-npm run dev
-```
+UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 mm form size, the standard two-part layout, official field geometry, and Courier New-style machine print. Use the examples in `file-examples/` as the visual reference. Forms must look like real bank forms so tenants trust them.
 
-## UPN Forms
+## Verification
 
-UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 mm form size, the standard two-part layout, official field geometry, and Courier New-style machine print. Use the examples in `file-examples/` as the visual reference.
-
-## Plan Status - "UPN Generator - Apartment Bill Splitting App"
-
-**Canonical plan:** `~/.claude/plans/linked-sprouting-reddy.md`
-
-- Phase 1 complete - Scaffold + Settings UI
-- Phase 1.5 complete - UI polish, seed data, bills page redesign, multi-bill PDF import
-- Phase 2 complete - Bill import with parser pipeline, OCR image import, manual entry, debug log
-- Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
-- Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send, read-only inbox import, and Windows Credential Manager password storage work)
-
-Current status: **v0.8.0. Phases 2 and 3 are largely complete, with Phase 4 in progress. Client-invoice verification includes page-aware extraction with bounded Windows OCR, editable provider identity rules, preview-first local/inbox imports, explicit noted exceptions, atomic conflict enforcement, persisted verification evidence, exact original-document retention, scoped in-app PDF/image viewing, and split/delivery gates. The app also includes provider-based split rules, equal apartment split support, chimney-service provider support, explicit parser/OCR review state, persisted month close/reopen, guarded multi-recipient email delivery history with optional default-on original bill attachments, editable backed-up email templates and batch content, transient global attachments, shared configurable email/inbox drawers, manual backup/restore, read-only inbox import, Windows Credential Manager mail passwords, and consolidated billing tables.**
-
-## Documentation
-
-Project documentation targets:
-
-- `AGENTS.md` - phase status, architecture decisions, key files
-- `README.md` - user-facing features and workflows
-- `STATUS.md` - current released version/tag and release snapshot when preparing a release
-- `tests/manual/*.md` - manual QA checklist for affected user-facing flows
-- `.agents/developer-workflow.md` - contributor planning, review, and QA rules
-
-## Workflow Rules
-
-### Code Reviews
-
-When asked to review a commit, uncommitted changes, a branch, or a PR, treat it as a code-reading task unless the user explicitly asks for verification. Do not run lint, typecheck, tests, or builds for a review by default.
-
-### Plan First
-
-Use `.agents/todo.md` for larger active plans in this repo.
-
-### Understand Before Building
-
-For credentials, imports, exports, backups, settings, privacy-sensitive data, new database storage, and security-sensitive behavior, answer these before writing code:
-
-1. What is this feature for?
-2. Is "off" or "not configured" a valid state?
-3. What data is stored, exported, backed up, restored, or intentionally excluded?
-4. What constraints might be missing from the initial request?
-
-If the answers are unclear and the choice would change data handling, security posture, or user workflow, stop and ask before implementing.
-
-### Lessons Loop
-
-Use `.agents/lessons.md` for repo-specific lessons.
-
-### Verification
-
-Use targeted checks while iterating, then run broader checks before calling work complete. Match verification to the risk of the change:
+Use the smallest focused proof of the changed boundary, then run broader checks before calling work complete. Match verification to the risk of the change:
 
 - Rust command, database, parsing, backup, or import changes: run `cargo check`; run relevant `cargo test` when behavior or validation logic changed.
 - Frontend or IPC shape changes: run `npm.cmd run build`.
@@ -141,24 +118,63 @@ Use targeted checks while iterating, then run broader checks before calling work
 
 In PowerShell, use `npm.cmd ...` instead of bare `npm ...`; bare `npm` can resolve to `npm.ps1` and fail under Windows execution policy.
 
-### Manual QA
+Never weaken tests to silence a failure or present static reading as runtime verification. For unrelated failures, reproduce narrowly when useful and report separately. Report performed and outstanding verification in the completion report, including manual QA cases that remain unchecked.
 
-Every user-facing feature should have a matching checklist under `tests/manual/`. Update an existing feature-area checklist when behavior changes, and leave cases unchecked unless they were personally verified on the current build.
+Dev commands:
 
-### Implementation Checklists
+```bash
+npm run tauri dev
+npm run tauri build
+npm run dev
+```
 
-- Workflow state owned by `WorkflowSnapshot` must not be duplicated in page-local state for visible status, action buttons, or completion UI. If a page needs more than summary booleans/counts, expose the full selected domain object from `WorkflowSnapshot`; keep page-local state for transient UI state, form inputs, request spinners, or secondary details that do not drive workflow status.
-- Rust IPC changes must keep command registration, Rust types, `src/lib/ipc.ts`, and `src/lib/types.ts` in sync.
-- Database schema changes must check migrations, backup/restore behavior, and factory reset behavior.
-- UPN rendering changes must remain visually close to real Slovenian bank UPN forms and should be compared with `file-examples/`.
+## Git and delivery
 
-### Pre-PR Checklist
+Never commit directly to `main`. Feature work uses a short descriptive branch (`t3code/<short-description>`, `codex/<short-description>`, or `feat/<short-description>` depending on the tool that owns the session) created from current `main`. Start Git delivery with `git status --short`; also check `git branch --show-current` before push. Use the narrowest authorised flow, stage only intended files and keep Git writes separate from implementation edits.
 
-- [ ] Targeted tests/checks were run for the changed behavior.
-- [ ] Broader verification was run when risk justified it.
-- [ ] Affected Markdown docs were audited and updated.
-- [ ] Affected manual QA checklist cases were added, updated, or reset.
-- [ ] Any generalizable correction was captured in `.agents/lessons.md`.
+In a shared worktree, never use bare `git stash` / `git stash pop`; prefer a temporary WIP commit, or `git stash push -u -m "<unique-tag>"` with `git stash apply <sha>`.
+
+Use authenticated `gh` for PRs against `main`. Make the PR ready for review unless the user explicitly requests draft/WIP. Merging to `main` is a release: follow [Versioning & Releases](#versioning--releases) so the merged commit and the pushed tag describe the same state.
+
+Report every created commit in this exact form, one block per repository:
+
+```text
+review <absolute-checkout-or-worktree-path>
+Commit: <short-sha> - <commit message>
+```
+
+The `review` path belongs to the checkout/worktree that owns the commit; never substitute the canonical repository path for a worktree. Report the push result and the PR URL too when applicable.
+
+## Documentation
+
+Most code changes need no prose. Code/tests express implemented behavior; docs retain necessary instructions, intentional constraints, non-obvious rationale and procedures. Update the relevant owner when needed guidance becomes false or a necessary fact is missing; do not narrate features, wiring or work history.
+
+Documentation owners:
+
+- `AGENTS.md` / `CLAUDE.md` - architecture decisions, key files, workflow rules, phase status
+- `README.md` - user-facing features and workflows
+- `STATUS.md` - current released version/tag and release snapshot when preparing a release
+- `tests/manual/*.md` - manual QA checklist for affected user-facing flows
+- `.agents/developer-workflow.md` - contributor planning, review, and QA rules
+- `.agents/lessons.md` - generalizable lessons after corrections or review findings
+
+Report `Docs updated: <files>` or `Docs audit: no docs needed - <reason>` in every completion report.
+
+## Code Review Rules
+
+When asked to review a commit, uncommitted changes, a branch, or a PR, treat it as a code-reading task unless the user explicitly asks for verification. Do not run lint, typecheck, tests, builds, or the app for a review by default.
+
+Findings must be concrete defects grounded in source, diff, or documented behavior. If the concern is only "verify this", "check whether that", or "consider maybe", trace it to a yes/no defect before reporting it, or leave it out. Each finding states severity (`Critical`/`High`/`Medium`/`Low`/`Minor`), the `file:line` anchor, the defect in one sentence, and the concrete failure scenario (inputs/state leading to wrong output, data loss, or crash). Order findings most severe first. Report "no findings" plainly when nothing survives that bar.
+
+After confirmed review repairs, commit the verified fixes and push when the branch has an open PR.
+
+## Specialised procedures
+
+- **Requested review loop:** a user-requested review/fix loop uses the repository [review loop skill](skills/upn-generator-review-loop/SKILL.md), which applies this file's Code Review Rules through the machine-wide `codex-review` skill (`~/.agents/skills/codex-review/SKILL.md`) for Codex invocation and session reuse. It is never an automatic implementation gate and never merges or releases.
+- **Planning:** for multi-step features, risky changes, schema/storage changes, mail credentials, imports, exports, backups, or release work, write the plan down before implementation. Use chat for small self-contained plans and `.agents/todo.md` for plans that span sessions or have many checkpoints. Mark items complete as work progresses; remove only the completed section when work is fully closed. If implementation reveals the plan is wrong, stop and re-plan.
+- **Lessons loop:** after a user correction or review finding, add a lesson to `.agents/lessons.md` only when it is generalizable beyond one bug, not already covered here, and specific enough to change future behavior.
+- **Manual QA:** every user-facing feature has a matching checklist under `tests/manual/`, one file per feature area. Update an existing checklist when behavior changes, reset affected cases to unchecked, and leave cases unchecked unless they were personally verified on the current build.
+- **Pre-PR checklist:** targeted checks were run for the changed behavior; broader verification was run when risk justified it; affected Markdown docs were audited and updated; affected manual QA cases were added, updated, or reset; any generalizable correction was captured in `.agents/lessons.md`.
 
 ## Versioning & Releases
 
@@ -168,20 +184,25 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 - Minor: new feature or considerable improvement
 - Major: breaking change or full milestone release
 
-To release, bump the version in `src-tauri/tauri.conf.json`, commit, then tag:
-
-```bash
-git tag v0.5.0 && git push origin main && git push origin v0.5.0
-```
-
 Every push to `main` must be accompanied by a version bump and a tag. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state.
 
 Release steps every time:
 
 1. Bump version in `src-tauri/tauri.conf.json`
-2. Commit the version bump
-3. Tag with `git tag vX.Y.Z`
-4. Push both: `git push origin main && git push origin vX.Y.Z`
+2. Update `STATUS.md` with the release snapshot
+3. Commit the version bump
+4. Tag with `git tag vX.Y.Z`
+5. Push both: `git push origin main && git push origin vX.Y.Z`
+
+## Plan Status - "UPN Generator - Apartment Bill Splitting App"
+
+- Phase 1 complete - Scaffold + Settings UI
+- Phase 1.5 complete - UI polish, seed data, bills page redesign, multi-bill PDF import
+- Phase 2 complete - Bill import with parser pipeline, OCR image import, manual entry, debug log
+- Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
+- Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send, read-only inbox import, and Windows Credential Manager password storage work)
+
+Current status: **v0.8.0. Phases 2 and 3 are largely complete, with Phase 4 in progress. Client-invoice verification includes page-aware extraction with bounded Windows OCR, editable provider identity rules, preview-first local/inbox imports, explicit noted exceptions, atomic conflict enforcement, persisted verification evidence, exact original-document retention, scoped in-app PDF/image viewing, and split/delivery gates. The app also includes provider-based split rules, equal apartment split support, chimney-service provider support, explicit parser/OCR review state, persisted month close/reopen, guarded multi-recipient email delivery history with optional default-on original bill attachments, editable backed-up email templates and batch content, transient global attachments, shared configurable email/inbox drawers, manual backup/restore, read-only inbox import, Windows Credential Manager mail passwords, and consolidated billing tables.**
 
 ## Building Data
 
