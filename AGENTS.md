@@ -134,7 +134,7 @@ Never commit directly to `main`. Feature work uses a short descriptive branch (`
 
 In a shared worktree, never use bare `git stash` / `git stash pop`; prefer a temporary WIP commit, or `git stash push -u -m "<unique-tag>"` with `git stash apply <sha>`.
 
-Use authenticated `gh` for PRs against `main`. Make the PR ready for review unless the user explicitly requests draft/WIP. Merging to `main` is a release: follow [Versioning & Releases](#versioning--releases) so the merged commit and the pushed tag describe the same state.
+Use authenticated `gh` for PRs against `main`. Make the PR ready for review unless the user explicitly requests draft/WIP. Opening a PR ends the delivery step: report the PR URL and stop. Never merge a PR unless the user explicitly asks to merge that PR; "push to main" or "open a PR" is not a merge request. Merging to `main` is a release: follow [Versioning & Releases](#versioning--releases) so the merged commit and the pushed tag describe the same state, unless the user explicitly waives the release for a documentation-only merge.
 
 Report every created commit in this exact form, one block per repository:
 
