@@ -6,7 +6,7 @@ import { ipc } from "@/lib/ipc";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { EmailContent, ExtraEmailAttachment } from "@/lib/types";
-import { formatEur } from "@/lib/types";
+import { formatClosedAt, formatEur } from "@/lib/types";
 
 export interface EmailPacketSummary {
   apartmentId: number;
@@ -14,6 +14,20 @@ export interface EmailPacketSummary {
   recipients: string[];
   slipCount: number;
   totalCents: number;
+  /** Distinct original source files linked to this apartment's bills. */
+  originalFileCount: number;
+  /** Timestamp of the latest successful email send for this packet, if any. */
+  lastEmailedAt: string | null;
+}
+
+function plural(count: number, noun: string, pluralNoun = `${noun}s`) {
+  return `${count} ${count === 1 ? noun : pluralNoun}`;
+}
+
+/** Mirrors the backend UPN attachment filename: UPN_<label>_<MM>_<YYYY>.pdf. */
+function upnPacketFilename(label: string, periodLabel: string) {
+  const [month, year] = periodLabel.split("/");
+  return `UPN_${label.replace(/ /g, "_")}_${month}_${year}.pdf`;
 }
 
 export function EmailSendDrawer({
@@ -97,13 +111,24 @@ export function EmailSendDrawer({
   }, [billingPeriodId, includeOriginalBills]);
   const validContent = content != null && content.subject.trim().length > 0 && !/[\r\n\0]/.test(content.subject) && !content.body.includes("\0");
   const slipCount = packets.reduce((sum, packet) => sum + packet.slipCount, 0);
+  const recipientCount = packets.reduce((sum, packet) => sum + packet.recipients.length, 0);
+  const previouslyEmailed = packets.filter((packet) => packet.lastEmailedAt != null);
+  const sendLabel = `Send ${plural(packets.length, "email")}`;
+  const attachmentParts = [
+    "the UPN slip PDF",
+    ...(includeOriginalBills ? ["that apartment's original bills (PDFs merged into one Original_bills.pdf, images attached separately)"] : []),
+    ...(extraFiles.length > 0 ? [plural(extraFiles.length, "additional file")] : []),
+  ];
+  const attachmentSentence = attachmentParts.length === 1
+    ? attachmentParts[0]
+    : `${attachmentParts.slice(0, -1).join(", ")} and ${attachmentParts[attachmentParts.length - 1]}`;
 
   return (
     <Drawer
       open
       onClose={onClose}
-      title="Send all emails"
-      description="Review the UPN packets and recipients before sending."
+      title="Review and send emails"
+      description={`Nothing is sent until you press ${sendLabel}.`}
       width={720}
       closeLabel="Close email summary"
       bodyClassName="space-y-5 py-5"
@@ -113,7 +138,7 @@ export function EmailSendDrawer({
           <Button variant="outline" onClick={onClose} data-drawer-autofocus>Cancel</Button>
           <Button onClick={() => { if (content && validContent && !readingFilesRef.current) onConfirm(content, extraFiles.map((file) => file.attachment)); }} disabled={!canSend || !validContent || readingFiles}>
             <Mail className="size-4" />
-            Confirm send
+            {sendLabel}
           </Button>
         </>
       }
@@ -121,10 +146,32 @@ export function EmailSendDrawer({
           <div className="rounded-md border border-border bg-surface-2 p-4">
             <div className="text-xs text-muted-foreground">Billing month</div>
             <div className="mt-1 text-lg font-semibold">{periodLabel}</div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {packets.length} apartment packet{packets.length === 1 ? "" : "s"} · {slipCount} UPN slip{slipCount === 1 ? "" : "s"}
+            <p className="mt-2 text-sm">
+              Pressing <span className="font-semibold">{sendLabel}</span> emails {plural(packets.length, "apartment packet")} to {plural(recipientCount, "address", "addresses")}, {plural(slipCount, "UPN slip")} in total.
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Each email includes {attachmentSentence}.
             </p>
           </div>
+
+          {(previouslyEmailed.length > 0 || warningCount > 0) && (
+            <div className="flex gap-3 rounded-md border border-warning/30 bg-warning-soft p-4 text-sm text-warning">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <div className="space-y-2">
+                {previouslyEmailed.length > 0 && (
+                  <p>
+                    Already emailed and will be sent again: {previouslyEmailed.map((packet) => `${packet.label} (${formatClosedAt(packet.lastEmailedAt)})`).join(", ")}.
+                  </p>
+                )}
+                {warningCount > 0 && (
+                  <p>There {warningCount === 1 ? "is" : "are"} {plural(warningCount, "validation warning")} to review before sending.</p>
+                )}
+              </div>
+            </div>
+          )}
+          {!canSend && (
+            <p role="status" className="text-sm text-danger">Sending is unavailable. Close this summary and review the billing month's validation issues.</p>
+          )}
 
           <section aria-label="Email content" className="space-y-3">
             <h3 className="font-semibold">Email content</h3>
@@ -145,7 +192,7 @@ export function EmailSendDrawer({
             <h3 className="font-semibold">Attachments</h3>
             <p className="mt-2 text-muted-foreground">
               {includeOriginalBills
-                ? `UPN slips + available original bills (${originalFileCount} file${originalFileCount === 1 ? "" : "s"}).`
+                ? `UPN slips plus original bills. ${plural(originalFileCount, "source file")} across this batch; each email gets only the originals linked to its apartment.`
                 : "UPN slips only."}
             </p>
             {includeOriginalBills && missingOriginalLabels.length > 0 && (
@@ -185,29 +232,32 @@ export function EmailSendDrawer({
                   <span className="shrink-0 font-mono text-sm">{formatEur(packet.totalCents)} €</span>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {packet.slipCount} UPN slip{packet.slipCount === 1 ? "" : "s"} in one PDF packet
+                  {plural(packet.slipCount, "UPN slip")} in one PDF packet
+                  {packet.lastEmailedAt != null && ` · already emailed ${formatClosedAt(packet.lastEmailedAt)}`}
                 </p>
-                <ul className="mt-3 space-y-1 text-sm">
+                <div className="mt-3 text-xs text-muted-foreground">To</div>
+                <ul className="mt-1 space-y-1 text-sm">
                   {packet.recipients.map((recipient, index) => (
                     <li key={`${recipient}-${index}`} className="break-all">{recipient}</li>
+                  ))}
+                </ul>
+                <div className="mt-3 text-xs text-muted-foreground">Attachments</div>
+                <ul className="mt-1 space-y-1 text-sm">
+                  <li className="break-all font-mono text-xs">{upnPacketFilename(packet.label, periodLabel)}</li>
+                  {includeOriginalBills && (
+                    <li className="text-muted-foreground">
+                      {packet.originalFileCount > 0
+                        ? `Original bills from ${plural(packet.originalFileCount, "source file")} (PDFs combined into Original_bills.pdf, images attached separately)`
+                        : "No original bills available for this apartment"}
+                    </li>
+                  )}
+                  {extraFiles.map((file, index) => (
+                    <li key={index} className="break-all font-mono text-xs">{file.attachment.name}</li>
                   ))}
                 </ul>
               </div>
             ))}
           </section>
-
-          <div className="flex gap-3 rounded-md border border-warning/30 bg-warning-soft p-4 text-sm text-warning">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <div className="space-y-2">
-              <p>All listed packets will be sent, including any previously emailed packets. Sent emails cannot be recalled.</p>
-              {warningCount > 0 && (
-                <p>There {warningCount === 1 ? "is" : "are"} {warningCount} validation warning{warningCount === 1 ? "" : "s"} to review before sending.</p>
-              )}
-            </div>
-          </div>
-          {!canSend && (
-            <p role="status" className="text-sm text-danger">Sending is unavailable. Close this summary and review the billing month's validation issues.</p>
-          )}
     </Drawer>
   );
 }

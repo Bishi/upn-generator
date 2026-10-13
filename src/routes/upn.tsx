@@ -1163,7 +1163,7 @@ function UpnPage() {
                 : actionDisabledTitle(
                     validation,
                     canSendEmails,
-                    "Send All Emails",
+                    "Review & Send Emails",
                     snapshot.loading,
                   )
             }
@@ -1182,7 +1182,7 @@ function UpnPage() {
             ) : (
               <Mail className="size-4" />
             )}
-            Send All Emails
+            Review & Send Emails...
           </Button>
         </>
       }
@@ -1191,13 +1191,26 @@ function UpnPage() {
         <EmailSendDrawer
           billingPeriodId={selected.id}
           periodLabel={`${String(selected.month).padStart(2, "0")}/${selected.year}`}
-          packets={apartments.filter(([, apartment]) => hasSendableRecipient(apartment.contactEmail)).map(([apartmentId, apartment]) => ({
-            apartmentId,
-            label: apartment.label,
-            recipients: parseRecipientList(apartment.contactEmail),
-            slipCount: apartment.splits.length,
-            totalCents: apartment.splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
-          }))}
+          packets={apartments.filter(([, apartment]) => hasSendableRecipient(apartment.contactEmail)).map(([apartmentId, apartment]) => {
+            const billIds = new Set(apartment.splits.map((split) => split.bill_id));
+            const originalFileCount = new Set(
+              emailBills.flatMap((bill) =>
+                bill.id != null && billIds.has(bill.id) && bill.source_document_id != null ? [bill.source_document_id] : [],
+              ),
+            ).size;
+            const lastEmailedAt = deliveryEvents
+              .filter((event) => event.apartment_id === apartmentId && event.delivery_type === "email" && event.status === "sent")
+              .reduce<string | null>((latest, event) => (latest == null || event.created_at > latest ? event.created_at : latest), null);
+            return {
+              apartmentId,
+              label: apartment.label,
+              recipients: parseRecipientList(apartment.contactEmail),
+              slipCount: apartment.splits.length,
+              totalCents: apartment.splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
+              originalFileCount,
+              lastEmailedAt,
+            };
+          })}
           warningCount={validation?.warning_count ?? 0}
           includeOriginalBills={includeOriginalBills}
           originalFileCount={originalFileCount}
