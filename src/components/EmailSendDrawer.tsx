@@ -6,7 +6,7 @@ import { ipc } from "@/lib/ipc";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { EmailContent, ExtraEmailAttachment } from "@/lib/types";
-import { formatEur } from "@/lib/types";
+import { formatClosedAt, formatEur } from "@/lib/types";
 
 export interface EmailPacketSummary {
   apartmentId: number;
@@ -14,7 +14,18 @@ export interface EmailPacketSummary {
   recipients: string[];
   slipCount: number;
   totalCents: number;
+  /**
+   * Latest successful email send for this apartment, if any. `current` means
+   * the packet and recipients are unchanged since that send, so pressing Send
+   * repeats a delivery that already completed.
+   */
+  priorEmail: { current: boolean; at: string; attemptId: string } | null;
 }
+
+function plural(count: number, noun: string, pluralNoun = `${noun}s`) {
+  return `${count} ${count === 1 ? noun : pluralNoun}`;
+}
+
 
 export function EmailSendDrawer({
   billingPeriodId,
@@ -22,7 +33,6 @@ export function EmailSendDrawer({
   packets,
   warningCount,
   includeOriginalBills,
-  originalFileCount,
   missingOriginalLabels,
   canSend,
   onClose,
@@ -33,7 +43,6 @@ export function EmailSendDrawer({
   packets: EmailPacketSummary[];
   warningCount: number;
   includeOriginalBills: boolean;
-  originalFileCount: number;
   missingOriginalLabels: string[];
   canSend: boolean;
   onClose: () => void;
@@ -96,14 +105,25 @@ export function EmailSendDrawer({
     return () => { active = false; };
   }, [billingPeriodId, includeOriginalBills]);
   const validContent = content != null && content.subject.trim().length > 0 && !/[\r\n\0]/.test(content.subject) && !content.body.includes("\0");
-  const slipCount = packets.reduce((sum, packet) => sum + packet.slipCount, 0);
+  const recipientCount = packets.reduce((sum, packet) => sum + packet.recipients.length, 0);
+  // Only packets whose current content and recipients were already delivered
+  // count as repeats; packets emailed before but changed since are new sends.
+  const alreadySent = packets.flatMap((packet) => packet.priorEmail?.current ? [{ label: packet.label, ...packet.priorEmail }] : []);
+  const sendLabel = `Send ${plural(packets.length, "email")}`;
+  const attachmentSummary = includeOriginalBills ? "UPN slips + original bills" : "UPN slips only";
+  const sameBatch = alreadySent.length > 0 && alreadySent.every((sent) => sent.attemptId === alreadySent[0].attemptId);
+  const resendNotice = alreadySent.length === 0
+    ? null
+    : alreadySent.length === packets.length && sameBatch
+      ? `All ${packets.length} were already emailed on ${formatClosedAt(alreadySent[0].at)} and will be sent again.`
+      : `Already emailed and will be sent again: ${alreadySent.map((sent) => `${sent.label} (${formatClosedAt(sent.at)})`).join(", ")}.`;
 
   return (
     <Drawer
       open
       onClose={onClose}
-      title="Send all emails"
-      description="Review the UPN packets and recipients before sending."
+      title="Review and send emails"
+      description={`Sends ${plural(packets.length, "email")} to ${plural(recipientCount, "address", "addresses")} for ${periodLabel} with ${attachmentSummary.toLowerCase()}. Nothing is sent until you press ${sendLabel}.`}
       width={720}
       closeLabel="Close email summary"
       bodyClassName="space-y-5 py-5"
@@ -113,21 +133,27 @@ export function EmailSendDrawer({
           <Button variant="outline" onClick={onClose} data-drawer-autofocus>Cancel</Button>
           <Button onClick={() => { if (content && validContent && !readingFilesRef.current) onConfirm(content, extraFiles.map((file) => file.attachment)); }} disabled={!canSend || !validContent || readingFiles}>
             <Mail className="size-4" />
-            Confirm send
+            {sendLabel}
           </Button>
         </>
       }
     >
-          <div className="rounded-md border border-border bg-surface-2 p-4">
-            <div className="text-xs text-muted-foreground">Billing month</div>
-            <div className="mt-1 text-lg font-semibold">{periodLabel}</div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {packets.length} apartment packet{packets.length === 1 ? "" : "s"} · {slipCount} UPN slip{slipCount === 1 ? "" : "s"}
-            </p>
-          </div>
+          {(resendNotice || warningCount > 0) && (
+            <div className="flex gap-3 rounded-md border border-warning/30 bg-warning-soft p-4 text-sm text-warning">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <div className="space-y-2">
+                {resendNotice && <p>{resendNotice}</p>}
+                {warningCount > 0 && (
+                  <p>There {warningCount === 1 ? "is" : "are"} {plural(warningCount, "validation warning")} to review before sending.</p>
+                )}
+              </div>
+            </div>
+          )}
+          {!canSend && (
+            <p role="status" className="text-sm text-danger">Sending is unavailable. Close this summary and review the billing month's validation issues.</p>
+          )}
 
           <section aria-label="Email content" className="space-y-3">
-            <h3 className="font-semibold">Email content</h3>
             {contentError ? <p role="alert" className="text-sm text-danger">{contentError} Close and reopen this drawer to retry.</p> : !content ? <p role="status" className="text-sm text-muted-foreground">Loading email content...</p> : <>
               <div className="space-y-1.5">
                 <Label htmlFor="batch-email-subject">Subject</Label>
@@ -135,41 +161,36 @@ export function EmailSendDrawer({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="batch-email-body">Body</Label>
-                <textarea id="batch-email-body" rows={8} maxLength={100000} value={content.body} onChange={(e) => setContent({ ...content, body: e.target.value })} className="w-full rounded-md border border-input bg-white px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                <textarea id="batch-email-body" rows={3} maxLength={100000} value={content.body} onChange={(e) => setContent({ ...content, body: e.target.value })} className="field-sizing-content w-full resize-y rounded-md border border-input bg-white px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
               </div>
               {!validContent && <p role="alert" className="text-sm text-danger">Enter a subject on one line.</p>}
             </>}
           </section>
 
-          <section aria-label="Attachments" className="rounded-md border border-border p-4 text-sm">
-            <h3 className="font-semibold">Attachments</h3>
-            <p className="mt-2 text-muted-foreground">
-              {includeOriginalBills
-                ? `UPN slips + available original bills (${originalFileCount} file${originalFileCount === 1 ? "" : "s"}).`
-                : "UPN slips only."}
-            </p>
-            {includeOriginalBills && missingOriginalLabels.length > 0 && (
-              <p className="mt-2 text-warning">Originals unavailable: {missingOriginalLabels.join(", ")}.</p>
-            )}
-          </section>
-
-          <section aria-label="Additional attachments" className="space-y-3 rounded-md border border-border p-4 text-sm">
-            <h3 className="font-semibold">Additional attachments</h3>
-            <p className="text-xs text-muted-foreground">Sent to everyone in this batch. Up to 10 files, 15 MiB total.</p>
-            <input ref={fileInputRef} type="file" multiple className="hidden" aria-label="Choose additional attachments" onChange={(event) => {
-              const files = Array.from(event.currentTarget.files ?? []);
-              event.currentTarget.value = "";
-              void addFiles(files);
-            }} />
-            <Button type="button" variant="outline" disabled={readingFiles || extraFiles.length >= 10} onClick={() => fileInputRef.current?.click()}>
-              {readingFiles ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
-              {readingFiles ? "Reading files..." : "Add attachments"}
-            </Button>
+          <section aria-label="Attachments" className="space-y-3 rounded-md border border-border p-4 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Attachments</h3>
+                <p className="text-muted-foreground">
+                  {attachmentSummary}
+                  {includeOriginalBills && missingOriginalLabels.length > 0 && ` · originals unavailable: ${missingOriginalLabels.join(", ")}`}
+                </p>
+              </div>
+              <input ref={fileInputRef} type="file" multiple className="hidden" aria-label="Choose additional attachments" onChange={(event) => {
+                const files = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                void addFiles(files);
+              }} />
+              <Button type="button" variant="outline" disabled={readingFiles || extraFiles.length >= 10} onClick={() => fileInputRef.current?.click()}>
+                {readingFiles ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />}
+                {readingFiles ? "Reading files..." : "Add files for everyone"}
+              </Button>
+            </div>
             {extraFiles.length > 0 && <ul className="space-y-2">
               {extraFiles.map((file, index) => <li key={index} className="flex min-w-0 items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="break-all">{file.attachment.name}</p>
-                  <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KiB</p>
+                  <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KiB · sent to everyone</p>
                 </div>
                 <Button type="button" variant="ghost" size="icon" disabled={readingFiles} aria-label={`Remove attachment ${file.attachment.name}`} onClick={() => { setExtraFiles((current) => current.filter((_, i) => i !== index)); setAttachmentError(null); }}><X className="size-4" /></Button>
               </li>)}
@@ -177,37 +198,41 @@ export function EmailSendDrawer({
             {attachmentError && <p role="alert" className="text-danger">{attachmentError}</p>}
           </section>
 
-          <section aria-label="Packets and recipients" className="space-y-3">
-            {packets.map((packet) => (
-              <div key={packet.apartmentId} className="rounded-md border border-border p-4">
-                <div className="flex items-baseline justify-between gap-3">
-                  <h3 className="font-semibold">{packet.label}</h3>
-                  <span className="shrink-0 font-mono text-sm">{formatEur(packet.totalCents)} €</span>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {packet.slipCount} UPN slip{packet.slipCount === 1 ? "" : "s"} in one PDF packet
-                </p>
-                <ul className="mt-3 space-y-1 text-sm">
-                  {packet.recipients.map((recipient, index) => (
-                    <li key={`${recipient}-${index}`} className="break-all">{recipient}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+          <section aria-label="Recipients">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs text-muted-foreground">
+                <tr className="border-b border-border">
+                  <th scope="col" className="py-2 pr-3 font-normal">Apartment</th>
+                  <th scope="col" className="py-2 pr-3 font-normal">To</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-normal">Amount</th>
+                  <th scope="col" className="py-2 text-right font-normal">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {packets.map((packet) => (
+                  <tr key={packet.apartmentId} className="border-b border-border/60 align-top">
+                    <td className="py-2 pr-3">
+                      <div className="font-medium">{packet.label}</div>
+                      <div className="text-xs text-muted-foreground">{plural(packet.slipCount, "slip")}</div>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {packet.recipients.map((recipient, index) => (
+                        <div key={`${recipient}-${index}`} className="break-all">{recipient}</div>
+                      ))}
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono whitespace-nowrap">{formatEur(packet.totalCents)} €</td>
+                    <td className="py-2 text-right whitespace-nowrap">
+                      {packet.priorEmail?.current
+                        ? <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">sent {formatClosedAt(packet.priorEmail.at).slice(0, 10)}</span>
+                        : packet.priorEmail
+                          ? <span className="text-xs text-muted-foreground" title="Packet or recipients changed since the last email">changed since {formatClosedAt(packet.priorEmail.at).slice(0, 10)}</span>
+                          : <span className="text-xs text-muted-foreground">not sent</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </section>
-
-          <div className="flex gap-3 rounded-md border border-warning/30 bg-warning-soft p-4 text-sm text-warning">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <div className="space-y-2">
-              <p>All listed packets will be sent, including any previously emailed packets. Sent emails cannot be recalled.</p>
-              {warningCount > 0 && (
-                <p>There {warningCount === 1 ? "is" : "are"} {warningCount} validation warning{warningCount === 1 ? "" : "s"} to review before sending.</p>
-              )}
-            </div>
-          </div>
-          {!canSend && (
-            <p role="status" className="text-sm text-danger">Sending is unavailable. Close this summary and review the billing month's validation issues.</p>
-          )}
     </Drawer>
   );
 }

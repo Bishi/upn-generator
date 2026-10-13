@@ -1163,7 +1163,7 @@ function UpnPage() {
                 : actionDisabledTitle(
                     validation,
                     canSendEmails,
-                    "Send All Emails",
+                    "Review & Send Emails",
                     snapshot.loading,
                   )
             }
@@ -1182,7 +1182,7 @@ function UpnPage() {
             ) : (
               <Mail className="size-4" />
             )}
-            Send All Emails
+            Review & Send Emails...
           </Button>
         </>
       }
@@ -1191,16 +1191,39 @@ function UpnPage() {
         <EmailSendDrawer
           billingPeriodId={selected.id}
           periodLabel={`${String(selected.month).padStart(2, "0")}/${selected.year}`}
-          packets={apartments.filter(([, apartment]) => hasSendableRecipient(apartment.contactEmail)).map(([apartmentId, apartment]) => ({
-            apartmentId,
-            label: apartment.label,
-            recipients: parseRecipientList(apartment.contactEmail),
-            slipCount: apartment.splits.length,
-            totalCents: apartment.splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
-          }))}
+          packets={apartments.filter(([, apartment]) => hasSendableRecipient(apartment.contactEmail)).map(([apartmentId, apartment]) => {
+            const sentEvents = deliveryEvents.filter(
+              (event) => event.apartment_id === apartmentId && event.delivery_type === "email" && event.status === "sent",
+            );
+            const latestOf = (events: UpnDeliveryEvent[]) =>
+              events.reduce<UpnDeliveryEvent | null>((latest, event) => (latest == null || event.created_at > latest.created_at ? event : latest), null);
+            // Whether the current packet hash and recipients were delivered by email:
+            // the backend rollup is authoritative; the hash-checked history result is the fallback.
+            const rollupRow = snapshot.selectedDeliveryRollup?.apartments.find((row) => row.apartment_id === apartmentId);
+            const currentlySent = rollupRow
+              ? rollupRow.email_sent
+              : historyResultsByApartmentId.get(apartmentId)?.status === "sent";
+            // When the current packet was delivered, date and attempt must come from the
+            // events that match it, not from a later send of a different packet.
+            const currentHash = rollupRow?.packet_hash || packetHashes.find((hash) => hash.apartment_id === apartmentId)?.attachment_sha256 || "";
+            const currentRecipients = new Set(normalizedRecipients(apartment.contactEmail));
+            const latestCurrent = currentlySent && currentHash
+              ? latestOf(sentEvents.filter((event) => event.attachment_sha256 === currentHash && currentRecipients.has(event.recipient.trim().toLowerCase())))
+              : null;
+            const priorEvent = latestCurrent ?? latestOf(sentEvents);
+            return {
+              apartmentId,
+              label: apartment.label,
+              recipients: parseRecipientList(apartment.contactEmail),
+              slipCount: apartment.splits.length,
+              totalCents: apartment.splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
+              priorEmail: priorEvent
+                ? { current: latestCurrent != null, at: priorEvent.created_at, attemptId: priorEvent.attempt_id }
+                : null,
+            };
+          })}
           warningCount={validation?.warning_count ?? 0}
           includeOriginalBills={includeOriginalBills}
-          originalFileCount={originalFileCount}
           missingOriginalLabels={billsWithoutOriginals.map((bill) => bill.provider_name || bill.creditor_name || `Bill ${bill.id}`)}
           canSend={!snapshot.loading && !snapshot.isRefreshing && !isClosed && !sending && canSendEmails && splits.length > 0}
           onClose={() => setEmailSummaryPeriodId(null)}

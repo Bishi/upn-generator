@@ -12,25 +12,25 @@
 ## Cases
 
 - [ ] Email uses the shared drawer shell at 720 px on wide windows and fits narrow windows; backdrop fade, panel motion, header, and footer match inbox import.
-- [ ] Tab/Shift+Tab stay in the drawer, Escape/backdrop/Close dismiss it, and focus returns to Send All Emails.
+- [ ] Tab/Shift+Tab stay in the drawer, Escape/backdrop/Close dismiss it, and focus returns to Review & Send Emails.
 - [ ] Background content cannot scroll while the drawer is open; internal scrolling keeps the header and footer visible.
 
-- [ ] Drawer uses concise attachment summaries, with no email-content help sentence; global attachment summary still identifies every recipient and the file limits.
+- [ ] Drawer subtitle states how many emails go to how many addresses for which month and with which attachments; a single Attachments box shows the UPN/originals summary, unavailable originals, and the Add files for everyone button with the file limits surfaced only on rejection.
 
-- [ ] Body editor is white with readable dark text, including when the app uses a dark theme.
+- [ ] Body editor is white with readable dark text, including when the app uses a dark theme; it grows to fit the full message with no inner scrollbar and can still be dragged taller or shorter.
 - [ ] Add multiple global attachments, confirm filenames/sizes, remove one, and send to allowlisted test recipients: every recipient gets the remaining exact files with UPN slips.
 - [ ] Global attachments are still included when original bills are unchecked; leaving global attachments empty preserves the usual UPN/originals behavior.
 - [ ] Reject selections exceeding 10 files or 15 MiB combined without adding any files from the rejected selection; previously selected files remain.
-- [ ] Confirm send stays disabled while files are being read; close during a read and confirm no late result appears in a reopened drawer.
+- [ ] The Send N emails button stays disabled while files are being read; close during a read and confirm no late result appears in a reopened drawer.
 - [ ] Cancel and reopen, change billing period, or navigate away: all global attachment selections are discarded.
 - [ ] Duplicate filenames, including a name matching the UPN PDF or an original bill, arrive under distinct safe filenames.
 - [ ] After sending with global attachments, delivery status continues to track the UPN packet; backups contain no global attachment contents.
 
-- [ ] Open Send All Emails at narrow and wide window sizes: no horizontal scrollbar appears during the slide-in animation; the drawer body still scrolls vertically.
+- [ ] Open Review & Send Emails at narrow and wide window sizes: no horizontal scrollbar appears during the slide-in animation; the drawer body still scrolls vertically.
 
-- [ ] Send All loads saved subject/body with placeholders resolved before Confirm send is available.
+- [ ] Send All loads saved subject/body with placeholders resolved before the Send N emails button is available.
 - [ ] Edit subject and multiline body, send to allowlisted test recipients, and confirm every recipient gets the exact edited content and expected attachments.
-- [ ] Clear the subject: Confirm send is disabled. Clear only the body: sending remains available.
+- [ ] Clear the subject: the Send N emails button is disabled. Clear only the body: sending remains available.
 - [ ] Cancel and reopen: batch edits are discarded and saved defaults are loaded again.
 - [ ] Original-bill note appears only when originals are enabled and available; partial availability uses wording about available originals.
 - [ ] A content loading error is visible and blocks sending; closing/reopening retries.
@@ -74,19 +74,19 @@
 - [ ] Navigate away from and back to UPN Preview after manual delivery and confirm delivered pills, row statuses, and Mark/Unmark button do not flash through an incorrect state.
 - [ ] Send emails with allowlist enabled and confirm all non-allowlisted recipients are blocked by validation.
 - [ ] Send a test email to an allowed recipient and confirm delivery succeeds.
-- [ ] Click Send All Emails and confirm a summary drawer shows the selected billing month, apartment packet count, total slip count, and each apartment's amount, slip count, and recipient addresses, including multiple comma-separated recipients; no emails are sent yet.
+- [ ] Click Review & Send Emails... and confirm the drawer opens with the summary subtitle, subject and body, one Attachments box, and a compact recipients table with one row per apartment showing name, slip count, recipient addresses (including multiple comma-separated recipients), amount, and a sent-date chip or "not sent"; no emails are sent yet.
 - [ ] Close the summary with Cancel, the close icon, Escape, or the backdrop and confirm no emails are sent and delivery history plus displayed results remain unchanged.
-- [ ] Use Tab and Shift+Tab in the drawer and confirm focus stays inside it, starts on Cancel, and returns to Send All Emails when dismissed.
-- [ ] Click Confirm send and confirm the drawer closes and exactly one batch starts; repeated clicks must not start duplicate batches or show an additional native confirmation prompt.
+- [ ] Use Tab and Shift+Tab in the drawer and confirm focus stays inside it, starts on Cancel, and returns to Review & Send Emails when dismissed.
+- [ ] Click the Send N emails button and confirm the drawer closes and exactly one batch starts; repeated clicks must not start duplicate batches or show an additional native confirmation prompt.
 - [ ] With validation warnings present, confirm the drawer includes the warning count before sending.
-- [ ] After a prior successful send, click Send All Emails and confirm the drawer warns that previously emailed packets will be sent again and sent emails cannot be recalled.
-- [ ] If workflow data refreshes while the drawer is open, confirm its summary follows the current snapshot and Confirm send is disabled while loading or when validation blocks sending.
-- [ ] At a narrow window size or with many recipients, confirm the summary scrolls while Cancel and Confirm send remain visible in the footer.
+- [ ] After a prior successful send, click Review & Send Emails and confirm the warning reads "All N were already emailed on <date>" when every apartment was sent in the same batch (same attempt), or lists only the already-emailed apartments with dates otherwise; with no prior email send and no validation warnings, no warning box appears. Change a bill amount and recalculate splits, or add a recipient, and confirm that apartment shows "changed since <date>" instead of "sent" and is left out of the warning.
+- [ ] If workflow data refreshes while the drawer is open, confirm its summary follows the current snapshot and the Send N emails button is disabled while loading or when validation blocks sending.
+- [ ] At a narrow window size or with many recipients, confirm the summary scrolls while Cancel and the Send N emails button remain visible in the footer.
 - [ ] With Attach original bills checked, confirm the drawer shows a concise UPN/original-bills summary with the available source-file count and unavailable originals; uncheck it and confirm the drawer says UPN slips only and the resulting emails omit automatic originals.
 - [ ] Using the built-in email content defaults, send UPN emails for the October 2026 billing period and confirm the subject is `Položnice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`.
 - [ ] Open UPN Preview and confirm Attach original bills is checked by default; navigate away and back and confirm a newly opened page defaults to checked again.
 - [ ] With the checkbox checked, send an apartment email and confirm it includes the UPN PDF plus one Original_bills.pdf with all supplier PDF pages in source order; verify page sizes, rotation, text, images, and readability against the sources. Original images remain separate exact-byte attachments.
-- [ ] Open the Send All Emails confirmation drawer with originals enabled and confirm its concise attachment summary identifies available originals; verify received emails contain one combined supplier PDF per apartment plus separate image bills.
+- [ ] Open the Review & Send Emails confirmation drawer with originals enabled and confirm its concise attachment summary identifies available originals; verify received emails contain one combined supplier PDF per apartment plus separate image bills.
 - [ ] Import several bills from one combined PDF and confirm every page is included once in Original_bills.pdf, including unselected/informational pages; confirm View original still opens the unchanged stored source.
 - [ ] Use separate source documents for different apartments/months and confirm only sources linked to the current apartment packet are sent.
 - [ ] Import distinct PDF originals with the same filename and confirm both documents' pages appear in Original_bills.pdf; confirm distinct image originals with the same filename retain distinct readable attachment names and unchanged bytes.
@@ -95,7 +95,7 @@
 - [ ] Include a manual/legacy bill with no original and confirm the page identifies the bill as unavailable before sending; confirm sending still includes UPN slips and any available originals.
 - [ ] In a disposable database, corrupt a linked original's bytes or remove the linked source row; confirm that apartment's send fails visibly without sending an incomplete email, while unaffected apartments can still send. Uncheck the checkbox and confirm UPN-only sending succeeds.
 - [ ] After a send fails because a linked original is corrupt or missing, reload or navigate away and back; confirm the unchanged UPN packet shows Failed rather than Changed. If it was successfully sent earlier, confirm it retains delivery completion but displays a warning for the latest failed attempt.
-- [ ] While sending, confirm the checkbox is disabled; in a closed month, confirm it and Send All Emails are disabled.
+- [ ] While sending, confirm the checkbox is disabled; in a closed month, confirm it and Review & Send Emails are disabled.
 - [ ] Send with originals and multiple recipients and confirm each recipient receives the same attachments and per-recipient delivery history remains correct after reload; toggling the checkbox alone does not change delivery completion.
 - [ ] Using the built-in email content defaults, send UPN emails for the October 2026 billing period and confirm the subject is `Položnice za 09/2026` and the message says `v priponki najdete UPN položnice za 09/2026.`; when originals are attached, confirm the message also says `Priloženi so tudi razpoložljivi izvirni računi dobaviteljev.`.
 - [ ] Send UPN emails for the January 2027 billing period and confirm both subject and message name `12/2026`.
