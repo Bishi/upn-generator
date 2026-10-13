@@ -35,7 +35,7 @@ If the answers are unclear and the choice would change data handling, security p
 ## Consequential mistakes
 
 - **Unrelated user changes:** preserve them. Stage only intended work and never revert unrelated edits. After `git revert`, compare the tree with its target before reporting success.
-- **Push without a release:** every push to `main` must be accompanied by a version bump and a matching `vX.Y.Z` tag. See [Versioning & Releases](#versioning--releases).
+- **Push without a release:** every push to `main` must be accompanied by a version bump and a matching `vX.Y.Z` tag, unless the user explicitly waives the release for a documentation-only merge. See [Versioning & Releases](#versioning--releases).
 - **Credential and backup leaks:** SMTP/IMAP passwords live only in Windows Credential Manager and are never written to the DB, backups, logs, or chat. Backups intentionally blank password columns; never "fix" that.
 - **Closed-month mutations:** closed billing periods are readable/exportable but block bill, split, inbox import, delivery, and deletion until reopened. Never bypass the close gate to make an action work.
 - **Worktree paths:** when working in a `.t3/worktrees/...` checkout, run every command there and report that path, never the canonical `C:\Github\upn-generator` path.
@@ -134,7 +134,7 @@ Never commit directly to `main`. Feature work uses a short descriptive branch (`
 
 In a shared worktree, never use bare `git stash` / `git stash pop`; prefer a temporary WIP commit, or `git stash push -u -m "<unique-tag>"` with `git stash apply <sha>`.
 
-Use authenticated `gh` for PRs against `main`. Make the PR ready for review unless the user explicitly requests draft/WIP. Merging to `main` is a release: follow [Versioning & Releases](#versioning--releases) so the merged commit and the pushed tag describe the same state.
+Use authenticated `gh` for PRs against `main`. Make the PR ready for review unless the user explicitly requests draft/WIP. Opening a PR ends the delivery step: report the PR URL and stop. Never merge a PR unless the user explicitly asks to merge that PR; "push to main" or "open a PR" is not a merge request. Merging to `main` is a release: follow [Versioning & Releases](#versioning--releases) so the merged commit and the pushed tag describe the same state, unless the user explicitly waives the release for a documentation-only merge.
 
 Report every created commit in this exact form, one block per repository:
 
@@ -184,9 +184,9 @@ Use semantic versioning `MAJOR.MINOR.PATCH`:
 - Minor: new feature or considerable improvement
 - Major: breaking change or full milestone release
 
-Every push to `main` must be accompanied by a version bump and a tag. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state.
+Every push to `main` must be accompanied by a version bump and a tag. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state. The only exception is a documentation-only merge for which the user has explicitly waived the release in that request; the next release then covers those commits.
 
-Release steps every time:
+Release steps for every release:
 
 1. Bump version in `src-tauri/tauri.conf.json`
 2. Update `STATUS.md` with the release snapshot
