@@ -17,7 +17,7 @@
 
 - [ ] Drawer subtitle states how many emails go to how many addresses for which month and with which attachments; a single Attachments box shows the UPN/originals summary, unavailable originals, and the Add files for everyone button with the file limits surfaced only on rejection.
 
-- [ ] Body editor is white with readable dark text, including when the app uses a dark theme.
+- [ ] Body editor is white with readable dark text, including when the app uses a dark theme; it grows to fit the full message with no inner scrollbar.
 - [ ] Add multiple global attachments, confirm filenames/sizes, remove one, and send to allowlisted test recipients: every recipient gets the remaining exact files with UPN slips.
 - [ ] Global attachments are still included when original bills are unchecked; leaving global attachments empty preserves the usual UPN/originals behavior.
 - [ ] Reject selections exceeding 10 files or 15 MiB combined without adding any files from the rejected selection; previously selected files remain.
