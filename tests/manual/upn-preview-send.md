@@ -15,7 +15,7 @@
 - [ ] Tab/Shift+Tab stay in the drawer, Escape/backdrop/Close dismiss it, and focus returns to Review & Send Emails.
 - [ ] Background content cannot scroll while the drawer is open; internal scrolling keeps the header and footer visible.
 
-- [ ] Drawer uses concise attachment summaries, with no email-content help sentence; global attachment summary still identifies every recipient and the file limits.
+- [ ] Drawer subtitle states how many emails go to how many addresses for which month and with which attachments; a single Attachments box shows the UPN/originals summary, unavailable originals, and the Add files for everyone button with the file limits surfaced only on rejection.
 
 - [ ] Body editor is white with readable dark text, including when the app uses a dark theme.
 - [ ] Add multiple global attachments, confirm filenames/sizes, remove one, and send to allowlisted test recipients: every recipient gets the remaining exact files with UPN slips.
@@ -74,12 +74,12 @@
 - [ ] Navigate away from and back to UPN Preview after manual delivery and confirm delivered pills, row statuses, and Mark/Unmark button do not flash through an incorrect state.
 - [ ] Send emails with allowlist enabled and confirm all non-allowlisted recipients are blocked by validation.
 - [ ] Send a test email to an allowed recipient and confirm delivery succeeds.
-- [ ] Click Review & Send Emails... and confirm the drawer opens with a top summary stating how many apartment packets and addresses the Send N emails button will email, the total slip count, and what each email includes; each apartment card shows amount, slip count, recipient addresses (including multiple comma-separated recipients), and an attachment list with the UPN filename, original-bill availability, and any additional files; no emails are sent yet.
+- [ ] Click Review & Send Emails... and confirm the drawer opens with the summary subtitle, subject and body, one Attachments box, and a compact recipients table with one row per apartment showing name, slip count, recipient addresses (including multiple comma-separated recipients), amount, and a sent-date chip or "not sent"; no emails are sent yet.
 - [ ] Close the summary with Cancel, the close icon, Escape, or the backdrop and confirm no emails are sent and delivery history plus displayed results remain unchanged.
 - [ ] Use Tab and Shift+Tab in the drawer and confirm focus stays inside it, starts on Cancel, and returns to Review & Send Emails when dismissed.
 - [ ] Click the Send N emails button and confirm the drawer closes and exactly one batch starts; repeated clicks must not start duplicate batches or show an additional native confirmation prompt.
 - [ ] With validation warnings present, confirm the drawer includes the warning count before sending.
-- [ ] After a prior successful send, click Review & Send Emails and confirm the drawer shows a warning naming each already-emailed apartment with its send date and stating it will be sent again; on a month with no prior email send and no validation warnings, confirm no warning box appears.
+- [ ] After a prior successful send, click Review & Send Emails and confirm the warning reads "All N were already emailed on <date>" when every apartment was sent in the same batch, or lists only the already-emailed apartments with dates otherwise; with no prior email send and no validation warnings, no warning box appears.
 - [ ] If workflow data refreshes while the drawer is open, confirm its summary follows the current snapshot and the Send N emails button is disabled while loading or when validation blocks sending.
 - [ ] At a narrow window size or with many recipients, confirm the summary scrolls while Cancel and the Send N emails button remain visible in the footer.
 - [ ] With Attach original bills checked, confirm the drawer shows a concise UPN/original-bills summary with the available source-file count and unavailable originals; uncheck it and confirm the drawer says UPN slips only and the resulting emails omit automatic originals.
