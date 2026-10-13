@@ -14,8 +14,12 @@ export interface EmailPacketSummary {
   recipients: string[];
   slipCount: number;
   totalCents: number;
-  /** Timestamp of the latest successful email send for this packet, if any. */
-  lastEmailedAt: string | null;
+  /**
+   * Latest successful email send for this apartment, if any. `current` means
+   * the packet and recipients are unchanged since that send, so pressing Send
+   * repeats a delivery that already completed.
+   */
+  priorEmail: { current: boolean; at: string; attemptId: string } | null;
 }
 
 function plural(count: number, noun: string, pluralNoun = `${noun}s`) {
@@ -102,15 +106,17 @@ export function EmailSendDrawer({
   }, [billingPeriodId, includeOriginalBills]);
   const validContent = content != null && content.subject.trim().length > 0 && !/[\r\n\0]/.test(content.subject) && !content.body.includes("\0");
   const recipientCount = packets.reduce((sum, packet) => sum + packet.recipients.length, 0);
-  const previouslyEmailed = packets.filter((packet) => packet.lastEmailedAt != null);
+  // Only packets whose current content and recipients were already delivered
+  // count as repeats; packets emailed before but changed since are new sends.
+  const alreadySent = packets.flatMap((packet) => packet.priorEmail?.current ? [{ label: packet.label, ...packet.priorEmail }] : []);
   const sendLabel = `Send ${plural(packets.length, "email")}`;
   const attachmentSummary = includeOriginalBills ? "UPN slips + original bills" : "UPN slips only";
-  const sameSendTime = previouslyEmailed.length > 0 && previouslyEmailed.every((packet) => packet.lastEmailedAt === previouslyEmailed[0].lastEmailedAt);
-  const resendNotice = previouslyEmailed.length === 0
+  const sameBatch = alreadySent.length > 0 && alreadySent.every((sent) => sent.attemptId === alreadySent[0].attemptId);
+  const resendNotice = alreadySent.length === 0
     ? null
-    : previouslyEmailed.length === packets.length && sameSendTime
-      ? `All ${packets.length} were already emailed on ${formatClosedAt(previouslyEmailed[0].lastEmailedAt)} and will be sent again.`
-      : `Already emailed and will be sent again: ${previouslyEmailed.map((packet) => `${packet.label} (${formatClosedAt(packet.lastEmailedAt)})`).join(", ")}.`;
+    : alreadySent.length === packets.length && sameBatch
+      ? `All ${packets.length} were already emailed on ${formatClosedAt(alreadySent[0].at)} and will be sent again.`
+      : `Already emailed and will be sent again: ${alreadySent.map((sent) => `${sent.label} (${formatClosedAt(sent.at)})`).join(", ")}.`;
 
   return (
     <Drawer
@@ -216,9 +222,11 @@ export function EmailSendDrawer({
                     </td>
                     <td className="py-2 pr-3 text-right font-mono whitespace-nowrap">{formatEur(packet.totalCents)} €</td>
                     <td className="py-2 text-right whitespace-nowrap">
-                      {packet.lastEmailedAt != null
-                        ? <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">sent {formatClosedAt(packet.lastEmailedAt).slice(0, 10)}</span>
-                        : <span className="text-xs text-muted-foreground">not sent</span>}
+                      {packet.priorEmail?.current
+                        ? <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">sent {formatClosedAt(packet.priorEmail.at).slice(0, 10)}</span>
+                        : packet.priorEmail
+                          ? <span className="text-xs text-muted-foreground" title="Packet or recipients changed since the last email">changed since {formatClosedAt(packet.priorEmail.at).slice(0, 10)}</span>
+                          : <span className="text-xs text-muted-foreground">not sent</span>}
                     </td>
                   </tr>
                 ))}

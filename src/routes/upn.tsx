@@ -1192,16 +1192,25 @@ function UpnPage() {
           billingPeriodId={selected.id}
           periodLabel={`${String(selected.month).padStart(2, "0")}/${selected.year}`}
           packets={apartments.filter(([, apartment]) => hasSendableRecipient(apartment.contactEmail)).map(([apartmentId, apartment]) => {
-            const lastEmailedAt = deliveryEvents
+            // Latest successful email event, regardless of whether it still matches.
+            const latestSent = deliveryEvents
               .filter((event) => event.apartment_id === apartmentId && event.delivery_type === "email" && event.status === "sent")
-              .reduce<string | null>((latest, event) => (latest == null || event.created_at > latest ? event.created_at : latest), null);
+              .reduce<UpnDeliveryEvent | null>((latest, event) => (latest == null || event.created_at > latest.created_at ? event : latest), null);
+            // Whether the current packet hash and recipients were delivered by email:
+            // the backend rollup is authoritative; the hash-checked history result is the fallback.
+            const rollupRow = snapshot.selectedDeliveryRollup?.apartments.find((row) => row.apartment_id === apartmentId);
+            const currentlySent = rollupRow
+              ? rollupRow.email_sent
+              : historyResultsByApartmentId.get(apartmentId)?.status === "sent";
             return {
               apartmentId,
               label: apartment.label,
               recipients: parseRecipientList(apartment.contactEmail),
               slipCount: apartment.splits.length,
               totalCents: apartment.splits.reduce((sum, split) => sum + split.split_amount_cents, 0),
-              lastEmailedAt,
+              priorEmail: latestSent
+                ? { current: currentlySent, at: latestSent.created_at, attemptId: latestSent.attempt_id }
+                : null,
             };
           })}
           warningCount={validation?.warning_count ?? 0}
