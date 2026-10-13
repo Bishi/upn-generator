@@ -1,7 +1,232 @@
+# UPN Generator Agent Instructions
+
+**Instruction sync:** Keep the shared instructions in `AGENTS.md` and `CLAUDE.md` identical. When changing either file, apply the same shared changes to the other file in the same task. Only the final `# Claude Instructions` section in `CLAUDE.md` is exempt; keep Claude-specific rules there and do not copy that section into `AGENTS.md`.
+
+UPN Generator is a Tauri desktop app (Windows) for splitting apartment utility bills and generating UPN payment slips. It replaces the manual Minimax workflow for the building accountant at Kamniska ulica 36, Ljubljana. The Rust backend owns all data, validation and delivery truth; the React frontend renders workflow state and never duplicates it.
+
+This everyday guide is mirrored in `CLAUDE.md` so both agents receive the full shared instructions directly; its final `# Claude Instructions` section adds only Claude-specific rules. Read `STATUS.md` for the current release snapshot before release work.
+
+## Repository orientation
+
+`src/` holds the React + TypeScript frontend (TanStack Router file-based routes, Tailwind v4 via `@tailwindcss/vite`). `src-tauri/` holds the Rust + Tauri v2 backend with `rusqlite` (bundled) for the local SQLite DB. `tests/manual/` holds manual QA checklists; `file-examples/` holds real provider invoices and UPN forms used as parser and visual references. Build is Vite + `@tauri-apps/cli`.
+
+Contributor workflow docs live under `.agents/` (gitignored, present only in the main checkout):
+
+- `.agents/developer-workflow.md` - review standards, planning rules, deferred-work rules, and manual QA expectations
+- `.agents/todo.md` - active multi-step plans that are too large or risky to keep only in chat
+- `.agents/lessons.md` - general lessons learned after corrections or review findings
+- `tests/manual/README.md` - manual QA checklist format and current feature-area index
+
+## Fundamental Collaboration Rule
+
+Ask whenever meaning is unclear; never guess about data handling, security posture, money, or user workflow. Prefer the cheapest authoritative source: ask for a user reproduction, a screenshot, a sample invoice, or an answer when that is faster than deriving it.
+
+Implement when asked and finish authorised scope and delivery unless blocked or a checkpoint is requested. Independent review/re-review is user-requested; do not start one or spawn another agent session as an implementation gate. Keep communication compact and state meaningful deferred scope, its reason and the decision that would reopen it before or during implementation. Do not bury deferred scope at the bottom of a plan when it changes the user's expectations for the current work.
+
+For credentials, imports, exports, backups, settings, privacy-sensitive data, new database storage, and security-sensitive behavior, answer these before writing code:
+
+1. What is this feature for?
+2. Is "off" or "not configured" a valid state?
+3. What data is stored, exported, backed up, restored, or intentionally excluded?
+4. What constraints might be missing from the initial request?
+
+If the answers are unclear and the choice would change data handling, security posture, or user workflow, stop and ask before implementing.
+
+## Consequential mistakes
+
+- **Unrelated user changes:** preserve them. Stage only intended work and never revert unrelated edits. After `git revert`, compare the tree with its target before reporting success.
+- **Push without a release:** every push to `main` must be accompanied by a version bump and a matching `vX.Y.Z` tag. See [Versioning & Releases](#versioning--releases).
+- **Credential and backup leaks:** SMTP/IMAP passwords live only in Windows Credential Manager and are never written to the DB, backups, logs, or chat. Backups intentionally blank password columns; never "fix" that.
+- **Closed-month mutations:** closed billing periods are readable/exportable but block bill, split, inbox import, delivery, and deletion until reopened. Never bypass the close gate to make an action work.
+- **Worktree paths:** when working in a `.t3/worktrees/...` checkout, run every command there and report that path, never the canonical `C:\Github\upn-generator` path.
+
+## Architecture decisions
+
+Architecture is firm unless explicitly reopened. Fix the owning command, migration, type, or component rather than the symptom; if the intended path is blocked, stop and report the blocker rather than shipping a reduced substitute.
+
+- `rusqlite` (bundled) is used directly - no `tauri-plugin-sql`
+- TanStack Router route tree is auto-generated at `src/routeTree.gen.ts` - do not edit manually
+- No `tailwind.config.js` - Tailwind v4 config is inline via CSS
+- Theme colors are tokenized in `src/index.css`; refined is the CSS fallback/default theme, and the selected theme is stored in the SQLite `app_settings` singleton row so it is included in backups
+- Main DB lives at `%APPDATA%\si.upn-generator\upn-generator.db`
+- Manual backups are user-chosen `.sqlite3` SQLite snapshots created from the live DB
+- Manual backups intentionally blank `smtp_config.password` and `inbox_config.password`
+- SMTP and IMAP passwords are stored in Windows Credential Manager under stable app targets and matched against the configured username before use; legacy DB password columns remain only for schema compatibility and are cleared after successful credential writes
+- `building` table always has exactly 1 row (`id=1`)
+- Billing periods use `billing_periods.status` (`draft`/`closed`) plus nullable `closed_at` for the explicit month close/reopen workflow; closed months are readable/exportable but block bill, split, inbox import, delivery, period deletion, and deletion of apartments with closed-month records until reopened
+- An empty billing period is a normal setup state: it has no `no_bills` validation error, but UPN bulk actions stay unavailable until bills are imported
+- Email batches register an in-memory per-period operation guard before validation; Close Month is rejected while a batch is active so external sends and their delivery audit events finish together
+- `smtp_config` table always has exactly 1 row (`id=1`); seeded defaults use Gmail SMTP host/port/TLS, `kamniska.racuni@gmail.com` username/from/allowlist, and blank password
+- SMTP email safety is stored on `smtp_config`; the recipient allowlist defaults enabled with `kamniska.racuni@gmail.com` as the seeded test recipient so bulk UPN sends remain limited until more recipients are listed or the allowlist is disabled
+- `app_settings` table always has exactly 1 row (`id=1`) for database-backed UI preferences such as theme
+- UPN email subject/body templates are stored on `app_settings` and included in backups; legacy backup restore and factory reset use built-in defaults. Email Content settings owns these fields independently of theme. Send All resolves previous-service-month placeholders and accepts transient subject/body overrides for the entire batch; overrides are not persisted in delivery history.
+- `inbox_config` table always has exactly 1 row (`id=1`) for manual IMAP inbox import settings; seeded defaults use Gmail IMAP host/port/TLS/INBOX, `kamniska.racuni@gmail.com` username, and blank password
+- Inbox imports are manual, read-only IMAP scans using `EXAMINE` and `BODY.PEEK`; the Bills page previews fetched attachments before import, finalization requires the reparsed invoice set to match the preview, attachments are staged only in short-lived temp files, and raw extracted text is not persisted for inbox imports
+- Inbox preview scans have in-memory request-scoped cancellation: cancelling closes the active IMAP socket, rejects late results, and removes the matching preview session; temporary files are released after any current bounded extraction completes. Closing the drawer or navigating away also cancels the active scan.
+- Inbox preview retries acquire the global PDF OCR slot with cancellable waiting, so a cancelled worker still finishing extraction cannot turn a retry into unreadable identity evidence. Queue cancellation or timeout aborts the attachment instead of becoming an extraction diagnostic.
+- Bills keep parser/OCR warning text in `parse_note`; explicit review completion is stored separately on `bills.reviewed_at`/`review_note`, and unreviewed warning bills block bulk UPN delivery actions until marked reviewed
+- Provider identity rules are typed and editable; local/inbox imports persist page-attributed identity evidence, require a match or explicit noted exception, and recheck rules plus provider/month occupancy atomically before saving. Splits and delivery use the same eligibility rule. Closed months with migrated `not_checked` bills remain PDF ZIP exportable; reopening restores the normal export identity gate.
+- Accepted local/inbox imports retain the exact full source PDF/image in deduplicated SQLite `source_documents` rows and link bills through `source_document_id`; staged and stored originals are viewed through scoped raw-byte IPC and short-lived Blob URLs, while legacy/manual bills remain explicitly unavailable.
+- Send All supports transient global extra attachments selected in the drawer and sent to every recipient, independently of original-bill inclusion. User-selected bytes cross IPC in memory with backend count/size validation (10 files, 15 MiB combined), safe unique MIME filenames, and no database, backup, or delivery-history retention. Delivery hashes still identify only the UPN packet.
+- UPN email sends default to including retained originals for bills in each apartment packet, deduplicated per source document. All original PDFs are combined into one `Original_bills.pdf` attachment, retaining every source page; original images remain separate exact-byte attachments, and stored originals are unchanged. The send-time checkbox can disable these attachments; unavailable legacy/manual originals are warned about in the UI, while linked-file integrity or PDF merge failures fail the apartment send. Delivery hashes continue to identify the UPN payment packet independently of supporting originals.
+- Apartments store both a display name (`label`) and a cadastral/unit code (`unit_code`)
+- Apartment `contact_email` remains the persisted field name and supports comma-separated recipients
+- UPN delivery history is stored in `upn_delivery_events`; email events are per recipient, manual delivery events are per current apartment packet, PDF exports are review/download actions and do not count as delivery, and SMTP/inbox passwords are write-only settings backed by Windows Credential Manager and excluded from backups
+- Provider split logic is configured per provider via `split_basis` (`occupants`, `m2_percentage`, or `equal_apartments`)
+- Factory reset reseeds building/apartments/providers/SMTP defaults and clears periods/bills/splits/delivery history
+
+### Implementation contracts
+
+- Workflow state owned by `WorkflowSnapshot` must not be duplicated in page-local state for visible status, action buttons, or completion UI. If a page needs more than summary booleans/counts, expose the full selected domain object from `WorkflowSnapshot`; keep page-local state for transient UI state, form inputs, request spinners, or secondary details that do not drive workflow status.
+- Rust IPC changes must keep command registration, Rust types, `src/lib/ipc.ts`, and `src/lib/types.ts` in sync.
+- Database schema changes must check migrations, backup/restore behavior, and factory reset behavior.
+- UPN rendering changes must remain visually close to real Slovenian bank UPN forms and should be compared with `file-examples/`.
+
+### Key files
+
+- `src-tauri/src/lib.rs` - Tauri setup, DB init, command registration
+- `src-tauri/src/credentials.rs` - Windows Credential Manager access and shared mail password resolver
+- `src-tauri/src/db/migrations.rs` - all `CREATE TABLE` statements
+- `src-tauri/src/commands/config.rs` - CRUD IPC commands plus `DbState`
+- `src-tauri/src/commands/backup.rs` - manual DB backup and restore commands
+- `src-tauri/src/commands/bills.rs` - bill import, PDF/image text extraction and parsing, billing period commands
+- `src-tauri/src/commands/inbox.rs` - read-only IMAP inbox configuration, connection test, and attachment import commands
+- `src-tauri/src/commands/splits.rs` - split calculation logic
+- `src-tauri/src/commands/upn.rs` - UPN QR form rendering, preview, save, email safety, delivery history, month close/reopen, SMTP test, and email sending
+- `src-tauri/src/commands/upn_validation.rs` - backend-owned pre-send validation gates for UPN delivery actions
+- `src/lib/types.ts` - TypeScript types mirroring Rust structs
+- `src/lib/ipc.ts` - typed `invoke()` wrappers for all IPC commands
+- `src/lib/theme.tsx` - database-backed theme preference runtime
+- `src/routes/settings.tsx` - Settings page (6 horizontal tabs; Delivery contains Email/Inbox, Email Content precedes App, App contains Appearance/Data)
+- `src/components/settings/` - per-tab setting components
+- `src/components/ui/drawer.tsx` - shared drawer shell with configurable width, header/footer slots, focus handling, backdrop, scrolling, and close guards
+- `src/routes/bills.tsx` - Bills page
+- `src/routes/splits.tsx` - Splits matrix page
+- `src/routes/upn.tsx` - UPN preview and send page
+
+### UPN forms
+
+UPN output must follow the official ZBS UPN QR technical standard: 210 mm x 99 mm form size, the standard two-part layout, official field geometry, and Courier New-style machine print. Use the examples in `file-examples/` as the visual reference. Forms must look like real bank forms so tenants trust them.
+
+## Verification
+
+Use the smallest focused proof of the changed boundary, then run broader checks before calling work complete. Match verification to the risk of the change:
+
+- Rust command, database, parsing, backup, or import changes: run `cargo check`; run relevant `cargo test` when behavior or validation logic changed.
+- Frontend or IPC shape changes: run `npm.cmd run build`.
+- Documentation-only changes: no build is required unless the docs describe behavior that should be verified.
+
+In PowerShell, use `npm.cmd ...` instead of bare `npm ...`; bare `npm` can resolve to `npm.ps1` and fail under Windows execution policy.
+
+Never weaken tests to silence a failure or present static reading as runtime verification. For unrelated failures, reproduce narrowly when useful and report separately. Report performed and outstanding verification in the completion report, including manual QA cases that remain unchecked.
+
+Dev commands:
+
+```bash
+npm run tauri dev
+npm run tauri build
+npm run dev
+```
+
+## Git and delivery
+
+Never commit directly to `main`. Feature work uses a short descriptive branch (`t3code/<short-description>`, `codex/<short-description>`, or `feat/<short-description>` depending on the tool that owns the session) created from current `main`. Start Git delivery with `git status --short`; also check `git branch --show-current` before push. Use the narrowest authorised flow, stage only intended files and keep Git writes separate from implementation edits.
+
+In a shared worktree, never use bare `git stash` / `git stash pop`; prefer a temporary WIP commit, or `git stash push -u -m "<unique-tag>"` with `git stash apply <sha>`.
+
+Use authenticated `gh` for PRs against `main`. Make the PR ready for review unless the user explicitly requests draft/WIP. Merging to `main` is a release: follow [Versioning & Releases](#versioning--releases) so the merged commit and the pushed tag describe the same state.
+
+Report every created commit in this exact form, one block per repository:
+
+```text
+review <absolute-checkout-or-worktree-path>
+Commit: <short-sha> - <commit message>
+```
+
+The `review` path belongs to the checkout/worktree that owns the commit; never substitute the canonical repository path for a worktree. Report the push result and the PR URL too when applicable.
+
+## Documentation
+
+Most code changes need no prose. Code/tests express implemented behavior; docs retain necessary instructions, intentional constraints, non-obvious rationale and procedures. Update the relevant owner when needed guidance becomes false or a necessary fact is missing; do not narrate features, wiring or work history.
+
+Documentation owners:
+
+- `AGENTS.md` / `CLAUDE.md` - architecture decisions, key files, workflow rules, phase status
+- `README.md` - user-facing features and workflows
+- `STATUS.md` - current released version/tag and release snapshot when preparing a release
+- `tests/manual/*.md` - manual QA checklist for affected user-facing flows
+- `.agents/developer-workflow.md` - contributor planning, review, and QA rules
+- `.agents/lessons.md` - generalizable lessons after corrections or review findings
+
+Report `Docs updated: <files>` or `Docs audit: no docs needed - <reason>` in every completion report.
+
+## Code Review Rules
+
+When asked to review a commit, uncommitted changes, a branch, or a PR, treat it as a code-reading task unless the user explicitly asks for verification. Do not run lint, typecheck, tests, builds, or the app for a review by default.
+
+Findings must be concrete defects grounded in source, diff, or documented behavior. If the concern is only "verify this", "check whether that", or "consider maybe", trace it to a yes/no defect before reporting it, or leave it out. Each finding states severity (`Critical`/`High`/`Medium`/`Low`/`Minor`), the `file:line` anchor, the defect in one sentence, and the concrete failure scenario (inputs/state leading to wrong output, data loss, or crash). Order findings most severe first. Report "no findings" plainly when nothing survives that bar.
+
+After confirmed review repairs, commit the verified fixes and push when the branch has an open PR.
+
+## Specialised procedures
+
+- **Requested review loop:** a user-requested review/fix loop uses the repository [review loop skill](skills/upn-generator-review-loop/SKILL.md), which applies this file's Code Review Rules through the machine-wide `codex-review` skill (`~/.agents/skills/codex-review/SKILL.md`) for Codex invocation and session reuse. It is never an automatic implementation gate and never merges or releases.
+- **Planning:** for multi-step features, risky changes, schema/storage changes, mail credentials, imports, exports, backups, or release work, write the plan down before implementation. Use chat for small self-contained plans and `.agents/todo.md` for plans that span sessions or have many checkpoints. Mark items complete as work progresses; remove only the completed section when work is fully closed. If implementation reveals the plan is wrong, stop and re-plan.
+- **Lessons loop:** after a user correction or review finding, add a lesson to `.agents/lessons.md` only when it is generalizable beyond one bug, not already covered here, and specific enough to change future behavior.
+- **Manual QA:** every user-facing feature has a matching checklist under `tests/manual/`, one file per feature area. Update an existing checklist when behavior changes, reset affected cases to unchecked, and leave cases unchecked unless they were personally verified on the current build.
+- **Pre-PR checklist:** targeted checks were run for the changed behavior; broader verification was run when risk justified it; affected Markdown docs were audited and updated; affected manual QA cases were added, updated, or reset; any generalizable correction was captured in `.agents/lessons.md`.
+
+## Versioning & Releases
+
+Use semantic versioning `MAJOR.MINOR.PATCH`:
+
+- Patch: bug fixes, small tweaks, copy changes
+- Minor: new feature or considerable improvement
+- Major: breaking change or full milestone release
+
+Every push to `main` must be accompanied by a version bump and a tag. The pushed commit and the pushed `vX.Y.Z` tag must refer to the same release state.
+
+Release steps every time:
+
+1. Bump version in `src-tauri/tauri.conf.json`
+2. Update `STATUS.md` with the release snapshot
+3. Commit the version bump
+4. Tag with `git tag vX.Y.Z`
+5. Push both: `git push origin main && git push origin vX.Y.Z`
+
+## Plan Status - "UPN Generator - Apartment Bill Splitting App"
+
+- Phase 1 complete - Scaffold + Settings UI
+- Phase 1.5 complete - UI polish, seed data, bills page redesign, multi-bill PDF import
+- Phase 2 complete - Bill import with parser pipeline, OCR image import, manual entry, debug log
+- Phase 3 complete - UPN generation with mixed split basis, PDF render, preview, download, and email send
+- Phase 4 in progress - Email delivery, manual IMAP inbox import, and security hardening (SMTP send, read-only inbox import, and Windows Credential Manager password storage work)
+
+Current status: **v0.8.0. Phases 2 and 3 are largely complete, with Phase 4 in progress. Client-invoice verification includes page-aware extraction with bounded Windows OCR, editable provider identity rules, preview-first local/inbox imports, explicit noted exceptions, atomic conflict enforcement, persisted verification evidence, exact original-document retention, scoped in-app PDF/image viewing, and split/delivery gates. The app also includes provider-based split rules, equal apartment split support, chimney-service provider support, explicit parser/OCR review state, persisted month close/reopen, guarded multi-recipient email delivery history with optional default-on original bill attachments, editable backed-up email templates and batch content, transient global attachments, shared configurable email/inbox drawers, manual backup/restore, read-only inbox import, Windows Credential Manager mail passwords, and consolidated billing tables.**
+
+## Building Data
+
+- 6 apartments
+- 12 occupants
+- 5 recurring utility providers per month
+- Pre-configured provider templates live in the DB and are testable against `file-examples/`
+
+| Provider | Service | IBAN |
+|---|---|---|
+| Elektro energija d.o.o. | Electricity | SI56 0400 1004 8988 093 |
+| JP VOKA SNAGA d.o.o. | Waste | SI56 0400 1004 9142 226 |
+| JP VOKA SNAGA d.o.o. | Water | SI56 2900 0000 3057 588 |
+| Energetika Ljubljana d.o.o. | Gas | SI56 0292 4025 3764 022 |
+| ZLM d.o.o. | Cleaning | SI56 0201 1025 7890 131 |
+
 # Claude Instructions
 
-Read `AGENTS.md` first. It is the canonical project handbook for all agents, including Claude.
+- For requested review output, render findings as prose rather than raw JSON. Present each finding as a short paragraph led by severity and `file:line`, then the defect and failure scenario; do not paste tool output or JSON blocks into the report.
+- Report commits, pushes, PR URLs, `Docs updated` / `Docs audit` lines, and performed/outstanding verification in the final message so a reader who did not watch the tool calls has the full picture.
+- Requested review loops run the repository `skills/upn-generator-review-loop/SKILL.md`; it relies on the shared global `codex-review` skill (source `~/.agents/skills/codex-review/SKILL.md`, junctioned into `~/.claude/skills`) for Codex invocation and session reuse.
+- Never keep a background watch or live subscription on an Artifact, or re-watch after one ends. Publishing automatically arms a watch: iterate locally and publish the finished page once, rather than republishing to iterate.
+- Project auto-memory may record only user preferences and non-derivable project facts. Workflow rules, architecture decisions, and release procedure belong in this file, not in memory; if a memory duplicates a rule here, the rule here wins.
 
-Also read:
+When a step doesn't need my input, keep going. Put status notes in the same message as your next action.
 
-- `STATUS.md` for the current release snapshot
+Stop and ask only when you can't continue without me, before destructive work such as deleting data or force-pushing, or before unapproved changes outside the assigned scope.

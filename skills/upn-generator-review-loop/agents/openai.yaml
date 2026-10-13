@@ -1,0 +1,4 @@
+interface:
+  display_name: "UPN Generator Review Loop"
+  short_description: "Repeat Codex review and repairs until clean"
+  default_prompt: "Use $upn-generator-review-loop to review this branch or PR and repeat repairs and re-review with the same GPT-6.1-Sol Medium read-only Codex session until no findings remain."
