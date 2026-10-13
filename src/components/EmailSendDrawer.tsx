@@ -155,7 +155,7 @@ export function EmailSendDrawer({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="batch-email-body">Body</Label>
-                <textarea id="batch-email-body" rows={3} maxLength={100000} value={content.body} onChange={(e) => setContent({ ...content, body: e.target.value })} className="field-sizing-content w-full resize-none overflow-hidden rounded-md border border-input bg-white px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                <textarea id="batch-email-body" rows={3} maxLength={100000} value={content.body} onChange={(e) => setContent({ ...content, body: e.target.value })} className="field-sizing-content w-full resize-y rounded-md border border-input bg-white px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
               </div>
               {!validContent && <p role="alert" className="text-sm text-danger">Enter a subject on one line.</p>}
             </>}
