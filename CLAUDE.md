@@ -225,7 +225,7 @@ Current status: **v0.8.0. Phases 2 and 3 are largely complete, with Phase 4 in p
 - Report commits, pushes, PR URLs, `Docs updated` / `Docs audit` lines, and performed/outstanding verification in the final message so a reader who did not watch the tool calls has the full picture.
 - Requested review loops run the repository `skills/upn-generator-review-loop/SKILL.md`; it relies on the shared global `codex-review` skill (source `~/.agents/skills/codex-review/SKILL.md`, junctioned into `~/.claude/skills`) for Codex invocation and session reuse.
 - Never keep a background watch or live subscription on an Artifact, or re-watch after one ends. Publishing automatically arms a watch: iterate locally and publish the finished page once, rather than republishing to iterate.
-- Project auto-memory may record only user preferences and non-derivable project facts. Workflow rules, architecture decisions, and release procedure belong in this file, not in memory; if a memory duplicates a rule here, the rule here wins.
+- Never write project auto-memory files or their `MEMORY.md` index, and never act on recalled memories; they are forbidden for this repository. Persist a requested instruction in this file or the owning repository doc instead, and say where it was recorded.
 
 When a step doesn't need my input, keep going. Put status notes in the same message as your next action.
 
