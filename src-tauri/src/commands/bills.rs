@@ -1808,20 +1808,21 @@ fn parse_elektro_style(text: &str) -> Option<ExtractedBill> {
 fn parse_zlm_style(text: &str) -> Option<ExtractedBill> {
     // Amount from "Za plačilo EUR: 139,28" (PDF preserves diacritic č)
     let amount_re = Regex::new(r"Za plačilo EUR:\s*(\d+[.,]\d{2})").ok()?;
-    let amount_cents = parse_amount_to_cents(amount_re.captures(text)?.get(1)?.as_str());
+    let amount_match = amount_re.captures(text)?.get(1)?;
+    let amount_cents = parse_amount_to_cents(amount_match.as_str());
 
     // IBAN from "TRR:SI5 6  0 2 0 1 ..." — chars space-separated, grab to EOL and normalize
-    let iban_re = Regex::new(r"TRR:([A-Z0-9][\sA-Z0-9]+)").ok()?;
-    let iban_dirty = iban_re.captures(text)?.get(1)?.as_str();
-    let iban_dirty_line = iban_dirty.lines().next().unwrap_or(iban_dirty);
-    let iban_norm = normalize_iban(iban_dirty_line);
+    let iban_re = Regex::new(r"TRR:([A-Z0-9][ \tA-Z0-9]+)").ok()?;
+    let iban_match = iban_re.captures(text)?.get(1)?;
+    let iban_norm = normalize_iban(iban_match.as_str());
     let iban_raw = iban_norm.clone();
 
-    // Reference from "Referenca: SI0 0  2 0 2 6 8 5" — space-separated chars.
-    // Require a space within the SI model code (e.g. "SI0 0") to avoid matching
-    // Elektro's "Referenca: SI12 9015175242273" which appears earlier in the PDF.
-    let ref_re = Regex::new(r"Referenca:\s+(SI\d\s+\d[\s\d]*)").ok()?;
-    let ref_dirty = ref_re.captures(text)?.get(1)?.as_str();
+    // Accept both "SI00 20261234" and PDF-spaced "SI0 0  2 0 2 6 1 2 3 4".
+    // Scope the search to ZLM's TRR-to-total section so combined PDFs cannot
+    // supply a reference from an earlier or later invoice.
+    let reference_text = text.get(iban_match.end()..amount_match.start())?;
+    let ref_re = Regex::new(r"Referenca:\s+(SI\d[ \t]*\d[ \t]+[\d \t]+)").ok()?;
+    let ref_dirty = ref_re.captures(reference_text)?.get(1)?.as_str();
     let ref_dirty_line = ref_dirty.lines().next().unwrap_or(ref_dirty);
     let ref_norm: String = ref_dirty_line
         .chars()
@@ -3807,6 +3808,43 @@ SI12 6330017789210
             .status,
             "matched"
         );
+    }
+
+    #[test]
+    fn zlm_reference_accepts_normal_and_pdf_spaced_models() {
+        for (iban, reference, due_date) in [
+            ("SI56 020110257890131", "SI00 20261234", "16.11.2026"),
+            (
+                "SI5 6  0 2 0 1 1 0 2 5 7 8 9 0 1 3 1",
+                "SI0 0  2 0 2 6 1 2 3 4",
+                "1 6 .1 1 .2 0 2 6",
+            ),
+        ] {
+            let text = format!(
+                "ZLM d.o.o.\nTRR:{iban}\nReferenca: {reference}\nŠtevilka: 2026-1234\nZapade: {due_date}\nZa plačilo EUR: 123,45"
+            );
+            let candidates = parse_page_candidates(&text);
+            assert_eq!(candidates.len(), 1, "reference: {reference}");
+            let bill = &candidates[0];
+            assert_eq!(bill.iban_norm, "SI56020110257890131");
+            assert_eq!(bill.amount_cents, 12345);
+            assert_eq!(bill.reference, "SI00 20261234");
+            assert_eq!(bill.due_date, "16.11.2026");
+            assert_eq!(bill.invoice_number, "2026-1234");
+        }
+    }
+
+    #[test]
+    fn zlm_reference_does_not_use_preceding_elektro_reference() {
+        let text = "Referenca: SI12 9015175242273\n\nZLM d.o.o.\nTRR:SI56 020110257890131\nTel.: 031 000 000\nReferenca: SI00 20261234\nZa plačilo EUR: 123,45";
+        let bill = parse_zlm_style(text).unwrap();
+        assert_eq!(bill.reference, "SI00 20261234");
+    }
+
+    #[test]
+    fn zlm_missing_reference_does_not_use_following_invoice_reference() {
+        let text = "ZLM d.o.o.\nTRR:SI56 020110257890131\nTel.: 031 000 000\nZa plačilo EUR: 123,45\n\nReferenca: SI00 999999";
+        assert!(parse_zlm_style(text).is_none());
     }
 
     #[test]
