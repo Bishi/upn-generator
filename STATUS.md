@@ -1,12 +1,13 @@
 # Status
 
-- Current version: `0.8.1`
-- Current tag: `v0.8.1`
-- Release status: pending merge and tag from `main`
+- Current version: `0.8.2`
+- Current tag: `v0.8.2`
+- Release status: tagged from `main`; the Release workflow publishes the Windows installer
 
 ## Latest Included Changes
 
-- The UPN page button reads `Review & Send Emails...` and opens a compact review drawer: the subtitle states how many emails go to how many addresses with which attachments, the footer button reads `Send N emails`, a warning names already-emailed apartments with dates only when relevant, one Attachments box covers UPN/originals and files for everyone, and a recipients table replaces per-apartment cards; the body editor auto-grows and stays resizable
+- ZLM invoice import accepts both normal `SI00` references and references extracted with spaces between their model digits. Reference lookup stays within the invoice's TRR-to-total section to avoid using a neighbouring invoice's reference.
+- The UPN page button reads `Review & Send Emails...` and opens a compact review drawer with batch email content, attachment selection, and a recipients table
 - Settings > Email Content saves the default subject and body, with previous-service-month placeholders, concise help, backup/restore support, factory-reset defaults, and unsaved-change handling
 - Send All Emails lets the accountant edit the resolved subject/body for one batch; the built-in subject uses `Položnice`, and custom saved subjects are preserved
 - Additional global attachments go to every recipient, remain in memory only, and support add/remove before confirmation with a limit of 10 files and 15 MiB combined
@@ -15,8 +16,8 @@
 
 ## Verification
 
-- Frontend production build and TypeScript check passed for the v0.8.1 drawer changes; Rust is untouched since v0.8.0
-- Rust suite: 127 passed, 3 ignored because they require private PDF/OCR fixtures
-- Headless Edge checks with mocked IPC covered configurable drawer widths, animation clipping, vertical scrolling, focus containment/wrap/restoration, close guards, companion focus/Escape handoff, inbox popovers, scan cancellation and late-session cleanup, plus global attachment selection/removal/limits/cleanup and exact IPC bytes
-- Independent subagent code review found no actionable correctness, security, or regression issues; stale manual QA expectations were corrected and re-reviewed with no remaining findings
-- Live SMTP/IMAP and desktop manual QA remain unverified; affected checklist cases remain unchecked
+- Both supplied ZLM PDFs passed the app's PDF extractor/parser reproduction with correct amount, IBAN, reference, and due date; the newer invoice failed before the fix
+- Rust suite: 130 passed, 3 existing private PDF/OCR fixture tests ignored; focused ZLM regression tests, `cargo check`, formatting, and diff checks passed
+- TypeScript and frontend production build passed; the standalone Windows debug app built and launched successfully
+- One-round Sol source review approved the parser change with no findings
+- Live SMTP/IMAP and desktop import manual QA remain unverified; affected checklist cases remain unchecked
